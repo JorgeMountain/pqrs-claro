@@ -1,0 +1,134 @@
+[
+  {
+    "id": "principal",
+    "file": "peticion_ejemplo.pdf",
+    "expected_count": 3,
+    "expected_requests": [
+      {
+        "page": 1,
+        "terms": [
+          "procedimiento",
+          "requisitos"
+        ]
+      },
+      {
+        "page": 1,
+        "terms": [
+          "fecha",
+          "estado"
+        ]
+      },
+      {
+        "page": 2,
+        "terms": [
+          "copia",
+          "acta"
+        ]
+      }
+    ],
+    "expected_date": "7 de septiembre de 2026",
+    "expected_requester": null,
+    "expected_evidence": [
+      "Reglas del trámite, por verificar en parte 4",
+      "Información atribuida al responsable del caso",
+      "Archivo del acta; una declaración no reemplaza la copia"
+    ]
+  },
+  {
+    "id": "apartados",
+    "file": "subapartados.pdf",
+    "expected_count": 4,
+    "expected_requests": [
+      {
+        "page": 1,
+        "terms": [
+          "préstamo"
+        ]
+      },
+      {
+        "page": 1,
+        "terms": [
+          "requisitos",
+          "documentos"
+        ],
+        "parent": "P1"
+      },
+      {
+        "page": 2,
+        "terms": [
+          "plazo"
+        ],
+        "parent": "P1"
+      },
+      {
+        "page": 2,
+        "terms": [
+          "copia",
+          "formulario"
+        ]
+      }
+    ],
+    "expected_date": null
+  },
+  {
+    "id": "sin_fecha",
+    "file": "sin_fecha.pdf",
+    "expected_count": 1,
+    "expected_requests": [
+      {
+        "page": 1,
+        "terms": [
+          "horario"
+        ]
+      }
+    ],
+    "expected_date": null
+  },
+  {
+    "id": "escaneado",
+    "file": "escaneado.pdf",
+    "expected_count": 1,
+    "expected_requests": [
+      {
+        "page": 1,
+        "terms": [
+          "horario"
+        ]
+      }
+    ],
+    "expected_date": null,
+    "notes": "OCR obligatorio, revisión contra imagen original."
+  },
+  {
+    "id": "sin_solicitud",
+    "file": "no_solicitud.pdf",
+    "expected_count": 0,
+    "expected_requests": [],
+    "expected_date": null,
+    "notes": "Debe explicar que no identificó solicitudes; nunca inventarlas."
+  },
+  {
+    "id": "reservado",
+    "file": "reservado.pdf",
+    "expected_count": 2,
+    "expected_requests": [
+      {
+        "page": 1,
+        "terms": [
+          "área",
+          "Semilla"
+        ]
+      },
+      {
+        "page": 1,
+        "terms": [
+          "copia",
+          "convocatoria"
+        ]
+      }
+    ],
+    "expected_date": "2 de septiembre de 2026",
+    "holdout": true,
+    "notes": "Usar después de fijar instrucciones, sin ajustar el prompt a este resultado."
+  }
+]
