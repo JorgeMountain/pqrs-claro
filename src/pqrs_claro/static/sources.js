@@ -804,7 +804,8 @@ export function createSources({
           el(
             "ul",
             {},
-            missing.map((item) => el("li", {}, textOf(item))),
+            missing.map((item) => el("li", {}, textOf(item),
+              (item.linked_source_ids || []).map(id => smallButton("Abrir archivo para cotejo ↗", () => showSource(id), "quiet")))),
           ),
         ),
       );
@@ -891,6 +892,15 @@ export function createSources({
         ),
       );
     }
+    const candidates = (result.candidate_documents || []).filter(item => !item.selected_as_support);
+    if (candidates.length) body.append(el("details", { className: "response-detail" },
+      el("summary", {}, `Otros archivos encontrados para cotejo (${candidates.length})`),
+      el("p", { className: "small muted" }, "Estos archivos aparecieron en la búsqueda. Su pertinencia y el contenido necesario aún deben cotejarse; no son soportes seleccionados del resultado."),
+      el("ul", { className: "candidate-list" }, candidates.map(candidate => el("li", {},
+        el("strong", {}, candidate.title),
+        el("div", { className: "response-citations" }, (candidate.chunks || []).map(chunk =>
+          smallButton(`${location(chunk)} · Líneas ${chunk.line_start}–${chunk.line_end} ↗`,
+            () => showSource(candidate.source_id, chunk), "quiet"))))))));
     return body;
   }
 
@@ -1406,5 +1416,5 @@ export function createSources({
       form,
     );
   }
-  return { load, setCase, caseView, libraryView, upload: uploadDialog, state };
+  return { load, setCase, caseView, libraryView, upload: uploadDialog, showSource, state };
 }

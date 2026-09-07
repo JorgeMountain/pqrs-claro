@@ -11,7 +11,13 @@ from openai import OpenAI, OpenAIError
 from pydantic import Field, ValidationError
 
 from .models import DomainError, StrictModel
-from .source_documents import document_matches, requested_certification, requested_document
+from .source_documents import (
+    document_matches,
+    named_document_candidates,
+    numbered_document_references,
+    requested_certification,
+    requested_document,
+)
 from .source_retrieval import HISTORICAL_CATEGORIES, source_in_scope
 
 
@@ -81,6 +87,9 @@ document_status draft o un nombre con XXXX indica borrador: no lo llames oficio 
 firmado, enviado o respuesta oficial. unknown exige comprobar la condición del documento.
 verification_status reported_by_user solo registra que el usuario informó de verificación
 previa; no representa una revisión documental realizada por el sistema ni por el revisor.
+Conserva esa comprobación previa informada sin pedir repetir una revisión completa del
+archivo. Contrasta únicamente la aplicabilidad de lo comprobado a esta solicitud; señala
+problemas concretos de identidad, versión, extracción o contradicción cuando los haya.
 documented conserva la atribución de verification_note; pending/unknown requieren contraste.
 La existencia de un oficio o anexo nunca demuestra su notificación o entrega.
 Nunca selecciones fuentes superseded. Una norma current y reviewed puede usarse como
@@ -203,6 +212,20 @@ class OpenAISourceAssessor:
                 "La evaluación de fuentes no terminó; no se aceptó un resultado parcial."
             )
         try:
+            def readable_reference(match: re.Match) -> str:
+                source = candidates_by_alias.get(match.group())
+                if source is None:
+                    raise DomainError("La evaluación mencionó un alias de fragmento que no existe.")
+                location = "sección" if source.get("location_kind") == "section" else "página"
+                return (
+                    f"«{source.get('filename') or source.get('title') or source['source_id']}», "
+                    f"{location} {source['page']}, líneas "
+                    f"{source['line_start']}–{source['line_end']}"
+                )
+
+            def readable(text: str) -> str:
+                return re.sub(r"\bC\d+\b", readable_reference, text)
+
             supports = []
             for chosen in response.output_parsed.supports:
                 if chosen.chunk_id not in candidates_by_alias:
@@ -211,10 +234,19 @@ class OpenAISourceAssessor:
                     )
                 supports.append(
                     chosen.model_copy(
-                        update={"chunk_id": candidates_by_alias[chosen.chunk_id]["chunk_id"]}
+                        update={
+                            "chunk_id": candidates_by_alias[chosen.chunk_id]["chunk_id"],
+                            "reason": readable(chosen.reason),
+                        }
                     )
                 )
-            selection = response.output_parsed.model_copy(update={"supports": supports})
+            selection = response.output_parsed.model_copy(update={
+                "supports": supports,
+                "summary": readable(response.output_parsed.summary),
+                "missing": [item.model_copy(update={"description": readable(item.description)})
+                            for item in response.output_parsed.missing],
+                "warnings": [readable(value) for value in response.output_parsed.warnings],
+            })
             return self._materialize(selection, request, candidates)
         except ValidationError:
             raise DomainError("La evaluación de fuentes contiene campos inválidos.") from None
@@ -231,7 +263,9 @@ class OpenAISourceAssessor:
         ):
             raise DomainError("La evaluación contiene explicaciones vacías.")
         missing = [item.model_dump() for item in selection.missing]
+        proposed_missing_count = len(missing)
         warnings = [warning.strip() for warning in selection.warnings if warning.strip()]
+        proposed_warnings = set(warnings)
         supports: list[dict[str, Any]] = []
         selected_ids: set[str] = set()
         document_kind = requested_document(request)
@@ -327,12 +361,15 @@ class OpenAISourceAssessor:
                     add_warning(message)
                     add_missing("clarification", message)
                 verification = source.get("verification_status")
-                if verification != "documented":
+                if verification == "reported_by_user":
+                    add_warning(
+                        f"La verificación previa de «{title}» fue informada por el usuario. "
+                        "Se conserva esa atribución; se contrasta su aplicabilidad a la solicitud "
+                        "sin exigir repetir la revisión completa."
+                    )
+                elif verification != "documented":
                     message = (
-                        f"Registrar quién verificó «{title}», qué comprobó y con qué soporte; "
-                        "por ahora la verificación previa solo fue informada por el usuario."
-                        if verification == "reported_by_user"
-                        else f"Documentar quién verificó «{title}», qué comprobó y con qué soporte."
+                        f"Documentar quién verificó «{title}», qué comprobó y con qué soporte."
                     )
                     add_warning(message)
                     add_missing("clarification", message)
@@ -342,7 +379,9 @@ class OpenAISourceAssessor:
                         f"Completar el registro de verificación de «{title}» con responsable, "
                         "alcance y soporte de la comprobación.",
                     )
-            if source.get("review_status") != "reviewed":
+            if source.get("review_status") != "reviewed" and not (
+                is_historical and source.get("verification_status") == "reported_by_user"
+            ):
                 message = f"Revisar la procedencia y el contenido de «{title}»."
                 add_warning(message)
                 add_missing("clarification", message)
@@ -374,11 +413,32 @@ class OpenAISourceAssessor:
             )
             if not located:
                 if not any(item["kind"] == "document" for item in missing):
-                    add_missing(
-                        "document",
-                        "Adjuntar el archivo concreto solicitado y comprobar que corresponde "
-                        f"a este expediente: {request.get('description') or request.get('title')}.",
+                    file_candidates = named_document_candidates(
+                        str(request.get("description") or request.get("title") or ""), candidates
                     )
+                    if file_candidates:
+                        titles = list(dict.fromkeys(
+                            str(source.get("filename") or source.get("title"))
+                            for source in file_candidates
+                        ))
+                        missing.append({
+                            "kind": "clarification",
+                            "description": "Cotejar la identidad e integridad del archivo "
+                            "candidato ya localizado: "
+                            + "; ".join(f"«{title}»" for title in titles)
+                            + ". Su localización no acredita sus anexos ni su entrega.",
+                            "linked_source_ids": list(dict.fromkeys(
+                                source["source_id"] for source in file_candidates
+                            )),
+                            "linked_chunk_ids": [source["chunk_id"] for source in file_candidates],
+                        })
+                    else:
+                        add_missing(
+                            "document",
+                            "Adjuntar el archivo concreto solicitado y comprobar que corresponde "
+                            "a este expediente: "
+                            f"{request.get('description') or request.get('title')}.",
+                        )
                 add_warning(
                     "Una norma o una mención en otro documento no sustituye el archivo solicitado."
                 )
@@ -410,6 +470,104 @@ class OpenAISourceAssessor:
                     "solicitada ni acredita la competencia para expedirla."
                 )
 
+        # La recuperación conserva archivos aun cuando el modelo no elija sus fragmentos.
+        # Su localización es comprobable; su pertinencia, identidad y suficiencia no se infieren.
+        candidate_documents: dict[str, dict] = {}
+        support_source_ids = {source["source_id"] for source in supports}
+        for source in candidates:
+            if not source_in_scope(request, source):
+                raise DomainError("Una fuente candidata pertenece a un ámbito no vinculado.")
+            identifier = source["source_id"]
+            document = candidate_documents.setdefault(identifier, {
+                **{key: source.get(key) for key in (
+                    "source_id", "document_id", "version", "title", "filename", "category"
+                )},
+                "location_status": "candidate_located",
+                "selected_as_support": identifier in support_source_ids,
+                "chunks": [],
+            })
+            document["chunks"].append({key: source.get(key) for key in (
+                "chunk_id", "page", "line_start", "line_end", "quote", "location_kind"
+            )})
+        additional = any(not item["selected_as_support"] for item in candidate_documents.values())
+        if additional:
+            add_warning(
+                "Hay otros archivos candidatos disponibles para cotejo. Su presencia no "
+                "acredita pertinencia; la selección automática no certifica cobertura completa."
+            )
+
+        absence = re.compile(
+            r"\b(?:no\s+(?:(?:se\s+)?(?:ha[n]?\s+)?(?:localiz\w*|encontr\w*|aport\w*|"
+            r"identific\w*|dispon\w*|esta\w*|cuenta\w*))|"
+            r"falt\w*|ausen\w*|aportar|adjuntar|obtener|allegar)\b"
+        )
+        reconciled = False
+        reconciled_missing = []
+        for position, item in enumerate(missing):
+            located = named_document_candidates(item["description"], candidates)
+            needs_issued_version = re.search(
+                r"\bversion\b.{0,40}\b(?:expedid\w*|firmad\w*|oficial)\b",
+                _plain(item["description"]),
+            )
+            if (
+                position < proposed_missing_count and located and not needs_issued_version
+                and (item["kind"] == "document" or absence.search(_plain(item["description"])))
+            ):
+                titles = list(dict.fromkeys(
+                    str(source.get("filename") or source.get("title") or source["source_id"])
+                    for source in located
+                ))
+                reconciled_missing.append({
+                    "kind": "clarification",
+                    "description": (
+                        "Ya están localizados como candidatos: "
+                        + "; ".join(f"«{title}»" for title in titles)
+                        + ". Cotejar su identidad, integridad y relación con lo solicitado "
+                        "en los fragmentos disponibles; no es necesario aportar otra copia "
+                        "por una supuesta ausencia en esta búsqueda. Esto no acredita sus anexos "
+                        "ni su entrega."
+                    ),
+                    "linked_source_ids": list(dict.fromkeys(
+                        source["source_id"] for source in located
+                    )),
+                    "linked_chunk_ids": [source["chunk_id"] for source in located],
+                })
+                remaining_references = [
+                    reference for reference in numbered_document_references(item["description"])
+                    if not named_document_candidates(reference, candidates)
+                ]
+                if remaining_references:
+                    reconciled_missing.append({
+                        "kind": item["kind"],
+                        "description": "Localizar y cotejar los demás documentos requeridos: "
+                        + "; ".join(remaining_references)
+                        + ". Encontrar el otro archivo no acredita estos documentos.",
+                    })
+                reconciled = True
+            else:
+                reconciled_missing.append(item)
+        missing = reconciled_missing
+        # Una frase de ausencia incompatible con el inventario no llega a la interfaz.
+        retained_warnings = []
+        for warning in warnings:
+            if (
+                warning in proposed_warnings and absence.search(_plain(warning))
+                and named_document_candidates(warning, candidates)
+            ):
+                reconciled = True
+            else:
+                retained_warnings.append(warning)
+        warnings = retained_warnings
+        if absence.search(_plain(selection.summary)) and named_document_candidates(
+            selection.summary, candidates
+        ):
+            reconciled = True
+        if reconciled:
+            add_warning(
+                "Se corrigió una propuesta de ausencia al contrastarla con los archivos "
+                "candidatos conservados. Su identidad e integridad quedan por cotejar."
+            )
+
         status = selection.status
         if not supports:
             status = "no_matches"
@@ -428,7 +586,7 @@ class OpenAISourceAssessor:
         summary = selection.summary.strip()
         if not supports:
             summary = "No se localizaron soportes pertinentes en las fuentes consultadas."
-        elif status != selection.status or unconfirmed_document:
+        elif status != selection.status or unconfirmed_document or reconciled:
             summary = (
                 "Se localizaron referencias, pero quedan documentos, datos o verificaciones "
                 "pendientes antes de preparar la respuesta."
@@ -442,4 +600,9 @@ class OpenAISourceAssessor:
             "missing": missing,
             "supports": supports,
             "warnings": warnings,
+            "candidate_documents": list(candidate_documents.values()),
+            "selection_status": (
+                "additional_candidates_available" if additional else
+                "all_candidates_selected" if candidate_documents else "no_candidates"
+            ),
         }

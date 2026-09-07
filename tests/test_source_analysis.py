@@ -257,6 +257,26 @@ def test_assessor_rejects_repeated_alias_instead_of_silently_deduplicating_selec
         assessor.assess(request(), [chunk()])
 
 
+def test_remote_aliases_in_prose_become_readable_file_and_page_references():
+    proposed = selection(
+        summary="La referencia C1 permite localizar el documento.",
+        missing=[{"kind": "clarification", "description": "Cotejar la identidad en C1."}],
+        warnings=["C1 conserva su atribución."],
+    )
+    proposed.supports[0].chunk_id = "C1"
+    proposed.supports[0].reason = "C1 contiene el acta solicitada."
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(responses=SimpleNamespace(
+        parse=lambda **_: SimpleNamespace(status="completed", output_parsed=proposed)
+    ))
+    result = assessor.assess(request(), [chunk()])
+    visible = json.dumps(result, ensure_ascii=False)
+    assert "C1" not in visible
+    assert "página 1, líneas 1–3" in visible
+    assert result["supports"][0]["chunk_id"] == "acta-1"
+    assert result["supports"][0]["quote"] == chunk()["quote"]
+
+
 def test_assessor_rejects_ambiguous_candidate_alias_mapping_before_the_api_call():
     calls = []
     assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")

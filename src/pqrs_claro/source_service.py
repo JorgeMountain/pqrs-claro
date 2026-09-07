@@ -32,7 +32,7 @@ class SourceService:
                     "identification": case["identification"],
                     "sources": sources,
                     "model": self.settings.model,
-                    "analysis_version": 6,
+                    "analysis_version": 7,
                     "collections": case["allowed_collection_ids"],
                 }
             )
@@ -47,7 +47,7 @@ class SourceService:
                 "identification": case["identification"],
                 "sources": sources,
                 "model": self.settings.model,
-                "analysis_version": 6,
+                "analysis_version": 7,
                 "collections": self.library.linked_collections(case_id),
             }
         )

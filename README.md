@@ -1,6 +1,6 @@
 # PQRS Claro
 
-Asistente PQRS en LangGraph: **comprender una petición, comprobar sus solicitudes y localizar el respaldo disponible para cada una**.
+Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes y preparar borradores trazables por solicitud**.
 
 ## Empezar
 
@@ -17,8 +17,9 @@ Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza
 - Parte 2: aplicación independiente, contratos de datos, SQLite para expedientes y checkpoints persistentes de LangGraph.
 - Parte 3: carga y conservación del PDF original, extracción por página, OCR cuando hace falta, identificación estructurada, referencias literales, corrección y confirmación humana.
 - Parte 4: [biblioteca local y búsqueda por solicitud](docs/FASE4.md), con fuentes PDF/DOCX/TXT, originales versionados, procedencia, revisión y vigencia, referencias a fragmentos y faltantes explícitos.
+- Parte 5: [plan, redacción y comprobaciones](docs/FASE5.md), con borradores por solicitud, citas por párrafo, pendientes visibles y recuperación del avance.
 
-**Confirmar identificación** cierra el primer hito y permite buscar fuentes. La fase 4 prepara evidencia; las respuestas y la generación de oficios pertenecen a las partes 5 a 7. Esta entrega no calcula términos legales ni registra entregas documentales.
+**Confirmar identificación** cierra el primer hito y permite buscar fuentes. Con un mapa actualizado, **5. Borradores** permite preparar respuestas para revisión humana. La aprobación y generación de oficios corresponden a las partes 6 y 7. Esta entrega no calcula términos legales ni registra entregas documentales.
 
 Para practicar la fase 4, incorpora las fuentes ficticias del ejemplo después de confirmar sus solicitudes y ejecuta la búsqueda. Deben aparecer reglas para el procedimiento, un registro para recepción y estado, y un pendiente para la copia del acta. [FASE4.md](docs/FASE4.md) explica qué comprobar.
 

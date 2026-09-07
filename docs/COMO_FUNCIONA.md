@@ -48,6 +48,10 @@ Los módulos se encuentran en `src/pqrs_claro/`.
 | `source_retrieval.py` | Búsqueda textual BM25 de fragmentos, con restricciones por categoría y ámbito del caso |
 | `source_assessment.py` | Evaluación de pertinencia y faltantes con IA, con validación de las referencias recuperadas |
 | `source_graph.py` | Coordina la recuperación y evaluación de cada solicitud, y conserva su avance |
+| `draft_engine.py` | Prepara el plan, redacta párrafos con citas y comprueba su respaldo |
+| `draft_graph.py` | Conecta planificar, redactar y comprobar con checkpoints por solicitud |
+| `draft_service.py` y `draft_store.py` | Controlan versiones, ámbito, avance e historial de borradores |
+| `draft_api.py` | Permite preparar y consultar los borradores desde la página |
 | `static/` | La pantalla, su diseño y las acciones del navegador |
 | `__init__.py` | Identifica el paquete Python |
 
@@ -81,6 +85,14 @@ Por ejemplo, las reglas ficticias permiten localizar el procedimiento y requisit
 
 La persona puede abrir el original y contrastar el fragmento. Las referencias de estilo se mantienen separadas de las respuestas históricas: estas últimas permiten recuperar contenido anterior atribuido y relacionarlo con sus anexos cuando se vincula la colección al expediente. Ninguna coincidencia textual certifica vigencia, suficiencia o aplicabilidad. [HISTORICOS.md](HISTORICOS.md) explica el nuevo recorrido.
 
-Si se incorpora otra versión de una fuente, el resultado anterior conserva su referencia y debe actualizarse para reflejar la nueva biblioteca. La identificación confirmada mantiene su hito propio. Este recorrido todavía no redacta respuestas ni genera oficios.
+Si se incorpora otra versión de una fuente, el resultado anterior conserva su referencia y debe actualizarse para reflejar la nueva biblioteca. La identificación confirmada mantiene su hito propio.
 
 Lee el ejercicio completo y sus criterios en [FASE4.md](FASE4.md), y la decisión sobre biblioteca local y Drive en [ALMACENAMIENTO.md](ALMACENAMIENTO.md).
+
+## Preparar las respuestas: fase 5
+
+Con las fuentes actualizadas, **5. Borradores** permite preparar un plan, redactar y comprobar cada respuesta. LangGraph conserva esos tres pasos por solicitud. Python valida las referencias contra los fragmentos seleccionados, y la IA revisa si la redacción mantiene el alcance, la atribución y los pendientes. Cada solicitud terminada se muestra mientras continúan las siguientes.
+
+En el ejemplo, se puede proponer el procedimiento y los requisitos y describir la fecha y el estado registrados. La copia del acta sigue pendiente: el texto no afirma que se haya adjuntado ni que no exista. Cada párrafo permite abrir sus fuentes. Los cambios de entradas dejan el resultado desactualizado; los errores técnicos pueden reintentarse sin repetir solicitudes terminadas.
+
+Los borradores permanecen pendientes de revisión humana. La fase 6 incorporará edición y aprobación; la fase 7 generará el oficio. [FASE5.md](FASE5.md) explica el recorrido, los módulos y las comprobaciones.

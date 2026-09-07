@@ -156,9 +156,101 @@ def test_reported_verification_is_recorded_as_reported_and_does_not_count_as_rev
     )
     result = materialize(source)
     missing = " ".join(item["description"] for item in result["missing"])
-    assert "solo fue informada por el usuario" in missing
-    assert "procedencia" in missing
+    assert "persona y periodo" in missing
+    assert "Revisar la procedencia y el contenido" not in missing
+    assert "Documentar quién verificó" not in missing
+    assert any("fue informada por el usuario" in warning for warning in result["warnings"])
+    assert any("sin exigir repetir" in warning for warning in result["warnings"])
     assert result["supports"][0]["verification_status"] == "reported_by_user"
+
+
+def test_unselected_named_file_is_located_for_review_without_becoming_support():
+    existing = historical(
+        chunk_id="oficio:4", source_id="oficio-v2", document_id="oficio", version=2,
+        title="Oficio 765", filename="Oficio_765-2024.pdf", page=4,
+        quote="La revisión del semestre anterior contiene un alcance específico.",
+    )
+    proposed = choice(
+        status="needs_evidence",
+        summary="No se localizó una copia del oficio 765-2024 para contrastar la información.",
+        missing=[
+            {"kind": "document", "description": "Aportar el oficio 765-2024, no localizado."},
+            {"kind": "document", "description": "Aportar los planes de trabajo de 2010."},
+        ],
+        warnings=["No se encontró el oficio 765-2024."],
+    )
+    result = OpenAISourceAssessor._materialize(proposed, inquiry(), [historical(), existing])
+    assert [source["source_id"] for source in result["supports"]] == ["respuesta-v1"]
+    assert "No se localizó" not in result["summary"]
+    assert result["missing"][0]["kind"] == "clarification"
+    assert result["missing"][0]["linked_source_ids"] == ["oficio-v2"]
+    assert result["missing"][0]["linked_chunk_ids"] == ["oficio:4"]
+    assert result["missing"][1]["description"] == "Aportar los planes de trabajo de 2010."
+    assert "no encontrado" not in " ".join(result["warnings"])
+    candidate = result["candidate_documents"][1]
+    assert candidate["selected_as_support"] is False
+    assert candidate["version"] == 2
+    assert candidate["chunks"][0]["quote"] == existing["quote"]
+    assert candidate["chunks"][0]["page"] == 4
+    assert result["selection_status"] == "additional_candidates_available"
+
+
+def test_additional_candidates_are_visible_without_forcing_support_or_pending_item():
+    other = historical(
+        chunk_id="otro:1", source_id="otro-v1", document_id="otro",
+        title="Oficio 555", filename="oficio_555.pdf", quote="Otro asunto y otro periodo.",
+    )
+    one = materialize()
+    result = OpenAISourceAssessor._materialize(choice(), inquiry(), [historical(), other])
+    assert result["supports"] == one["supports"]
+    assert result["missing"] == one["missing"]
+    assert len(result["candidate_documents"]) == 2
+    assert result["selection_status"] == "additional_candidates_available"
+
+
+@pytest.mark.parametrize("name,category", [
+    ("Correo de remision oficio 765-2024.pdf", "historical_attachment"),
+    ("Notificacion oficio 765-2024.pdf", "historical_attachment"),
+    ("Oficio_765-2025.pdf", "historical_response"),
+    ("Peticion sobre oficio 765-2024.pdf", "historical_petition"),
+])
+def test_reference_or_different_year_does_not_cancel_a_missing_original(name, category):
+    pending = {"kind": "document", "description": "Aportar el oficio 765-2024."}
+    source = historical(filename=name, category=category)
+    role = "historical_evidence" if category == "historical_attachment" else "antecedent"
+    result = materialize(source, proposed=choice(role=role, missing=[pending]))
+    assert pending in result["missing"]
+
+
+def test_copy_request_with_known_unselected_file_needs_identity_check_not_another_upload():
+    source = historical(title="Oficio 765", filename="oficio_765.pdf")
+    result = materialize(
+        source,
+        inquiry(title="Copia de oficio", description="Solicito copia del oficio 765."),
+        choice(supports=[]),
+    )
+    assert result["supports"] == []
+    assert not any(item["kind"] == "document" for item in result["missing"])
+    assert any("candidato ya localizado" in item["description"] for item in result["missing"])
+
+
+def test_draft_candidate_does_not_cancel_request_for_the_issued_version():
+    pending = {"kind": "document", "description": "Aportar la versión expedida del oficio 765."}
+    source = historical(filename="Oficio_765.pdf", document_status="draft")
+    result = materialize(source, proposed=choice(missing=[pending]))
+    assert pending in result["missing"]
+    assert any("es un borrador" in item["description"] for item in result["missing"])
+
+
+def test_reconciliation_preserves_another_missing_numbered_document_in_same_item():
+    source = historical(filename="Oficio_765-2024.pdf")
+    result = materialize(source, proposed=choice(missing=[{
+        "kind": "document", "description": "Aportar el oficio 765-2024 y el acta 789."
+    }]))
+    assert any(item["kind"] == "clarification" and item.get("linked_source_ids")
+               for item in result["missing"])
+    assert any(item["kind"] == "document" and "acta 789" in item["description"]
+               for item in result["missing"])
 
 
 @pytest.mark.parametrize(

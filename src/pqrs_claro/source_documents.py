@@ -94,3 +94,51 @@ def document_matches(request: dict[str, Any], source: dict[str, Any], kind: str)
         rf"(?m)^\s*(?:\d+-)*{re.escape(number)}(?:-\d+)*\s*$", quote
     )
     return bool(header or numbered_header)
+
+
+def numbered_document_references(text: str) -> list[str]:
+    """Referencias explícitas para conservar otros componentes de un mismo faltante."""
+    references = re.findall(
+        r"\b(acta|contrato|resolucion|certificado|certificacion|informe|convenio|"
+        r"acuerdo|circular|oficio|respuesta)s?\s*"
+        r"(?:(?:numero|nro\.?|no\.?|num\.?|#)\s*)?(\d+(?:-\d+)*)",
+        _plain(text).replace("\u00ad", ""),
+    )
+    return list(dict.fromkeys(f"{kind} {number}" for kind, number in references))
+
+
+def named_document_candidates(text: str, candidates: list[dict[str, Any]]) -> list[dict]:
+    """Localiza por nombre y número; no convierte una mención en identidad acreditada.
+
+    Solo consulta el nombre del archivo, nunca números extraídos de su contenido o
+    relaciones de catálogo. Un correo titulado con su adjunto tampoco es el adjunto.
+    """
+    references = [reference.split(" ", 1) for reference in numbered_document_references(text)]
+    located = []
+    for source in candidates:
+        if source.get("category") not in {
+            "historical_response", "historical_attachment", "case_evidence"
+        }:
+            continue
+        name = _plain(str(source.get("filename") or source.get("title") or "")).replace("_", " ")
+        quote = _plain(str(source.get("quote") or ""))
+        if re.search(r"\b(?:gmail|fwd|correo|notificacion|remision)\b", name) or re.search(
+            r"gmail\s*[-:]|https?://mail\.google\.com/|(?m:^\s*(?:para|to):)", quote
+        ):
+            continue
+        for kind, number in references:
+            parts = number.split("-")
+            year = parts[-1] if len(parts) > 1 and len(parts[-1]) == 4 else None
+            key = parts[-2] if year else parts[-1]
+            kinds = r"(?:oficio|respuesta)" if kind in {"oficio", "respuesta"} else kind
+            if not re.search(rf"\b{kinds}s?\b", name):
+                continue
+            if not re.search(rf"(?<!\d){re.escape(key)}(?!\d)", name):
+                continue
+            # No equiparar el mismo número de oficio de años diferentes.
+            named_years = re.findall(rf"(?<!\d){re.escape(key)}[- ](\d{{4}})(?!\d)", name)
+            if year and named_years and year not in named_years:
+                continue
+            located.append(source)
+            break
+    return located

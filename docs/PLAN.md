@@ -64,8 +64,14 @@ LangGraph coordina un recorrido de fuentes separado de la identificación. Los r
 
 El alcance detallado y los criterios de aceptación están en [FASE4.md](FASE4.md). La decisión inicial sobre alojamiento es biblioteca local durante el piloto y futura conexión a Drive institucional, preferiblemente una unidad compartida. [ALMACENAMIENTO.md](ALMACENAMIENTO.md) compara las alternativas y distingue el repositorio humano del catálogo propio.
 
+## Entrega 3: parte 5
+
+Preparar un plan y un borrador por solicitud, con comprobaciones de respaldo, citas originales y pendientes visibles. LangGraph coordina planificar, redactar y comprobar; SQLite conserva el avance y los reintentos. La página separa Fuentes de Borradores y permite abrir el soporte de cada párrafo.
+
+Los antecedentes previamente verificados se reutilizan con atribución y contraste de aplicabilidad. Los archivos candidatos pendientes de cotejo siguen disponibles sin convertirse automáticamente en soporte. La fase produce borradores internos, pendientes de revisión humana; su alcance y recorrido están en [FASE5.md](FASE5.md).
+
 ## Lo que sigue
 
-Parte 5: plan, redacción y comprobaciones con evidencia. Parte 6: revisión humana de respuestas y faltantes. Parte 7: DOCX/PDF fieles a lo aprobado. Parte 8: evaluación ampliada, operación e integraciones concretas.
+Parte 6: revisión humana de respuestas y faltantes. Parte 7: DOCX/PDF fieles a lo aprobado. Parte 8: evaluación ampliada, operación e integraciones concretas.
 
 Cada nueva entrega debe mostrar qué entra, qué transforma Python, qué propone la IA, qué coordina LangGraph y qué se puede comprobar al terminar. Mantendremos un plan y un repositorio, con cambios registrados en Git.

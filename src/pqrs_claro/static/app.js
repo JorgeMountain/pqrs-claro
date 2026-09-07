@@ -12,6 +12,7 @@ import {
 } from "./ui.js";
 import { requestsView, quoteFor } from "./requests.js";
 import { createSources } from "./sources.js";
+import { createDrafts } from "./drafts.js";
 
 const state = {
   config: null,
@@ -28,6 +29,7 @@ const state = {
   notice: null,
   conflict: false,
   library: false,
+  responses: new URL(location.href).searchParams.get("view") === "drafts",
 };
 const $ = (id) => document.getElementById(id);
 
@@ -154,11 +156,18 @@ function clearDraft() {
 function adopt(current, reset = false) {
   state.current = current;
   sources.setCase(current);
+  drafts.setCase(current);
   if (
     current.status === "confirmed" &&
     (!sources.state.loaded || !sources.state.mapping)
   )
     void sources.load({ quiet: true });
+  if (
+    current.status === "confirmed" &&
+    !drafts.state.loaded &&
+    !drafts.state.loading
+  )
+    void drafts.load({ quiet: true });
   if (reset) {
     clearDraft();
     state.page = current.pages?.[0]?.number || 1;
@@ -191,9 +200,11 @@ async function selectCase(id) {
     const current = await api(`/api/cases/${encodeURIComponent(id)}`);
     adopt(current, true);
     state.library = false;
+    state.responses = false;
     state.notice = null;
     const url = new URL(location.href);
     url.searchParams.set("case", id);
+    url.searchParams.delete("view");
     history.replaceState(null, "", url);
   });
 }
@@ -204,9 +215,12 @@ function newCase() {
   state.current = null;
   state.library = false;
   sources.setCase(null);
+  drafts.setCase(null);
+  state.responses = false;
   state.notice = null;
   const url = new URL(location.href);
   url.searchParams.delete("case");
+  url.searchParams.delete("view");
   history.replaceState(null, "", url);
   render();
 }
@@ -573,6 +587,7 @@ function renderSidebar() {
 }
 
 function render() {
+  const focusedId = document.activeElement?.id;
   const processOpen = $("process-details")?.open;
   const identityOpen = $("identity-details")?.open;
   renderSidebar();
@@ -580,19 +595,24 @@ function render() {
   const status = state.current?.status;
   const stage =
     status === "confirmed"
-      ? 3
+      ? state.responses
+        ? 4
+        : 3
       : !status || status === "uploaded"
         ? 0
         : running(status) || status === "error"
           ? 1
           : 2;
-  ["step-upload", "step-analyze", "step-review", "step-sources"].forEach(
-    (id, index) => {
-      $(id).className =
-        index < stage ? "done" : index === stage ? "active" : "";
-      $(id).setAttribute("aria-current", index === stage ? "step" : "false");
-    },
-  );
+  [
+    "step-upload",
+    "step-analyze",
+    "step-review",
+    "step-sources",
+    "step-drafts",
+  ].forEach((id, index) => {
+    $(id).className = index < stage ? "done" : index === stage ? "active" : "";
+    $(id).setAttribute("aria-current", index === stage ? "step" : "false");
+  });
   const configNode = $("connection-state");
   configNode.className = `connection-state ${state.config?.ready ? "ready" : "unavailable"}`;
   configNode.textContent = state.config?.ready
@@ -603,12 +623,16 @@ function render() {
   document.querySelector(".workspace-heading h1").textContent = state.library
     ? "Biblioteca de fuentes"
     : sourcesStage
-      ? "Encontrar el respaldo"
+      ? state.responses
+        ? "Preparar las respuestas"
+        : "Encontrar el respaldo"
       : "Entender la petición";
   document.querySelector(".page-intro").textContent = state.library
     ? "Organiza los documentos que sirven de consulta y soporte."
     : sourcesStage
-      ? "Comprueba qué tenemos para cada solicitud y qué falta aportar."
+      ? state.responses
+        ? "Un borrador trazable, con sus fuentes y pendientes visibles."
+        : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
       : "Identifica qué se solicita y compruébalo con el original.";
   document.querySelector(".journey").hidden = state.library;
   actions.busy = state.busy;
@@ -662,7 +686,41 @@ function render() {
       ),
       ...(sourcesStage
         ? [
-            sources.caseView(),
+            el(
+              "nav",
+              {
+                className: "case-stage-nav",
+                "aria-label": "Etapa del expediente",
+              },
+              button("4. Fuentes", openSources, "quiet", {
+                id: "stage-sources",
+                "aria-current": !state.responses ? "step" : null,
+              }),
+              button("5. Borradores", openResponses, "quiet", {
+                id: "stage-drafts",
+                "aria-current": state.responses ? "step" : null,
+              }),
+            ),
+            state.responses ? drafts.view() : sources.caseView(),
+            !state.responses
+              ? el(
+                  "div",
+                  { className: "response-entry" },
+                  el(
+                    "div",
+                    {},
+                    el("strong", {}, "Siguiente paso: preparar las respuestas"),
+                    el(
+                      "p",
+                      { className: "muted small" },
+                      "El plan y cada párrafo del borrador conservarán sus fuentes y sus pendientes.",
+                    ),
+                  ),
+                  button("Continuar a borradores", openResponses, "primary", {
+                    id: "continue-drafts",
+                  }),
+                )
+              : null,
             el(
               "details",
               {
@@ -677,7 +735,7 @@ function render() {
               ),
               identificationGrid,
             ),
-          ]
+          ].filter(Boolean)
         : [identificationGrid]),
     );
     if (processOpen && $("process-details")) $("process-details").open = true;
@@ -695,6 +753,27 @@ function render() {
     : current
       ? `${current.filename} · PQRS Claro`
       : "PQRS Claro · Entender la petición";
+  if (focusedId)
+    document.getElementById(focusedId)?.focus({ preventScroll: true });
+}
+
+function setResponseStage(value) {
+  state.responses = value;
+  state.library = false;
+  const url = new URL(location.href);
+  if (value) url.searchParams.set("view", "drafts");
+  else url.searchParams.delete("view");
+  history.replaceState(null, "", url);
+  render();
+}
+function openResponses() {
+  setResponseStage(true);
+  void sources.load({ quiet: true });
+  void drafts.load({ quiet: true });
+}
+function openSources() {
+  setResponseStage(false);
+  void sources.load({ quiet: true });
 }
 
 function openLibrary() {
@@ -706,6 +785,7 @@ function openLibrary() {
 function closeLibrary() {
   state.library = false;
   render();
+  if (state.responses) void drafts.load({ quiet: true });
   $("workspace").focus({ preventScroll: true });
 }
 const sources = createSources({
@@ -715,6 +795,15 @@ const sources = createSources({
   render,
   openLibrary,
   closeLibrary,
+});
+const drafts = createDrafts({
+  api,
+  notify,
+  getCase: () => state.current,
+  getSources: () => sources.state.mapping,
+  render,
+  showSource: (id, ref) => sources.showSource(id, ref),
+  back: openSources,
 });
 
 function schedulePoll() {
