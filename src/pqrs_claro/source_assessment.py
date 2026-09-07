@@ -11,6 +11,7 @@ from openai import OpenAI, OpenAIError
 from pydantic import Field, ValidationError
 
 from .models import DomainError, StrictModel
+from .source_documents import document_matches, requested_certification, requested_document
 from .source_retrieval import HISTORICAL_CATEGORIES, source_in_scope
 
 
@@ -43,6 +44,10 @@ Selecciona solo chunk_id presentes en candidates, con reason que explique su uti
 concreta para esta solicitud y role: rule (regla), fact (hecho del caso actual),
 document (archivo concreto pedido), antecedent (contenido atribuido a un trámite
 anterior) o historical_evidence (anexo probatorio del trámite anterior).
+Cada chunk_id es un alias cerrado de esta llamada: C1, C2, ..., C24. Copia exactamente
+el alias del candidato elegido; no uses source_id, document_id, UUID ni números de página.
+Cada candidato incluye allowed_roles: elige exclusivamente un role de esa lista para
+ese candidato. La lista autoriza un tipo de uso, no demuestra pertinencia ni suficiencia.
 No escribas citas ni inventes referencias; Python copia cada fragmento literalmente.
 No selecciones fragmentos solo porque comparten palabras: contrasta asunto, persona,
 fecha, condiciones, documento y alcance. No confundas una mención con el archivo pedido.
@@ -58,6 +63,13 @@ por separado; related_source_ids indica una relación de catálogo, no prueba el
 de un archivo que no se encuentre entre los candidatos. Una respuesta puede ser sustento
 reutilizable si se comprueba coincidencia de asunto, persona, periodo, condiciones y
 vigencia; explicita ese contraste en missing, sin exigir repetir pruebas ya documentadas.
+Que la petición sea nueva no cambia el periodo de los hechos consultados. Si pregunta
+por 2015, pide o coteja registros de 2015; no exijas registros actuales ni una nueva
+certificación cuando solo pide consultar antecedentes existentes. Distingue revisar
+la aplicabilidad al caso de repetir pruebas ya documentadas. Conserva las comprobaciones
+pendientes de procedencia, contenido y atribución de la verificación humana.
+También permite document cuando se solicita precisamente copia de ese oficio o respuesta
+y el fragmento permite identificar el archivo, sin acreditar su expedición ni entrega.
 historical_petition solo aporta antecedent sobre lo preguntado o alegado: ni su denuncia
 ni la pregunta son prueba de los hechos, de una decisión o de que se haya dado respuesta.
 historical_attachment aporta historical_evidence, o document si ES el archivo pedido:
@@ -77,6 +89,15 @@ No concluyas vigencia porque una norma se haya cargado recientemente.
 
 Si piden copia del acta, necesitas el archivo de esa acta del caso. Una norma que ordena
 elaborar actas, un oficio que la menciona o una explicación no reemplazan el archivo.
+En 'documento que contiene el acta', el objeto solicitado sigue siendo el acta. Un correo
+de remisión puede localizarse como document si se pide ese correo, nunca como su adjunto.
+Para document selecciona un fragmento con encabezado o identificación del archivo concreto;
+su título y las menciones a otros documentos por sí solos no acreditan correspondencia.
+Los candidatos son fragmentos de archivos conservados. Que falten páginas o el encabezado
+en el contexto no significa que el archivo no esté localizado: el título, identificador
+y número orientan su ubicación. Distingue archivo candidato ya localizado, integridad o
+identidad pendiente de cotejo y archivo ausente. No pidas como ausente un oficio que ya
+aparece como archivo candidato; contrasta el contenido disponible y precisa qué falta revisar.
 Que un archivo esté localizado no acredita que haya sido entregado al peticionario.
 Identifica documentos o datos concretos faltantes en missing, con kind document, fact,
 norm o clarification. Escribe acciones comprensibles; evita 'falta información' genérico.
@@ -99,26 +120,29 @@ def _plain(text: str) -> str:
     )
 
 
-def _requested_document(request: dict[str, Any]) -> str | None:
-    """Resguardo acotado para peticiones explícitas de entrega de documentos."""
-    text = _plain(f"{request.get('title', '')} {request.get('description', '')}")
-    delivery = re.search(r"\b(copias?|adjunt\w*|remit\w*|entreg\w*|envi\w*|facilit\w*)\b", text)
-    if not delivery:
-        return None
-    document = re.search(
-        r"\b(acta|contrato|resolucion|certificado|certificacion|expediente|informe|"
-        r"documento|constancia|convenio|acuerdo|circular|oficio|registro)s?\b",
-        text,
-    )
-    return document.group(1) if document else "documento" if "copia" in text else None
-
-
 def _historical_document_status(source: dict[str, Any]) -> str:
     """Un nombre pendiente de numeración no acredita expedición, aun con metadatos malos."""
     name = _plain(f"{source.get('title', '')} {source.get('filename', '')}")
     if re.search(r"(?<![a-z0-9])x{3,}(?![a-z0-9])", name):
         return "draft"
     return str(source.get("document_status") or "unknown")
+
+
+def _allowed_roles(category: str | None, document_kind: str | None) -> tuple[str, ...]:
+    """Contrato único para orientar la selección remota y validar su resultado local."""
+    roles = {
+        "national_norm": ("rule",),
+        "institutional_norm": ("rule",),
+        "case_evidence": ("fact", "document"),
+        "historical_response": (
+            ("antecedent", "document")
+            if document_kind in {"oficio", "respuesta"}
+            else ("antecedent",)
+        ),
+        "historical_petition": ("antecedent",),
+        "historical_attachment": ("historical_evidence", "document"),
+    }
+    return roles.get(category, ())
 
 
 class OpenAISourceAssessor:
@@ -135,12 +159,30 @@ class OpenAISourceAssessor:
             raise DomainError(
                 "Las fuentes candidatas incluyen una colección o expediente no vinculado."
             )
+        if len(candidates) > 24:
+            raise DomainError("La evaluación admite hasta veinticuatro fragmentos candidatos.")
+        if len({candidate["chunk_id"] for candidate in candidates}) != len(candidates):
+            raise DomainError("Las fuentes candidatas contienen identificadores repetidos.")
+        # Los alias solo simplifican la selección remota; las citas y referencias persistidas
+        # siguen siendo las originales. No se buscan identificadores parecidos ni alternativas.
+        candidates_by_alias = {
+            f"C{index}": candidate for index, candidate in enumerate(candidates, start=1)
+        }
+        document_kind = requested_document(request)
+        api_candidates = [
+            {
+                **candidate,
+                "chunk_id": alias,
+                "allowed_roles": list(_allowed_roles(candidate.get("category"), document_kind)),
+            }
+            for alias, candidate in candidates_by_alias.items()
+        ]
         try:
             response = self.client.responses.parse(
                 model=self.model,
                 instructions=INSTRUCTIONS,
                 input=json.dumps(
-                    {"request": request, "candidates": candidates}, ensure_ascii=False
+                    {"request": request, "candidates": api_candidates}, ensure_ascii=False
                 ),
                 text_format=_SourceSelection,
                 store=False,
@@ -161,7 +203,19 @@ class OpenAISourceAssessor:
                 "La evaluación de fuentes no terminó; no se aceptó un resultado parcial."
             )
         try:
-            return self._materialize(response.output_parsed, request, candidates)
+            supports = []
+            for chosen in response.output_parsed.supports:
+                if chosen.chunk_id not in candidates_by_alias:
+                    raise DomainError(
+                        "La evaluación seleccionó un alias de fragmento que no existe."
+                    )
+                supports.append(
+                    chosen.model_copy(
+                        update={"chunk_id": candidates_by_alias[chosen.chunk_id]["chunk_id"]}
+                    )
+                )
+            selection = response.output_parsed.model_copy(update={"supports": supports})
+            return self._materialize(selection, request, candidates)
         except ValidationError:
             raise DomainError("La evaluación de fuentes contiene campos inválidos.") from None
 
@@ -180,6 +234,8 @@ class OpenAISourceAssessor:
         warnings = [warning.strip() for warning in selection.warnings if warning.strip()]
         supports: list[dict[str, Any]] = []
         selected_ids: set[str] = set()
+        document_kind = requested_document(request)
+        unconfirmed_document = False
 
         def add_missing(kind: str, description: str) -> None:
             item = {"kind": kind, "description": description}
@@ -215,20 +271,29 @@ class OpenAISourceAssessor:
                 raise DomainError(
                     "La colección histórica de la fuente no está vinculada a este expediente."
                 )
-            roles = {
-                "national_norm": {"rule"},
-                "institutional_norm": {"rule"},
-                "case_evidence": {"fact", "document"},
-                "historical_response": {"antecedent"},
-                "historical_petition": {"antecedent"},
-                "historical_attachment": {"historical_evidence", "document"},
-            }
-            if chosen.role not in roles[category]:
+            if chosen.role not in _allowed_roles(category, document_kind):
                 raise DomainError("El tipo de fuente no permite el uso propuesto como respaldo.")
             if not str(source.get("quote") or "").strip():
                 raise DomainError("La fuente seleccionada no contiene una cita verificable.")
+            role, reason = chosen.role, chosen.reason.strip()
+            if role == "document" and document_kind and not document_matches(
+                request, source, document_kind
+            ):
+                unconfirmed_document = True
+                add_warning(
+                    f"El fragmento de «{source.get('title') or source['source_id']}» no permite "
+                    "identificar el archivo concreto solicitado; una referencia o un correo "
+                    "de remisión no acredita que su adjunto esté localizado."
+                )
+                if category not in {"historical_response", "historical_attachment"}:
+                    continue
+                role = "antecedent" if category == "historical_response" else "historical_evidence"
+                reason = (
+                    "Referencia contextual; este fragmento no permite identificar "
+                    "el archivo concreto solicitado."
+                )
             # El modelo jamás puede reescribir las citas o las referencias.
-            supports.append({**source, "reason": chosen.reason.strip(), "role": chosen.role})
+            supports.append({**source, "reason": reason, "role": role})
             title = str(source.get("title") or source.get("filename") or source["source_id"])
             if is_historical:
                 add_warning(
@@ -301,15 +366,10 @@ class OpenAISourceAssessor:
                 add_warning(message)
                 add_missing("clarification", message)
 
-        requested_document = _requested_document(request)
-        if requested_document:
+        if document_kind:
             located = any(
                 support["role"] == "document"
-                and (
-                    requested_document == "documento"
-                    or requested_document
-                    in _plain(f"{support.get('title', '')} {support.get('filename', '')}")
-                )
+                and document_matches(request, support, document_kind)
                 for support in supports
             )
             if not located:
@@ -321,6 +381,33 @@ class OpenAISourceAssessor:
                     )
                 add_warning(
                     "Una norma o una mención en otro documento no sustituye el archivo solicitado."
+                )
+
+        if requested_certification(request):
+            certificate_located = any(
+                support["role"] == "document"
+                and any(
+                    document_matches(request, support, kind)
+                    for kind in ("certificacion", "certificado")
+                )
+                for support in supports
+            )
+            if not certificate_located:
+                if not any(
+                    item["kind"] == "document"
+                    and re.search(r"\bcertifica(?:cion|do)", _plain(item["description"]))
+                    for item in missing
+                ):
+                    add_missing(
+                        "document",
+                        "Identificar la certificación expresamente solicitada y confirmar "
+                        "institucionalmente quién puede expedirla, conservando el alcance y "
+                        "responsable indicados en la petición: "
+                        f"{request.get('description') or request.get('title')}.",
+                    )
+                add_warning(
+                    "Un oficio que relata un hecho no sustituye por sí solo la certificación "
+                    "solicitada ni acredita la competencia para expedirla."
                 )
 
         status = selection.status
@@ -341,7 +428,7 @@ class OpenAISourceAssessor:
         summary = selection.summary.strip()
         if not supports:
             summary = "No se localizaron soportes pertinentes en las fuentes consultadas."
-        elif status != selection.status:
+        elif status != selection.status or unconfirmed_document:
             summary = (
                 "Se localizaron referencias, pero quedan documentos, datos o verificaciones "
                 "pendientes antes de preparar la respuesta."

@@ -8,6 +8,8 @@ import unicodedata
 from collections import Counter
 from typing import Any
 
+from .source_documents import document_matches, requested_document, requested_document_number
+
 # Las palabras de trámite suelen aparecer en todas las peticiones y no discriminan
 # documentos. Se conservan negaciones, números y términos propios del asunto.
 _STOPWORDS = frozenset(
@@ -50,6 +52,7 @@ def tokenize(text: str) -> list[str]:
         for character in unicodedata.normalize("NFKD", text.casefold())
         if not unicodedata.combining(character)
     )
+    normalized = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", normalized)
     return [
         token
         for token in re.findall(r"[a-z0-9]+", normalized)
@@ -57,32 +60,21 @@ def tokenize(text: str) -> list[str]:
     ]
 
 
-def retrieve(
-    request: dict[str, Any], chunks: list[dict[str, Any]], limit: int = 8
+def _rank(
+    request: dict[str, Any], eligible: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Ordena con BM25 y limita a tres fragmentos por documento.
-
-    El servicio suministra fuentes públicas, del expediente y de las colecciones
-    vinculadas. Se verifica el alcance de nuevo antes de ordenar los fragmentos.
-    previous_response mantiene el uso de estilo; las categorías historical_*
-    distinguen antecedentes, peticiones y anexos sin convertirlos en hechos actuales.
-    No encontrar coincidencias significa ausencia en esta búsqueda, no inexistencia.
-    """
-    if limit <= 0:
+    """BM25 sobre un corpus cuyo alcance ya fue filtrado por retrieve."""
+    if not eligible:
         return []
     query = " ".join(str(request.get(key) or "") for key in ("title", "description"))
     query_terms = set(tokenize(query))
+    document_kind = requested_document(request)
+    document_number = (
+        requested_document_number(request, "oficio" if document_kind == "correo" else document_kind)
+        if document_kind
+        else None
+    )
     if not query_terms:
-        return []
-    eligible = [
-        chunk
-        for chunk in chunks
-        if chunk.get("category") in _EVIDENCE_CATEGORIES
-        and chunk.get("validity") != "superseded"
-        and str(chunk.get("quote") or "").strip()
-        and source_in_scope(request, chunk)
-    ]
-    if not eligible:
         return []
     # El título ayuda a localizar un documento solicitado, incluso cuando el
     # encabezado no se repite dentro de todos sus fragmentos.
@@ -111,19 +103,159 @@ def retrieve(
                 / (count + k1 * (1 - b + b * length / average_length))
             )
         if score > 0:
-            ranked.append({**chunk, "score": round(score, 8), "matched_terms": matched})
-    ranked.sort(key=lambda chunk: (-chunk["score"], str(chunk["chunk_id"])))
-    counts: Counter[str] = Counter()
-    results: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for chunk in ranked:
+            # Una petición repetida en un correo puede coincidir con más palabras
+            # que el archivo pedido. Reservamos prioridad para indicios del objeto
+            # y su número, sin atribuirle autenticidad, entrega ni revisión.
+            identity = bool(document_kind and document_matches(request, chunk, document_kind))
+            named_identity = bool(
+                identity
+                and document_number
+                and re.search(
+                    rf"(?<!\d){re.escape(document_number)}(?!\d)",
+                    f"{chunk.get('title', '')} {chunk.get('filename', '')}",
+                )
+            )
+            ranked.append(
+                {
+                    **chunk,
+                    "score": round(score, 8),
+                    "matched_terms": matched,
+                    "document_identity_rank": int(identity) + int(named_identity),
+                }
+            )
+    ranked.sort(
+        key=lambda chunk: (
+            -chunk["document_identity_rank"],
+            -chunk["score"],
+            str(chunk["chunk_id"]),
+        )
+    )
+    return ranked
+
+
+_ANSWER_START = re.compile(
+    r"damos\s+respuesta\s+a\s+su\s+solicitud|"
+    r"respondemos\s+a\s+su\s+solicitud|"
+    r"se\s+permite\s+dar\s+respuesta\s+en\s+los\s+siguientes|"
+    r"procede\s+a\s+dar\s+respuesta\s+en\s+los\s+siguientes|"
+    r"permitimos\s+responder\s+de\s+fondo\s+a\s+sus\s+solicitudes\s+"
+    r"en\s+los\s+siguientes",
+    re.IGNORECASE,
+)
+_REPRODUCED_REQUEST = re.compile(
+    r"\s*(?:En\s+el\s+numeral\b[^\n]*?usted\s+solicita|"
+    r"Frente\s+a\s+la\s+solicitud\s+contenida|Se\s+solicita\s+cordial)",
+    re.IGNORECASE,
+)
+
+
+def _answer_chunks(eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Detecta un inicio literal de contestación; no infiere por posición final."""
+    boundaries: dict[str, tuple[int, int]] = {}
+    for chunk in eligible:
+        if chunk.get("category") != "historical_response":
+            continue
+        match = _ANSWER_START.search(chunk["quote"])
+        if not match:
+            continue
+        position = (
+            int(chunk.get("page", 0)),
+            int(chunk.get("line_start", 1)) + chunk["quote"][: match.start()].count("\n"),
+        )
         document_id = str(chunk["document_id"])
-        chunk_id = str(chunk["chunk_id"])
-        if counts[document_id] >= 3 or chunk_id in seen:
+        boundaries[document_id] = min(position, boundaries.get(document_id, position))
+    return [
+        chunk for chunk in eligible
+        if str(chunk["document_id"]) in boundaries
+        and (int(chunk.get("page", 0)), int(chunk.get("line_end", 1)))
+        >= boundaries[str(chunk["document_id"])]
+        and not _REPRODUCED_REQUEST.match(chunk["quote"])
+    ]
+
+
+def _document_budget(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    counts: Counter[str] = Counter()
+    results = []
+    for chunk in rows:
+        document_id = str(chunk["document_id"])
+        if counts[document_id] >= 3:
             continue
         results.append(chunk)
         counts[document_id] += 1
-        seen.add(chunk_id)
         if len(results) == limit:
             break
     return results
+
+
+def retrieve(
+    request: dict[str, Any], chunks: list[dict[str, Any]], limit: int = 24
+) -> list[dict[str, Any]]:
+    """Combina búsqueda general y contestaciones, hasta 24 fragmentos originales.
+
+    Filtra alcance antes de ambas búsquedas. Conserva prioridad del documento o
+    correo pedido, reserva espacio a contestaciones tras un marcador explícito y
+    limita repeticiones a dos fragmentos por documento, o tres para el objeto
+    identificado que se solicita. Un límite explícito menor se respeta. Los
+    indicadores de estructura no prueban hechos ni autenticidad;
+    no encontrar coincidencias tampoco certifica inexistencia institucional.
+    """
+    if limit <= 0:
+        return []
+    limit = min(limit, 24)
+    eligible = [
+        chunk for chunk in chunks
+        if chunk.get("category") in _EVIDENCE_CATEGORIES
+        and chunk.get("validity") != "superseded"
+        and str(chunk.get("quote") or "").strip()
+        and source_in_scope(request, chunk)
+    ]
+    general = _document_budget(_rank(request, eligible), max(32, limit))
+    answers = _document_budget(_rank(request, _answer_chunks(eligible)), max(32, limit))
+    selected: list[dict[str, Any]] = []
+    requested_documents = {
+        str(row["document_id"]) for row in general
+        if row.get("document_identity_rank", 0) > 0
+    }
+    counts: Counter[str] = Counter()
+    seen: set[str] = set()
+    terms: list[set[str]] = []
+
+    def add(row, deduplicate=True):
+        document_id, chunk_id = str(row["document_id"]), str(row["chunk_id"])
+        document_limit = 3 if document_id in requested_documents else 2
+        if (
+            len(selected) >= limit or chunk_id in seen
+            or counts[document_id] >= document_limit
+        ):
+            return False
+        words = set(tokenize(row["quote"]))
+        if deduplicate and any(
+            len(words & previous) / max(1, len(words | previous)) >= .82
+            for previous in terms
+        ):
+            return False
+        selected.append(row)
+        counts[document_id] += 1
+        seen.add(chunk_id)
+        terms.append(words)
+        return True
+
+    for row in general:
+        if row.get("document_identity_rank", 0) <= 0:
+            break
+        add(row, deduplicate=False)
+        if len(selected) >= min(4, limit):
+            break
+    answer_budget = min(12, limit - len(selected))
+    answer_count = 0
+    for row in answers:
+        answer_count += add(row)
+        if answer_count >= answer_budget:
+            break
+    for row in general:
+        add(row)
+    # Si no hay suficientes pasajes distintos, mantener el límite explícito no
+    # exige perder coincidencias útiles; se conserva el máximo por documento.
+    for row in general:
+        add(row, deduplicate=False)
+    return selected

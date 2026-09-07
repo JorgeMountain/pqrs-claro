@@ -208,6 +208,186 @@ def test_historical_evidence_role_is_distinct_from_locating_a_requested_document
     assert any(item["kind"] == "document" for item in result["missing"])
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Solicito copia del documento que contiene el acta 2212 del consejo.",
+        "Adjunte el documento correspondiente al acta2212 del consejo.",
+        "Solicito copia del acta 2212 del consejo.",
+    ],
+)
+def test_email_mention_cannot_locate_the_acta_even_inside_generic_document_wording(description):
+    source = historical(
+        category="historical_attachment",
+        title="Notificación del consejo",
+        filename="notificacion.pdf",
+        quote="1 mensaje\nPara: destinatario@example.test\nSe menciona el acta 2212 del consejo.",
+    )
+    result = materialize(
+        source,
+        inquiry(title="Copia del documento", description=description),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "historical_evidence"
+    assert result["supports"][0]["quote"] == source["quote"]
+    assert any(item["kind"] == "document" for item in result["missing"])
+    assert "no permite identificar" in result["supports"][0]["reason"]
+    assert result["status"] == "needs_evidence"
+
+
+@pytest.mark.parametrize(
+    "title,quote",
+    [
+        ("Acta 2212 del consejo", "El oficio hace referencia al acta 2212 del consejo."),
+        ("Acta 2213 del consejo", "ACTA 2213 DEL CONSEJO\nSe menciona el acta 2212 anterior."),
+    ],
+)
+def test_document_title_or_mention_does_not_replace_corresponding_identity(title, quote):
+    source = historical(
+        category="historical_attachment", title=title, filename="anexo.pdf", quote=quote
+    )
+    result = materialize(
+        source,
+        inquiry(title="Copia del acta", description="Solicito copia del acta 2212."),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] != "document"
+    assert any(item["kind"] == "document" for item in result["missing"])
+
+
+def test_copy_of_the_requested_historical_office_is_located_without_certifying_issuance():
+    source = historical(
+        title="Oficio 1436 Respuesta a petición ficticia",
+        filename="Oficio_1436.pdf",
+        quote=(
+            "21360001-1436-2024\nAsunto: Respuesta a petición ficticia.\n"
+            "Se recibió una comunicación por correo electrónico."
+        ),
+        document_status="unknown",
+        verification_status="pending",
+        review_status="pending",
+    )
+    result = materialize(
+        source,
+        inquiry(
+            title="Copia del oficio", description="Solicito copia del oficio 21360001-1436-2024."
+        ),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "document"
+    assert result["supports"][0]["quote"] == source["quote"]
+    assert not any(item["kind"] == "document" for item in result["missing"])
+    assert any("versión expedida" in item["description"] for item in result["missing"])
+    assert any("Documentar quién verificó" in item["description"] for item in result["missing"])
+    assert any("ni entrega de documentos" in warning for warning in result["warnings"])
+    assert result["status"] == "needs_evidence"
+
+
+def test_same_office_number_in_another_year_does_not_match_a_mention_of_the_requested_one():
+    source = historical(
+        title="Oficio 1436-2025",
+        filename="oficio_1436_2025.pdf",
+        quote="21360001-1436-2025\nEste oficio menciona el anterior 21360001-1436-2024.",
+    )
+    result = materialize(
+        source,
+        inquiry(title="Copia del oficio", description="Adjunte el oficio 21360001-1436-2024."),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "antecedent"
+    assert any(item["kind"] == "document" for item in result["missing"])
+
+
+def notification_email():
+    return historical(
+        category="historical_attachment",
+        title="Anexo 2 NOTIFICACIÓN Oficio 21360001-1436-2024",
+        filename="notificacion_oficio_1436.pdf",
+        quote=(
+            "NOTIFICACIÓN PERSONAL POR MEDIO ELECTRÓNICO\n1 mensaje\n"
+            "Para: destinatario@example.test\nSe adjunta el oficio 21360001-1436-2024."
+        ),
+        document_status="unknown",
+        review_status="pending",
+    )
+
+
+def test_email_itself_can_be_located_when_it_is_the_requested_object():
+    result = materialize(
+        notification_email(),
+        inquiry(
+            title="Correo de remisión",
+            description="Adjunte copia del correo de remisión del oficio 21360001-1436-2024.",
+        ),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "document"
+    assert not any(item["kind"] == "document" for item in result["missing"])
+    assert any("ni entrega de documentos" in warning for warning in result["warnings"])
+    assert result["status"] == "needs_evidence"
+
+
+def test_the_same_email_does_not_locate_the_office_attached_to_it():
+    result = materialize(
+        notification_email(),
+        inquiry(title="Copia del oficio", description="Adjunte el oficio 21360001-1436-2024."),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "historical_evidence"
+    assert any(item["kind"] == "document" for item in result["missing"])
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Solicitar al Secretario General que certifique la titularidad docente durante 2015.",
+        "Obtener una certificación del Secretario General sobre la titularidad durante 2015.",
+        "Solicito expedir un certificado sobre la titularidad docente durante 2015.",
+        "Solicito emitir una certificación sobre la titularidad docente durante 2015.",
+    ],
+)
+def test_request_to_certify_keeps_certificate_pending_beyond_the_historical_finding(description):
+    source = historical(quote="El oficio afirma que existía soporte de titularidad en 2015-1.")
+    result = materialize(source, inquiry(title="Titularidad docente", description=description))
+    certificates = [
+        item for item in result["missing"]
+        if item["kind"] == "document" and "certificación" in item["description"]
+    ]
+    assert len(certificates) == 1
+    assert description in certificates[0]["description"]
+    assert "confirmar institucionalmente quién puede expedirla" in certificates[0]["description"]
+    assert result["supports"][0]["role"] == "antecedent"
+    assert result["status"] == "needs_evidence"
+
+
+def test_request_only_to_explain_the_historical_fact_does_not_demand_a_new_certificate():
+    result = materialize(
+        request=inquiry(
+            title="Titularidad docente", description="Explique quién fue el docente durante 2015-1."
+        )
+    )
+    assert not any(item["kind"] == "document" for item in result["missing"])
+    assert result["supports"][0]["role"] == "antecedent"
+
+
+def test_located_certificate_remains_subject_to_review_without_requesting_it_again():
+    source = historical(
+        category="historical_attachment",
+        title="Certificación de titularidad docente",
+        filename="certificacion.pdf",
+        quote="CERTIFICACIÓN DE TITULARIDAD DOCENTE\nContenido ficticio referido a 2015-1.",
+    )
+    result = materialize(
+        source,
+        inquiry(title="Certificación", description="Solicito certificar la titularidad en 2015-1."),
+        choice(role="document"),
+    )
+    assert result["supports"][0]["role"] == "document"
+    assert not any(item["kind"] == "document" for item in result["missing"])
+    assert any("persona y periodo" in item["description"] for item in result["missing"])
+    assert result["status"] == "needs_evidence"
+
+
 def test_assessor_checks_scope_before_transmitting_any_content_to_provider():
     calls = []
     assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")

@@ -130,7 +130,9 @@ def test_assessment_uses_structured_responses_and_literal_references():
 
     def fake_parse(**kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(status="completed", output_parsed=selection())
+        proposed = selection()
+        proposed.supports[0].chunk_id = "C1"
+        return SimpleNamespace(status="completed", output_parsed=proposed)
 
     assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=fake_parse))
@@ -138,13 +140,134 @@ def test_assessment_uses_structured_responses_and_literal_references():
     result = assessor.assess(request(), [original])
     assert calls[0]["store"] is False
     assert calls[0]["truncation"] == "disabled"
-    assert json.loads(calls[0]["input"])["candidates"][0]["quote"] == original["quote"]
+    sent = json.loads(calls[0]["input"])["candidates"][0]
+    assert sent == {**original, "chunk_id": "C1", "allowed_roles": ["fact", "document"]}
+    assert original["chunk_id"] == "acta-1"
     assert result["request_id"] == "P1"
     assert result["supports"][0]["quote"] == original["quote"]
+    assert result["supports"][0]["chunk_id"] == original["chunk_id"]
     assert result["supports"][0]["line_start"] == 1
     assert result["status"] == "references_found"
     assert result["missing"] == []
     assert "preliminar" in result["summary"]
+
+
+@pytest.mark.parametrize("count", [8, 24])
+def test_assessor_maps_closed_aliases_to_exact_original_chunks_in_selection_order(count):
+    originals = [
+        chunk(
+            f"long-identifier-{index}:1:1:3",
+            source_id=f"source-{index}",
+            document_id=f"document-{index}",
+            quote=f"ACTA DEL COMITÉ DE PRÁCTICAS 14\nFragmento ficticio {index}.",
+        )
+        for index in range(count)
+    ]
+    proposed = selection()
+    proposed.supports[0].chunk_id = f"C{count}"
+    proposed.supports.append(proposed.supports[0].model_copy(update={"chunk_id": "C1"}))
+    calls = []
+
+    def fake_parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status="completed", output_parsed=proposed)
+
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=fake_parse))
+    result = assessor.assess(request(), originals)
+    sent = json.loads(calls[0]["input"])["candidates"]
+    assert sent == [
+        {**source, "chunk_id": f"C{i}", "allowed_roles": ["fact", "document"]}
+        for i, source in enumerate(originals, 1)
+    ]
+    assert [support["chunk_id"] for support in result["supports"]] == [
+        originals[-1]["chunk_id"], originals[0]["chunk_id"]
+    ]
+    assert [support["quote"] for support in result["supports"]] == [
+        originals[-1]["quote"], originals[0]["quote"]
+    ]
+    assert [support.chunk_id for support in proposed.supports] == [f"C{count}", "C1"]
+
+
+@pytest.mark.parametrize(
+    "category,description,expected_roles,forbidden_role",
+    [
+        ("national_norm", "Explique los requisitos.", ["rule"], "fact"),
+        ("institutional_norm", "Explique los requisitos.", ["rule"], "document"),
+        ("case_evidence", "Explique el hecho.", ["fact", "document"], "rule"),
+        ("historical_response", "Explique el antecedente.", ["antecedent"], "fact"),
+        ("historical_response", "Adjunte el oficio 14.", ["antecedent", "document"], "fact"),
+        ("historical_petition", "Explique lo preguntado.", ["antecedent"], "fact"),
+        (
+            "historical_attachment", "Adjunte el acta 14.",
+            ["historical_evidence", "document"], "fact",
+        ),
+    ],
+)
+def test_api_allowed_roles_and_local_rejection_share_the_same_contract(
+    category, description, expected_roles, forbidden_role
+):
+    source = chunk(category=category, collection_id="historia-equipo")
+    inquiry = request(title="Consulta", description=description,
+                      allowed_collection_ids=["historia-equipo"])
+    proposed = selection()
+    proposed.supports[0].chunk_id = "C1"
+    proposed.supports[0].role = forbidden_role
+    calls = []
+
+    def fake_parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status="completed", output_parsed=proposed)
+
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=fake_parse))
+    with pytest.raises(DomainError, match="tipo de fuente"):
+        assessor.assess(inquiry, [source])
+    sent = json.loads(calls[0]["input"])["candidates"][0]
+    assert sent["allowed_roles"] == expected_roles
+    assert sent["quote"] == source["quote"]
+    assert "allowed_roles" not in source
+
+
+@pytest.mark.parametrize("alias", ["C2", "c1", " C1", "C01", "acta-1", "acta-version-1"])
+def test_assessor_rejects_unknown_aliases_without_fuzzy_or_source_id_fallback(alias):
+    proposed = selection()
+    proposed.supports[0].chunk_id = alias
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            parse=lambda **_: SimpleNamespace(status="completed", output_parsed=proposed)
+        )
+    )
+    with pytest.raises(DomainError, match="alias de fragmento que no existe"):
+        assessor.assess(request(), [chunk()])
+
+
+def test_assessor_rejects_repeated_alias_instead_of_silently_deduplicating_selection():
+    proposed = selection()
+    proposed.supports[0].chunk_id = "C1"
+    proposed.supports.append(proposed.supports[0].model_copy())
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            parse=lambda **_: SimpleNamespace(status="completed", output_parsed=proposed)
+        )
+    )
+    with pytest.raises(DomainError, match="repitió"):
+        assessor.assess(request(), [chunk()])
+
+
+def test_assessor_rejects_ambiguous_candidate_alias_mapping_before_the_api_call():
+    calls = []
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(
+        responses=SimpleNamespace(parse=lambda **kwargs: calls.append(kwargs))
+    )
+    with pytest.raises(DomainError, match="identificadores repetidos"):
+        assessor.assess(request(), [chunk(), chunk(quote="Otro texto con el mismo identificador.")])
+    with pytest.raises(DomainError, match="veinticuatro fragmentos"):
+        assessor.assess(request(), [chunk(f"chunk-{index}") for index in range(25)])
+    assert calls == []
 
 
 def test_assessment_rejects_invented_and_duplicate_references():
