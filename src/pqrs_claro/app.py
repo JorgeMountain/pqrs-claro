@@ -11,8 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import ROOT, Settings
+from .extraction import OpenAIOCR, PDFExtractor
 from .models import Identification
 from .service import CaseService
+from .source_api import source_router
+from .source_library import SourceLibrary
+from .source_service import SourceService
 from .storage import CaseStore, Conflict
 
 
@@ -42,19 +46,28 @@ def check_pdf(data, settings):
         raise ValueError("El PDF está dañado o no puede abrirse.") from None
 
 
-def create_app(settings=None, *, extractor=None, identifier=None):
+def create_app(settings=None, *, extractor=None, identifier=None, source_assessor=None):
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
+    source_extractor = PDFExtractor(
+        OpenAIOCR(settings.api_key, settings.model) if settings.api_key else None
+    )
+    library = SourceLibrary(settings.data_dir, source_extractor)
+    sources_service = SourceService(settings, store, library, assessor=source_assessor)
 
     @asynccontextmanager
     async def lifespan(app):
         store.recover_interrupted()
+        library.recover()
         yield
         service.close()
+        sources_service.close()
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
+    app.state.library, app.state.sources = library, sources_service
+    app.include_router(source_router(library, sources_service, store))
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
     )
@@ -83,7 +96,7 @@ def create_app(settings=None, *, extractor=None, identifier=None):
 
     @app.exception_handler(KeyError)
     async def missing_handler(request, exc):
-        return JSONResponse({"detail": "No se encontró el expediente."}, 404)
+        return JSONResponse({"detail": "No se encontró el expediente o la fuente solicitada."}, 404)
 
     @app.exception_handler(ValueError)
     async def value_handler(request, exc):

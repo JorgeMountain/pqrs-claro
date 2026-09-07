@@ -1,6 +1,8 @@
 """Expedientes y revisiones en SQLite, separados de los checkpoints de LangGraph."""
 
+import hashlib
 import json
+import os
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -10,6 +12,14 @@ from uuid import uuid4
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def write_original(path, data):
+    """Confirma los bytes en disco antes de registrar su existencia en SQLite."""
+    with path.open("wb") as output:
+        output.write(data)
+        output.flush()
+        os.fsync(output.fileno())
 
 
 class Conflict(ValueError):
@@ -44,8 +54,7 @@ class CaseStore:
         case_id = uuid4().hex
         folder = self.root / "files" / case_id
         folder.mkdir(parents=True)
-        (folder / "original.pdf").write_bytes(pdf)
-        import hashlib
+        write_original(folder / "original.pdf", pdf)
 
         case = dict(
             id=case_id,
@@ -110,8 +119,17 @@ class CaseStore:
         return case
 
     def original(self, case_id):
-        self.get(case_id)  # Solo IDs existentes pueden convertirse en rutas.
-        return self.root / "files" / case_id / "original.pdf"
+        case = self.get(case_id)  # Solo IDs existentes pueden convertirse en rutas.
+        path = self.root / "files" / case_id / "original.pdf"
+        if not path.is_file():
+            raise ValueError(
+                "Falta el PDF original en este equipo. Restaura su copia antes de continuar."
+            )
+        if hashlib.sha256(path.read_bytes()).hexdigest() != case["sha256"]:
+            raise ValueError(
+                "El PDF original cambió en disco. Restaura la copia original antes de continuar."
+            )
+        return path
 
     def recover_interrupted(self):
         for case in self.list():

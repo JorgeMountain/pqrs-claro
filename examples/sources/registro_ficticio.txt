@@ -1,0 +1,17 @@
+EJEMPLO FICTICIO · FUENTE PARA PRUEBAS DEL SISTEMA
+Institución Ejemplo — Programa ficticio Aula Abierta
+Registro ficticio de seguimiento del caso EJEMPLO-042
+Este registro no acredita actuaciones de una entidad real.
+
+Identificador del caso: EJEMPLO-042.
+Trámite: revisión de una inscripción en el programa ficticio Aula Abierta.
+Fecha de recepción registrada: 1 de septiembre de 2026 (2026-09-01).
+Estado al corte del registro: En revisión.
+Fecha de corte del registro: 7 de septiembre de 2026 (2026-09-07).
+Responsable ficticio del registro: Oficina de atención de la Institución Ejemplo.
+
+Soportes disponibles
+Este archivo es un registro textual de fecha de recepción y estado del caso ficticio. No es el archivo del acta solicitado.
+
+Información pendiente
+No se adjunta copia del acta de reunión del comité Aula Abierta sobre EJEMPLO-042. El registro tampoco confirma si esa reunión ocurrió ni si existe un acta. Para atender el pedido de copia es necesario solicitar al responsable la verificación de existencia y, si existe, el archivo completo.

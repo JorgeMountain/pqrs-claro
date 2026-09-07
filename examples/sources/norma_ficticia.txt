@@ -1,0 +1,22 @@
+EJEMPLO FICTICIO · FUENTE PARA PRUEBAS DEL SISTEMA
+Institución Ejemplo — Programa ficticio Aula Abierta
+Reglas de revisión de una inscripción — versión 1
+Este documento no corresponde a una entidad real ni constituye normativa aplicable a casos reales.
+
+Objeto
+Estas reglas describen el procedimiento y los requisitos para solicitar la revisión de una inscripción en el programa ficticio Aula Abierta.
+
+Procedimiento
+1. Preparar el formulario ficticio de revisión de inscripción.
+2. Presentar el formulario y sus soportes en la ventanilla ficticia Aula Abierta.
+3. La oficina ficticia registra la recepción y comunica el identificador del caso.
+4. El equipo ficticio de revisión verifica los soportes y comunica el resultado al solicitante.
+
+Requisitos
+- Indicar el identificador de la inscripción que se pide revisar.
+- Explicar el motivo de la revisión en el formulario ficticio.
+- Adjuntar copia de la constancia ficticia de inscripción.
+
+Alcance de esta fuente
+Describe reglas generales del ejemplo. No certifica la recepción ni el estado de un expediente individual. No contiene actas de reuniones ni demuestra que una reunión haya ocurrido.
+La revisión y la vigencia registradas para esta fuente son parte de la demostración ficticia.

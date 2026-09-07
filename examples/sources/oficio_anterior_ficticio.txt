@@ -1,0 +1,15 @@
+EJEMPLO FICTICIO · REFERENCIA DE ESTILO PARA PRUEBAS DEL SISTEMA
+Institución Ejemplo — Programa ficticio Aula Abierta
+Oficio anterior del caso EJEMPLO-999
+Este documento no corresponde a un caso real.
+
+Asunto: Respuesta a solicitud de copia del acta — EJEMPLO-999.
+
+En atención a su solicitud, remitimos adjunta copia completa del acta de la reunión ficticia del comité Aula Abierta en la que se estudió el caso EJEMPLO-999.
+
+El documento mencionado corresponde únicamente al caso ficticio EJEMPLO-999. Este oficio es una muestra de redacción, no contiene el acta ni acredita que se haya entregado documento alguno en EJEMPLO-042. No debe emplearse como respaldo de hechos o reglas en otro expediente.
+
+Atentamente,
+Oficina ficticia de atención.
+
+Uso permitido en la demostración: reconocer la estructura de un oficio anterior. Su afirmación de entrega no puede trasladarse a una respuesta nueva.

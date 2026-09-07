@@ -11,6 +11,7 @@ import {
   metadata,
 } from "./ui.js";
 import { requestsView, quoteFor } from "./requests.js";
+import { createSources } from "./sources.js";
 
 const state = {
   config: null,
@@ -26,6 +27,7 @@ const state = {
   poll: null,
   notice: null,
   conflict: false,
+  library: false,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -151,6 +153,12 @@ function clearDraft() {
 }
 function adopt(current, reset = false) {
   state.current = current;
+  sources.setCase(current);
+  if (
+    current.status === "confirmed" &&
+    (!sources.state.loaded || !sources.state.mapping)
+  )
+    void sources.load({ quiet: true });
   if (reset) {
     clearDraft();
     state.page = current.pages?.[0]?.number || 1;
@@ -182,6 +190,7 @@ async function selectCase(id) {
   await perform(async () => {
     const current = await api(`/api/cases/${encodeURIComponent(id)}`);
     adopt(current, true);
+    state.library = false;
     state.notice = null;
     const url = new URL(location.href);
     url.searchParams.set("case", id);
@@ -193,6 +202,8 @@ function newCase() {
   if (state.busy || !discardAllowed()) return;
   clearDraft();
   state.current = null;
+  state.library = false;
+  sources.setCase(null);
   state.notice = null;
   const url = new URL(location.href);
   url.searchParams.delete("case");
@@ -428,7 +439,7 @@ async function confirm() {
     adopt(await api(`/api/cases/${id}`), true);
     await refreshCases();
     notify(
-      "Identificación confirmada y guardada. Completaste la parte 3 de este proyecto.",
+      "Identificación confirmada y guardada. El siguiente paso es agregar los soportes y buscar fuentes para cada solicitud.",
     );
   });
 }
@@ -517,6 +528,11 @@ const actions = {
 function renderSidebar() {
   $("case-count").textContent = state.cases.length;
   $("new-case").disabled = state.busy;
+  $("open-library").disabled = state.busy;
+  $("open-library").setAttribute(
+    "aria-pressed",
+    state.library ? "true" : "false",
+  );
   $("case-list").replaceChildren(
     ...(state.cases.length
       ? state.cases.map((current) =>
@@ -563,29 +579,42 @@ function render() {
   renderNotice();
   const status = state.current?.status;
   const stage =
-    !status || status === "uploaded"
-      ? 0
-      : running(status) || status === "error"
-        ? 1
-        : 2;
-  ["step-upload", "step-analyze", "step-review"].forEach((id, index) => {
-    $(id).className =
-      index < stage || status === "confirmed"
-        ? "done"
-        : index === stage
-          ? "active"
-          : "";
-    $(id).setAttribute("aria-current", index === stage ? "step" : "false");
-  });
+    status === "confirmed"
+      ? 3
+      : !status || status === "uploaded"
+        ? 0
+        : running(status) || status === "error"
+          ? 1
+          : 2;
+  ["step-upload", "step-analyze", "step-review", "step-sources"].forEach(
+    (id, index) => {
+      $(id).className =
+        index < stage ? "done" : index === stage ? "active" : "";
+      $(id).setAttribute("aria-current", index === stage ? "step" : "false");
+    },
+  );
   const configNode = $("connection-state");
   configNode.className = `connection-state ${state.config?.ready ? "ready" : "unavailable"}`;
   configNode.textContent = state.config?.ready
     ? "Análisis con IA disponible"
     : "IA pendiente de configuración";
   const current = state.current;
+  const sourcesStage = current?.status === "confirmed";
+  document.querySelector(".workspace-heading h1").textContent = state.library
+    ? "Biblioteca de fuentes"
+    : sourcesStage
+      ? "Encontrar el respaldo"
+      : "Entender la petición";
+  document.querySelector(".page-intro").textContent = state.library
+    ? "Organiza los documentos que sirven de consulta y soporte."
+    : sourcesStage
+      ? "Comprueba qué tenemos para cada solicitud y qué falta aportar."
+      : "Identifica qué se solicita y compruébalo con el original.";
+  document.querySelector(".journey").hidden = state.library;
   actions.busy = state.busy;
   actions.ready = state.config?.ready;
-  if (!current)
+  if (state.library) $("work-content").replaceChildren(sources.libraryView());
+  else if (!current)
     $("work-content").replaceChildren(welcome(state.config, actions));
   else {
     const identity = state.draft || current.identification;
@@ -598,6 +627,13 @@ function render() {
       main.append(requestsView(state, actions));
     else main.append(progress(current, actions));
     main.append(processView(current));
+    const identificationGrid = el(
+      "div",
+      { className: "case-grid" },
+      main,
+      original(current, state.page, state.highlight, showPage),
+    );
+    const identificationOpen = $("confirmed-identification")?.open;
     $("work-content").replaceChildren(
       el(
         "div",
@@ -624,12 +660,25 @@ function render() {
           statusLabel(status),
         ),
       ),
-      el(
-        "div",
-        { className: "case-grid" },
-        main,
-        original(current, state.page, state.highlight, showPage),
-      ),
+      ...(sourcesStage
+        ? [
+            sources.caseView(),
+            el(
+              "details",
+              {
+                className: "confirmed-identification",
+                id: "confirmed-identification",
+                open: Boolean(identificationOpen),
+              },
+              el(
+                "summary",
+                {},
+                "Consultar la identificación confirmada y el original",
+              ),
+              identificationGrid,
+            ),
+          ]
+        : [identificationGrid]),
     );
     if (processOpen && $("process-details")) $("process-details").open = true;
     if (identityOpen && $("identity-details"))
@@ -641,10 +690,32 @@ function render() {
       .forEach((control) => {
         control.disabled = true;
       });
-  document.title = current
-    ? `${current.filename} · PQRS Claro`
-    : "PQRS Claro · Entender la petición";
+  document.title = state.library
+    ? "Biblioteca de fuentes · PQRS Claro"
+    : current
+      ? `${current.filename} · PQRS Claro`
+      : "PQRS Claro · Entender la petición";
 }
+
+function openLibrary() {
+  if (state.busy) return;
+  state.library = true;
+  sources.setCase(state.current);
+  void sources.load();
+}
+function closeLibrary() {
+  state.library = false;
+  render();
+  $("workspace").focus({ preventScroll: true });
+}
+const sources = createSources({
+  api,
+  notify,
+  getCase: () => state.current,
+  render,
+  openLibrary,
+  closeLibrary,
+});
 
 function schedulePoll() {
   clearTimeout(state.poll);
@@ -687,6 +758,7 @@ async function poll() {
 }
 
 $("new-case").addEventListener("click", newCase);
+$("open-library").addEventListener("click", openLibrary);
 $("file-picker").addEventListener("change", (event) => {
   upload(event.target.files[0]);
   event.target.value = "";

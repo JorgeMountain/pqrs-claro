@@ -1,0 +1,46 @@
+[
+  {
+    "filename": "norma_ficticia.txt",
+    "title": "Reglas ficticias de Aula Abierta",
+    "category": "institutional_norm",
+    "origin": "Institución Ejemplo; documento local ficticio de demostración",
+    "review_status": "reviewed",
+    "validity": "current",
+    "reviewed_by": "Responsable ficticio del ejemplo",
+    "review_note": "Fuente ficticia para demostración",
+    "usage": "default"
+  },
+  {
+    "filename": "registro_ficticio.txt",
+    "title": "Registro ficticio del caso EJEMPLO-042",
+    "category": "case_evidence",
+    "origin": "Oficina ficticia de atención; registro local de EJEMPLO-042 al 7 de septiembre de 2026",
+    "review_status": "reviewed",
+    "validity": "not_applicable",
+    "reviewed_by": "Responsable ficticio del ejemplo",
+    "review_note": "Fuente ficticia para demostración",
+    "usage": "default"
+  },
+  {
+    "filename": "oficio_anterior_ficticio.txt",
+    "title": "Oficio ficticio de EJEMPLO-999 — solo estilo",
+    "category": "previous_response",
+    "origin": "Institución Ejemplo; oficio ficticio de un caso diferente",
+    "review_status": "reviewed",
+    "validity": "not_applicable",
+    "reviewed_by": "Responsable ficticio del ejemplo",
+    "review_note": "Fuente ficticia para demostración",
+    "usage": "style_test"
+  },
+  {
+    "filename": "norma_ficticia_v2.txt",
+    "title": "Reglas ficticias de Aula Abierta",
+    "category": "institutional_norm",
+    "origin": "Institución Ejemplo; segunda versión ficticia para prueba de actualización",
+    "review_status": "reviewed",
+    "validity": "current",
+    "reviewed_by": "Responsable ficticio del ejemplo",
+    "review_note": "Fuente ficticia para demostración",
+    "usage": "version_test"
+  }
+]

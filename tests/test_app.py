@@ -205,3 +205,19 @@ def test_original_and_page_preview_match_uploaded_pdf(app_client, pdf_bytes):
     assert client.get(path + "/pages/0.png").status_code == 404
     assert client.get(path + "/pages/2.png").status_code == 404
     assert client.get("/api/cases/missing/original").status_code == 404
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_unavailable_original_reports_recovery_without_losing_case(app_client, pdf_bytes, missing):
+    app, client, _, _ = app_client
+    case = upload(client, pdf_bytes)
+    original = app.state.store.original(case["id"])
+    if missing:
+        original.unlink()
+    else:
+        original.write_bytes(b"damaged")
+    for suffix in ("original", "pages/1.png"):
+        response = client.get(f"/api/cases/{case['id']}/{suffix}")
+        assert response.status_code == 422
+        assert "original" in response.json()["detail"]
+    assert client.get(f"/api/cases/{case['id']}").json()["version"] == case["version"]

@@ -1,0 +1,291 @@
+"""Contrato de búsqueda con corpus ficticio y dobles explícitos, sin red ni claves."""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+from types import SimpleNamespace
+
+import pytest
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+from pqrs_claro.models import DomainError
+from pqrs_claro.source_assessment import OpenAISourceAssessor, _SourceSelection
+from pqrs_claro.source_graph import build_source_graph
+from pqrs_claro.source_retrieval import retrieve
+
+
+def chunk(identifier="acta-1", **changes):
+    """Metadatos de un PDF ficticio ya incorporado a la biblioteca."""
+    result = {
+        "chunk_id": identifier,
+        "source_id": "acta-version-1",
+        "document_id": "acta-document",
+        "version": 1,
+        "title": "Acta del comité de prácticas 14",
+        "category": "case_evidence",
+        "case_id": "case-a",
+        "filename": "acta_comite_14.pdf",
+        "origin": "Secretaría del comité. Ejemplo ficticio.",
+        "review_status": "reviewed",
+        "validity": "not_applicable",
+        "page": 1,
+        "line_start": 1,
+        "line_end": 3,
+        "quote": "ACTA DEL COMITÉ DE PRÁCTICAS 14\n  Fecha: 2 de septiembre.\nSe aprobó la plaza.",
+        "method": "native",
+        "needs_review": False,
+    }
+    return {**result, **changes}
+
+
+def request(**changes):
+    return {
+        "id": "P1",
+        "title": "Copia del acta",
+        "description": "Solicito copia del acta 14 del comité de prácticas.",
+        "case_id": "case-a",
+        **changes,
+    }
+
+
+def selection(**changes):
+    return _SourceSelection.model_validate(
+        {
+            "status": "references_found",
+            "summary": "Se localizó el acta del comité que corresponde a la solicitud.",
+            "missing": [],
+            "supports": [
+                {
+                    "chunk_id": "acta-1",
+                    "reason": "Contiene el acta 14 solicitada.",
+                    "role": "document",
+                }
+            ],
+            "warnings": [],
+            **changes,
+        }
+    )
+
+
+def test_retrieval_ranks_relevant_original_fragments_and_handles_accents():
+    irrelevant = chunk(
+        "sport",
+        document_id="sports",
+        title="Calendario deportivo",
+        quote="Horario de entrenamiento de fútbol y baloncesto.",
+    )
+    norms = chunk(
+        "norm",
+        document_id="rules",
+        category="institutional_norm",
+        validity="current",
+        title="Reglamento de prácticas",
+        quote="El comité establecerá los requisitos para el proceso de prácticas.",
+        case_id=None,
+    )
+    original = chunk()
+    results = retrieve(
+        request(description="SOLICITO COPIA DEL ACTA 14 DEL COMITE DE PRACTICAS."),
+        [irrelevant, norms, original],
+    )
+    assert results[0]["chunk_id"] == "acta-1"
+    assert results[0]["quote"] == original["quote"]
+    assert results[0]["source_id"] == original["source_id"]
+    assert "comite" in results[0]["matched_terms"]
+    assert all(result["score"] > 0 for result in results)
+    assert "sport" not in {result["chunk_id"] for result in results}
+    assert "score" not in original  # Una búsqueda no reescribe la fuente.
+
+
+def test_retrieval_excludes_style_superseded_and_other_cases():
+    sources = [
+        chunk("old-response", category="previous_response"),
+        chunk("old-norm", category="institutional_norm", validity="superseded"),
+        chunk("other-case", case_id="case-b"),
+        chunk("current"),
+        chunk("library", category="institutional_norm", validity="current", case_id=None),
+    ]
+    assert {item["chunk_id"] for item in retrieve(request(), sources)} == {"current", "library"}
+
+
+def test_retrieval_diversifies_documents_and_never_returns_zero_matches():
+    corpus = [chunk(f"acta-{index}") for index in range(10)]
+    corpus.extend(
+        chunk(f"annex-{index}", document_id=f"annex-{index}", title="Anexo del acta 14")
+        for index in range(7)
+    )
+    results = retrieve(request(), corpus, limit=8)
+    assert len(results) == 8
+    assert max(Counter(item["document_id"] for item in results).values()) <= 3
+    assert (
+        retrieve(request(title="", description="Favor informar sobre la solicitud"), corpus) == []
+    )
+    assert retrieve(request(title="", description="Radiotelescopio fotométrico"), corpus) == []
+    assert retrieve(request(), corpus, limit=0) == []
+
+
+def test_assessment_uses_structured_responses_and_literal_references():
+    calls = []
+
+    def fake_parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(status="completed", output_parsed=selection())
+
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=fake_parse))
+    original = chunk()
+    result = assessor.assess(request(), [original])
+    assert calls[0]["store"] is False
+    assert calls[0]["truncation"] == "disabled"
+    assert json.loads(calls[0]["input"])["candidates"][0]["quote"] == original["quote"]
+    assert result["request_id"] == "P1"
+    assert result["supports"][0]["quote"] == original["quote"]
+    assert result["supports"][0]["line_start"] == 1
+    assert result["status"] == "references_found"
+    assert result["missing"] == []
+    assert "preliminar" in result["summary"]
+
+
+def test_assessment_rejects_invented_and_duplicate_references():
+    bad = selection()
+    bad.supports[0].chunk_id = "invented-source"
+    with pytest.raises(DomainError, match="no existe"):
+        OpenAISourceAssessor._materialize(bad, request(), [chunk()])
+    bad = selection()
+    bad.supports.append(bad.supports[0].model_copy())
+    with pytest.raises(DomainError, match="repitió"):
+        OpenAISourceAssessor._materialize(bad, request(), [chunk()])
+
+
+@pytest.mark.parametrize(
+    "source_changes,role,message",
+    [
+        ({"category": "national_norm", "validity": "current"}, "fact", "tipo de fuente"),
+        ({"category": "institutional_norm", "validity": "current"}, "document", "tipo de fuente"),
+        ({"category": "case_evidence"}, "rule", "tipo de fuente"),
+        ({"category": "previous_response"}, "fact", "oficio anterior"),
+        ({"validity": "superseded"}, "document", "reemplazada"),
+        ({"case_id": "case-b"}, "document", "otro expediente"),
+    ],
+)
+def test_assessment_enforces_source_scope_and_evidence_roles(source_changes, role, message):
+    proposed = selection()
+    proposed.supports[0].role = role
+    with pytest.raises(DomainError, match=message):
+        OpenAISourceAssessor._materialize(proposed, request(), [chunk(**source_changes)])
+
+
+def test_norm_describing_actas_cannot_satisfy_request_for_actual_file():
+    proposed = selection(
+        supports=[
+            {"chunk_id": "acta-1", "reason": "Regula la elaboración de actas.", "role": "rule"}
+        ]
+    )
+    norm = chunk(
+        category="institutional_norm",
+        validity="current",
+        title="Reglamento del comité de prácticas",
+        quote="El comité levantará un acta de cada sesión y conservará las copias.",
+        case_id=None,
+    )
+    result = OpenAISourceAssessor._materialize(proposed, request(), [norm])
+    assert result["status"] == "needs_evidence"
+    assert result["supports"][0]["role"] == "rule"
+    assert any(item["kind"] == "document" for item in result["missing"])
+    assert any("no sustituye" in item for item in result["warnings"])
+
+
+def test_unreviewed_source_unknown_norm_and_ocr_create_actionable_pending_items():
+    proposed = selection(
+        supports=[{"chunk_id": "acta-1", "reason": "Contiene los requisitos.", "role": "rule"}]
+    )
+    norm = chunk(
+        category="institutional_norm",
+        validity="unknown",
+        review_status="pending",
+        method="ocr",
+        needs_review=True,
+        title="Reglamento de prácticas",
+        case_id=None,
+    )
+    inquiry = request(title="Requisitos", description="Indique los requisitos de prácticas.")
+    result = OpenAISourceAssessor._materialize(proposed, inquiry, [norm])
+    assert result["status"] == "needs_evidence"
+    descriptions = " ".join(item["description"] for item in result["missing"])
+    assert (
+        "procedencia" in descriptions and "vigencia" in descriptions and "página 1" in descriptions
+    )
+    assert result["supports"][0]["quote"] == norm["quote"]
+
+
+def test_no_candidates_cannot_become_successful_evidence_even_if_model_says_so():
+    result = OpenAISourceAssessor._materialize(selection(supports=[]), request(), [])
+    assert result["status"] == "no_matches"
+    assert result["supports"] == []
+    assert result["missing"]
+    assert "No se localizaron" in result["summary"]
+    assert any("no demuestra" in warning for warning in result["warnings"])
+
+
+def test_existing_document_pending_item_is_preserved_without_duplicate_guardrail():
+    pending = {"kind": "document", "description": "Aportar el acta 14 del comité de prácticas."}
+    proposed = selection(
+        status="needs_evidence",
+        missing=[pending],
+        supports=[{"chunk_id": "acta-1", "reason": "Regula las actas.", "role": "rule"}],
+    )
+    norm = chunk(category="institutional_norm", validity="current", case_id=None)
+    result = OpenAISourceAssessor._materialize(proposed, request(), [norm])
+    assert result["status"] == "needs_evidence"
+    assert [item for item in result["missing"] if item["kind"] == "document"] == [pending]
+    assert any("no sustituye" in warning for warning in result["warnings"])
+
+
+def test_transcription_pending_item_labels_document_sections_without_inventing_pages():
+    source = chunk(location_kind="section", needs_review=True)
+    result = OpenAISourceAssessor._materialize(selection(), request(), [source])
+    assert result["status"] == "needs_evidence"
+    descriptions = " ".join(item["description"] for item in result["missing"])
+    assert "sección 1" in descriptions
+    assert "página" not in descriptions
+
+
+def test_partial_model_output_is_not_saved_as_a_completed_assessment():
+    assessor = OpenAISourceAssessor(api_key="test-not-real", model="test-model")
+    assessor.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            parse=lambda **_: SimpleNamespace(status="incomplete", output_parsed=selection())
+        )
+    )
+    with pytest.raises(DomainError, match="parcial"):
+        assessor.assess(request(), [chunk()])
+
+
+def test_source_graph_recovers_after_failure_without_repeating_retrieval(tmp_path):
+    counts = {"retrieve": 0, "assess": 0}
+
+    def fake_retriever(inquiry, chunks):
+        counts["retrieve"] += 1
+        return retrieve(inquiry, chunks)
+
+    class FailsOnceAssessor:
+        def assess(self, inquiry, candidates):
+            counts["assess"] += 1
+            if counts["assess"] == 1:
+                raise DomainError("Conexión interrumpida simulada")
+            return OpenAISourceAssessor._materialize(selection(), inquiry, candidates)
+
+    checkpoint = str(tmp_path / "sources.sqlite")
+    config = {"configurable": {"thread_id": "case-a:P1:inputs-version-1"}}
+    with SqliteSaver.from_conn_string(checkpoint) as saver:
+        graph = build_source_graph(fake_retriever, FailsOnceAssessor(), saver)
+        with pytest.raises(DomainError, match="simulada"):
+            graph.invoke({"request": request(), "chunks": [chunk()]}, config)
+        assert graph.get_state(config).next == ("assess_sources",)
+    with SqliteSaver.from_conn_string(checkpoint) as saver:
+        graph = build_source_graph(fake_retriever, FailsOnceAssessor(), saver)
+        result = graph.invoke(None, config)
+        assert result["finding"]["status"] == "references_found"
+        assert graph.get_state(config).next == ()
+    assert counts == {"retrieve": 1, "assess": 2}

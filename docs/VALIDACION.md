@@ -39,3 +39,27 @@ Capturas: `output/playwright/`. Los seis PDFs ficticios también se renderizaron
 ## Límites de esta evidencia
 
 Esta es la primera entrega local. Se evaluaron seis escenarios ficticios y dos expedientes en el navegador; aún hace falta ampliar el conjunto con documentos representativos del trabajo real. El OCR requiere contraste con la imagen. No se validaron corpus normativos, redacción de respuestas, generación de oficios, Drive, correo ni funcionamiento multiusuario: corresponden a etapas posteriores.
+
+## Fase 4 — 7 de septiembre de 2026
+
+La suite completa tiene **63 pruebas aprobadas**. Las pruebas nuevas verifican citas exactas y secciones TXT/DOCX, PDF de 41 y 300 páginas y rechazo de 301, versiones originales, ámbito por expediente, revisión y vigencia, exclusión de oficios anteriores, referencias inventadas, documentos solicitados ausentes, recuperación de checkpoints y cambios de fuentes durante una búsqueda. Los errores por solicitud permiten reintentar sin repetir evaluaciones ya terminadas. Ruff y comprobación sintáctica JavaScript aprobados. Persiste únicamente el aviso externo de deprecación de Starlette/AnyIO descrito antes.
+
+Se ejecutó OpenAI real con las tres solicitudes y dos fuentes **ficticias** del caso principal; se repitió después del ajuste que evita duplicar el pendiente documental. P1 recuperó la regla de procedimiento/requisitos; P2 recuperó fecha y estado del registro y conservó la necesidad de contrastar el estado actual con su fecha de corte; P3 mantuvo pendiente el acta completa y la verificación de su existencia. Ninguna norma sustituyó al acta. Las tres citas coinciden literalmente con las líneas conservadas, la versión y el expediente correspondientes.
+
+Evidencia reproducible del resultado guardado: `output/qa/live-sources.json`. La comprobación de solo lectura se ejecuta con:
+
+```powershell
+.\scripts\dev-python.ps1 scripts/check_sources_live.py 2db7a4324374499b9ab488055e4c4442
+```
+
+En el navegador real se verificaron: acceso a biblioteca, selección por solicitud, carga TXT desde el selector, revisión atribuida, nueva versión, consulta de la versión anterior y conservación de su revisión. El listado principal muestra solamente la última versión. El ejemplo `sin_fecha` contiene una fuente ficticia de QA en dos versiones, restringida a ese expediente. No se incorporaron normas ficticias a la biblioteca general.
+
+Se corrigió un desbordamiento de las cuatro etapas a 320 px. Sin desbordamiento horizontal en 320, 768 y 1440 px tras el ajuste. Axe WCAG 2 A/AA y 2.1 AA no encontró infracciones en la vista de resultados y el diálogo de historial inspeccionados; no equivale a una auditoría completa de accesibilidad. Capturas: `output/playwright/fase4-desktop-final.png`, `fase4-mobile-final.png` y `fase4-source-history.png`.
+
+### Comprobación después del apagado informado
+
+El servidor estaba detenido. Se reinició y las cuatro bases SQLite pasaron `PRAGMA quick_check`. Se conservaban identificaciones y resultados, pero faltaban dos originales: `sin_fecha` y la petición sobre el acta 2212. Se restauraron desde copias existentes **solo después de comprobar coincidencia SHA-256 exacta** con los registros. La segunda copia provenía del proyecto anterior, que no se modificó. La comprobación posterior confirmó los cuatro originales de expedientes y las cuatro versiones de fuentes presentes. También se restauró un script auxiliar generado cuyo contenido estaba ilegible.
+
+Las escrituras de nuevos originales ahora ejecutan `flush` y `fsync` antes del registro en SQLite. Las rutas del original y de su imagen detectan archivos ausentes o alterados y explican que debe restaurarse la copia, sin borrar el expediente ni producir una imagen incorrecta. Esto mejora la persistencia y detección de fallos; no reemplaza un respaldo externo probado.
+
+Esta fase está validada como piloto local con ejemplos controlados. Todavía no se ha medido recuperación sobre un corpus institucional representativo; no se ha implementado conector Drive/SharePoint, respaldo automático, búsqueda semántica, redacción o exportación de respuestas.
