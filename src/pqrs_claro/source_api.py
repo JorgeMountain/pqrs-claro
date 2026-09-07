@@ -25,8 +25,27 @@ class SearchSources(BaseModel):
     version: int = Field(ge=1)
 
 
+class LinkCollections(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    collection_ids: list[str] = Field(max_length=100)
+
+
 def source_router(library, service, cases):
     router = APIRouter()
+
+    @router.get("/api/source-collections")
+    def collections(case_id: str | None = None):
+        if case_id:
+            cases.get(case_id)
+        return {
+            "collections": library.collections(),
+            "linked_collection_ids": library.linked_collections(case_id) if case_id else [],
+        }
+
+    @router.put("/api/cases/{case_id}/source-collections")
+    def link_collections(case_id: str, body: LinkCollections):
+        cases.get(case_id)
+        return {"collection_ids": library.link_collections(case_id, body.collection_ids)}
 
     @router.get("/api/sources")
     def sources(case_id: str | None = None):
@@ -90,7 +109,7 @@ def source_router(library, service, cases):
         }
         return FileResponse(
             library.original(source_id, case_id),
-            media_type=media[extension],
+            media_type=media.get(extension, "application/octet-stream"),
             filename=source["filename"],
             content_disposition_type="inline" if extension == ".pdf" else "attachment",
         )

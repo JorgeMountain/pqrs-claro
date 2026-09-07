@@ -23,34 +23,32 @@ class SourceService:
         self.active = set()
 
     def inputs(self, case_id):
-        case = self.cases.get(case_id)
-        sources, chunks = self.library.snapshot(case_id)
-        fingerprint = digest(
-            {
-                "identification": case["identification"],
-                "sources": sources,
-                "model": self.settings.model,
-                "analysis_version": 2,
-            }
-        )
+        with self.library.lock:
+            case = self.cases.get(case_id)
+            case["allowed_collection_ids"] = self.library.linked_collections(case_id)
+            sources, chunks = self.library.snapshot(case_id)
+            fingerprint = digest(
+                {
+                    "identification": case["identification"],
+                    "sources": sources,
+                    "model": self.settings.model,
+                    "analysis_version": 3,
+                    "collections": case["allowed_collection_ids"],
+                }
+            )
         return case, sources, chunks, fingerprint
 
     def get(self, case_id):
         case = self.cases.get(case_id)
         run = self.library.latest_run(case_id)
-        sources = [
-            s
-            for s in self.library.list(case_id)
-            if s["is_latest"]
-            and s["category"] != "previous_response"
-            and s["validity"] != "superseded"
-        ]
+        sources = self.library.eligible(case_id)
         fingerprint = digest(
             {
                 "identification": case["identification"],
                 "sources": sources,
                 "model": self.settings.model,
-                "analysis_version": 2,
+                "analysis_version": 3,
+                "collections": self.library.linked_collections(case_id),
             }
         )
         if not run:
@@ -104,6 +102,7 @@ class SourceService:
                 results=[],
                 source_count=len(sources),
                 source_snapshot=sources,
+                allowed_collection_ids=case["allowed_collection_ids"],
                 searched_at=now(),
                 error=None,
                 completed_count=0,
@@ -123,9 +122,17 @@ class SourceService:
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "source_checkpoints.sqlite")
             ) as saver:
-                graph = build_source_graph(retrieve, assessor, saver)
+                # El checkpoint conserva candidatos y resultados; no duplica la biblioteca
+                # completa en cada paso de cada solicitud.
+                graph = build_source_graph(
+                    lambda request, _: retrieve(request, chunks), assessor, saver
+                )
                 for request in case["identification"]["requests"]:
-                    request = {**request, "case_id": case["id"]}
+                    request = {
+                        **request,
+                        "case_id": case["id"],
+                        "allowed_collection_ids": run.get("allowed_collection_ids", []),
+                    }
                     config = {
                         "configurable": {
                             "thread_id": f"{case['id']}:{request['id']}:{run['fingerprint']}"
@@ -137,7 +144,7 @@ class SourceService:
                             finding = snapshot.values["finding"]
                         else:
                             initial = (
-                                None if snapshot.values else {"request": request, "chunks": chunks}
+                                None if snapshot.values else {"request": request, "chunks": []}
                             )
                             finding = graph.invoke(initial, config)["finding"]
                         run["results"].append(finding)

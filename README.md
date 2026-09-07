@@ -22,6 +22,8 @@ Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza
 
 Para practicar la fase 4, incorpora las fuentes ficticias del ejemplo después de confirmar sus solicitudes y ejecuta la búsqueda. Deben aparecer reglas para el procedimiento, un registro para recepción y estado, y un pendiente para la copia del acta. [FASE4.md](docs/FASE4.md) explica qué comprobar.
 
+La biblioteca también admite un [archivo histórico de peticiones, respuestas y anexos](docs/HISTORICOS.md), con duplicados por SHA, procedencias, relaciones y advertencias de lectura. Una colección histórica se vincula expresamente al expediente que la va a consultar.
+
 La recomendación de alojamiento es **Drive institucional, preferiblemente una unidad compartida, para la futura biblioteca del equipo**. La implementación actual usa almacenamiento local y catálogo SQLite propio. No hay conexión a la nube ni respaldo automático. [ALMACENAMIENTO.md](docs/ALMACENAMIENTO.md) compara Drive, SharePoint y almacenamiento de objetos.
 
 ## Entender lo que hay detrás

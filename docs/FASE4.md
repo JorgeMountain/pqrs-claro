@@ -30,6 +30,11 @@ flowchart LR
 | Norma institucional | Reglas de la institución | Autoridad de la fuente, versión, vigencia y ámbito |
 | Evidencia del caso | Hechos de ese expediente | Identificación del caso, fecha de corte y responsable |
 | Oficio anterior | Estructura y estilo de una comunicación | Sus hechos y afirmaciones no se trasladan al caso actual |
+| Respuesta histórica | Contenido y conclusiones atribuidas al trámite anterior | Coincidencia de asunto, persona, periodo, versión y soportes |
+| Petición histórica | Preguntas y manifestaciones del peticionario | No confundirlas con hechos corroborados ni respuestas |
+| Anexo histórico | Evidencia del trámite anterior o archivo pertinente | Relación con la nueva solicitud, revisión y alcance temporal |
+
+El [archivo histórico](HISTORICOS.md) incorpora colecciones con procedencias y relaciones propias. Se vinculan explícitamente a cada expediente antes de utilizarlas en la búsqueda.
 
 Los documentos nuevos comienzan pendientes de revisión. La condición de revisado registra una declaración atribuida, no una verificación jurídica automática. Una norma cuya vigencia falta por verificar debe seguir mostrando esa limitación.
 

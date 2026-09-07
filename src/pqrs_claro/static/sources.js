@@ -5,7 +5,22 @@ const categories = {
   institutional_norm: "Normativa institucional",
   case_evidence: "Soporte del expediente",
   previous_response: "Oficio anterior · Referencia de estilo",
+  historical_response: "Respuesta histórica",
+  historical_petition: "Petición histórica",
+  historical_attachment: "Soporte histórico",
+  archive_only: "Archivo conservado · Sin uso como evidencia",
 };
+const manualCategories = new Set(["national_norm", "institutional_norm", "case_evidence", "previous_response"]);
+const isHistorical = (source) => Boolean(source.collection_id) || ["historical_response", "historical_petition", "historical_attachment", "archive_only"].includes(source.category);
+const historicalGroups = (source) => source.historical_groups?.length ? source.historical_groups : source.historical_group ? [source.historical_group] : [];
+const normalizeSearch = (value) => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("es");
+const documentStatuses = { draft: "Borrador", issued: "Expedido según el registro", unknown: "Estado de emisión por comprobar" };
+const extractionStatuses = { ready: "Texto disponible", partial: "Lectura parcial", pending: "Lectura pendiente", unsupported: "Formato sin lectura automática" };
+const verificationStatuses = { reported_by_user: "Verificación informada por el usuario", documented: "Verificación documentada", pending: "Verificación pendiente" };
+const supportRoles = { antecedent: "Antecedente histórico · Requiere contraste con este caso", historical_evidence: "Evidencia histórica · No acredita por sí sola hechos actuales" };
+const collectionReading = (collection) => collection.extraction_counts ? el("span", { className: "small muted collection-reading" },
+  `${collection.extraction_counts.ready || 0} con texto disponible · ${collection.extraction_counts.partial || 0} con lectura parcial. `,
+  `${collection.extraction_counts.pending || 0} con lectura pendiente · ${collection.extraction_counts.unsupported || 0} sin índice textual.`) : null;
 const validityLabels = {
   unknown: "Vigencia por comprobar",
   current: "Vigencia revisada",
@@ -58,6 +73,8 @@ export function createSources({
     poll: null,
     selected: null,
     loadToken: 0,
+    collections: [], linkedCollections: [], collectionsError: null,
+    archiveText: "", archiveGroup: "", archiveCollection: "", archivePage: 1,
   };
   const context = () =>
     state.caseId ? `?case_id=${encodeURIComponent(state.caseId)}` : "";
@@ -76,6 +93,7 @@ export function createSources({
       current?.status === "confirmed"
         ? api(`/api/cases/${encodeURIComponent(current.id)}/sources`)
         : Promise.resolve(null),
+      api(`/api/source-collections${context()}`),
     ]);
     if (token !== state.loadToken || state.caseId !== (getCase()?.id || null))
       return;
@@ -88,6 +106,11 @@ export function createSources({
     else state.error = results[0].reason.message;
     if (results[1].status === "fulfilled") state.mapping = results[1].value;
     else state.error = results[1].reason.message;
+    if (results[2].status === "fulfilled") {
+      state.collections = results[2].value.collections || [];
+      state.linkedCollections = results[2].value.linked_collection_ids || [];
+      state.collectionsError = null;
+    } else state.collectionsError = results[2].reason.message;
     render();
     schedule();
   }
@@ -102,6 +125,7 @@ export function createSources({
       state.loaded = false;
       state.selected = null;
       state.error = null;
+      state.linkedCollections = [];
     }
   }
   function schedule() {
@@ -183,9 +207,9 @@ export function createSources({
   }
   function libraryView() {
     const current = getCase();
-    const common = state.sources.filter((source) => !source.case_id);
+    const common = state.sources.filter((source) => !source.case_id && !isHistorical(source));
     const scoped = state.sources.filter(
-      (source) => source.case_id === current?.id,
+      (source) => source.case_id === current?.id && !isHistorical(source),
     );
     const view = el(
       "section",
@@ -279,6 +303,8 @@ export function createSources({
           scoped,
         ),
       );
+    if (state.collections.length || state.sources.some(isHistorical)) view.append(archiveView());
+    if (state.collectionsError) view.append(el("p", { className: "warning-box", role: "status" }, "No pudimos cargar el alcance de las colecciones históricas. ", state.collectionsError));
     if (!current)
       view.append(
         el(
@@ -318,18 +344,136 @@ export function createSources({
           `${categories[source.category] || source.category} · Versión ${source.version} · ${source.filename}`,
         ),
         el("p", { className: "source-origin" }, "Procedencia: ", source.origin),
-        reviewBadges(source),
+        isHistorical(source) ? historicalBadges(source) : reviewBadges(source),
+        isHistorical(source) ? el("p", { className: "small muted" }, historicalGroups(source).join(" · ")) : null,
       ),
       el(
         "div",
         { className: "button-group" },
         smallButton("Ver documento", () => showSource(source.id)),
-        smallButton("Nueva versión", () => uploadDialog(source), "quiet", {
+        !isHistorical(source) ? smallButton("Nueva versión", () => uploadDialog(source), "quiet", {
           disabled: state.busy,
-        }),
+        }) : null,
       ),
     );
   }
+  function historicalBadges(source) {
+    return el("div", { className: "source-badges" },
+      el("span", { className: `source-tag ${source.document_status === "draft" ? "pending" : ""}` }, documentStatuses[source.document_status] || "Estado de emisión por comprobar"),
+      el("span", { className: `source-tag ${source.extraction_status === "ready" ? "" : "pending"}` }, extractionStatuses[source.extraction_status] || "Lectura por comprobar"),
+      el("span", { className: `source-tag ${source.verification_status === "documented" ? "reviewed" : "pending"}` }, verificationStatuses[source.verification_status] || "Verificación pendiente"));
+  }
+
+  function archiveView() {
+    const archived = state.sources.filter(isHistorical);
+    const groups = [...new Set(archived.flatMap(historicalGroups))].sort((a, b) => a.localeCompare(b, "es"));
+    const wrapper = el("section", { className: "library-group archive-library", "aria-labelledby": "archive-heading" },
+      el("h3", { id: "archive-heading" }, "Archivo histórico"),
+      el("p", { className: "muted small" }, "Consulta antecedentes conservados por grupo o expediente. Para usarlos en una búsqueda debes vincular su colección desde «Antecedentes para consultar» en el expediente confirmado."),
+      el("div", { className: "archive-collections" }, state.collections.map((collection) => el("div", {},
+        el("strong", {}, collection.title),
+        el("p", { className: "small muted" }, `${collection.source_count ?? 0} documentos · ${collection.group_count ?? 0} grupos`),
+        collectionReading(collection),
+        collection.description ? el("p", { className: "small" }, collection.description) : null,
+        collection.verification_note ? el("p", { className: "small muted" }, collection.verification_note) : null))),
+    );
+    const rows = el("div", { className: "library-list archive-results" });
+    const count = el("p", { className: "small muted", role: "status", "aria-live": "polite", tabindex: "-1" });
+    const pagination = el("div", { className: "archive-pagination" });
+    const update = () => {
+      const query = normalizeSearch(state.archiveText);
+      const filtered = archived.filter((source) => (!state.archiveCollection || source.collection_id === state.archiveCollection)
+        && (!state.archiveGroup || historicalGroups(source).includes(state.archiveGroup))
+        && (!query || normalizeSearch([source.title, source.filename, ...(source.radicados || []), ...(source.office_numbers || []), ...historicalGroups(source)].join(" ")).includes(query)));
+      const pageCount = Math.max(1, Math.ceil(filtered.length / 20));
+      state.archivePage = Math.min(state.archivePage, pageCount);
+      const start = (state.archivePage - 1) * 20;
+      count.textContent = filtered.length ? `${filtered.length} documentos encontrados · Mostrando ${start + 1}–${Math.min(start + 20, filtered.length)}` : "No hay documentos que coincidan con estos filtros.";
+      rows.replaceChildren(...filtered.slice(start, start + 20).map(sourceRow));
+      pagination.replaceChildren(
+        smallButton("Anterior", () => { state.archivePage--; update(); count.focus({ preventScroll: true }); }, "secondary", { disabled: state.archivePage <= 1 }),
+        el("span", { className: "small muted" }, `Página ${state.archivePage} de ${pageCount}`),
+        smallButton("Siguiente", () => { state.archivePage++; update(); count.focus({ preventScroll: true }); }, "secondary", { disabled: state.archivePage >= pageCount }));
+    };
+    const search = el("input", { type: "search", value: state.archiveText, placeholder: "Nombre, radicado o número de oficio", onInput: (event) => { state.archiveText = event.target.value; state.archivePage = 1; update(); } });
+    const groupSelect = el("select", { onChange: (event) => { state.archiveGroup = event.target.value; state.archivePage = 1; update(); } },
+      el("option", { value: "" }, "Todos los grupos"), groups.map((group) => el("option", { value: group }, group)));
+    groupSelect.value = state.archiveGroup;
+    const collectionSelect = el("select", { onChange: (event) => { state.archiveCollection = event.target.value; state.archivePage = 1; update(); } },
+      el("option", { value: "" }, "Todas las colecciones"), state.collections.map((collection) => el("option", { value: collection.id }, collection.title)));
+    collectionSelect.value = state.archiveCollection;
+    wrapper.append(el("div", { className: "archive-filters" }, field("Buscar en el archivo", search), field("Grupo o expediente histórico", groupSelect),
+      state.collections.length > 1 ? field("Colección", collectionSelect) : null), count, rows, pagination);
+    update();
+    return wrapper;
+  }
+
+  function collectionPicker() {
+    if (!state.collections.length && !state.collectionsError) return null;
+    const selected = new Set(state.linkedCollections);
+    const current = getCase();
+    const form = el("form", { className: "collection-form" });
+    const status = el("p", { className: "form-status", role: "status", "aria-live": "polite" });
+    const save = el("button", { type: "submit", className: "button button-secondary button-small", disabled: true }, "Guardar antecedentes seleccionados");
+    let busy = false;
+    const updateSave = () => { save.disabled = busy || (selected.size === state.linkedCollections.length && state.linkedCollections.every((id) => selected.has(id))); };
+    form.append(el("p", { className: "small muted" }, "Elige las colecciones que quieres consultar para este expediente y guarda la selección. Sus respuestas describen casos anteriores y deben contrastarse con los hechos actuales."));
+    if (state.collectionsError) form.append(el("p", { className: "warning-box" }, state.collectionsError));
+    form.append(...state.collections.map((collection) => {
+      const checkbox = el("input", { type: "checkbox", checked: selected.has(collection.id), disabled: state.mapping?.status === "running", onChange: (event) => { event.target.checked ? selected.add(collection.id) : selected.delete(collection.id); updateSave(); } });
+      return el("label", { className: "collection-choice" }, checkbox,
+        el("span", {}, el("strong", {}, collection.title), el("span", { className: "small muted" }, `${collection.source_count ?? 0} documentos · ${collection.group_count ?? 0} grupos`),
+          collectionReading(collection),
+          collection.description ? el("span", { className: "small" }, collection.description) : null,
+          collection.verification_note ? el("span", { className: "small muted" }, collection.verification_note) : null));
+    }), status, save);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (busy || save.disabled) return;
+      busy = true;
+      form.querySelectorAll("input,button").forEach((control) => { control.disabled = true; });
+      status.textContent = "Guardando los antecedentes seleccionados…";
+      try {
+        await api(`/api/cases/${encodeURIComponent(current.id)}/source-collections`, { method: "PUT", body: JSON.stringify({ collection_ids: [...selected] }) });
+        if (state.caseId !== current.id) return;
+        await load({ quiet: true });
+        notify("Antecedentes guardados para este expediente. Actualiza la búsqueda para incluir esta selección.");
+      } catch (error) {
+        status.textContent = error.message;
+        status.className = "form-status error";
+        form.querySelectorAll("input,button").forEach((control) => { control.disabled = false; });
+      } finally { busy = false; updateSave(); }
+    });
+    return el("details", { className: "collection-picker", open: state.linkedCollections.length > 0 },
+      el("summary", {}, `Antecedentes para consultar · ${state.linkedCollections.length ? `${state.linkedCollections.length} ${state.linkedCollections.length === 1 ? "colección vinculada" : "colecciones vinculadas"}` : "Ninguna colección vinculada"}`), form);
+  }
+
+  function archiveMetadata(source) {
+    const related = [...new Set(source.related_source_ids || [])];
+    const aliases = source.aliases || [];
+    const block = el("section", { className: "archive-metadata", "aria-label": "Contexto del documento histórico" },
+      historicalBadges(source),
+      el("p", { className: "small muted" }, `Grupo histórico: ${historicalGroups(source).join(" · ") || "Sin grupo registrado"}`),
+      source.radicados?.length ? el("p", { className: "small" }, "Radicados: ", source.radicados.join(" · ")) : null,
+      source.office_numbers?.length ? el("p", { className: "small" }, "Oficios: ", source.office_numbers.join(" · ")) : null,
+      source.document_status === "draft" ? el("p", { className: "warning-box" }, "Este documento está marcado como borrador. Su conservación no demuestra expedición, firma ni entrega.") : null,
+      source.verification_status === "reported_by_user" ? el("p", { className: "warning-box" }, "La verificación fue informada por el usuario. El sistema no la ha comprobado de forma independiente.") : null,
+      source.verification_note ? el("p", { className: "small" }, source.verification_note) : null,
+      source.extraction_status && source.extraction_status !== "ready" ? el("p", { className: "warning-box" }, source.extraction_status === "partial" ? "Solo parte del texto está disponible para consulta. El original se conserva completo." : "El original está conservado, pero aún no hay texto utilizable para la búsqueda automática.", source.extraction_note ? ` ${source.extraction_note}` : "") : null);
+    if (source.import_notes?.length || source.classification_basis) block.append(el("details", { className: "archive-catalog-notes", open: Boolean(source.import_notes?.length) },
+      el("summary", {}, "Observaciones del catálogo"),
+      source.import_notes?.length ? el("ul", {}, source.import_notes.map((note) => el("li", {}, textOf(note)))) : null,
+      source.classification_basis ? el("p", { className: "small muted" }, "Criterio de clasificación: ", source.classification_basis) : null,
+      el("p", { className: "small muted" }, "Los identificadores se conservan tal como fueron registrados. Comprueba cualquier diferencia contra el documento original.")));
+    if (related.length) block.append(el("details", { className: "archive-related" }, el("summary", {}, `Documentos relacionados · ${related.length}`),
+      el("ul", {}, related.map((id) => { const other = state.sources.find((item) => item.id === id); return el("li", {}, smallButton(other?.title || other?.filename || "Consultar documento relacionado", () => { block.closest("dialog")?.close(); showSource(id); }, "quiet")); }))));
+    if (aliases.length) block.append(el("details", { className: "archive-aliases" }, el("summary", {}, `${aliases.length} ${aliases.length === 1 ? "ubicación de origen conservada" : "ubicaciones de origen conservadas"}`),
+      el("p", { className: "small muted" }, "Las copias idénticas comparten un original conservado. Estos nombres permiten reconocer de dónde provienen."),
+      el("ul", {}, aliases.slice(0, 12).map((alias) => el("li", {}, `${String(alias.member || alias.path || alias.zip_path || source.filename).split(/[\\/]/).at(-1)}${alias.group ? ` · ${alias.group}` : ""}`))),
+      aliases.length > 12 ? el("p", { className: "small muted" }, `Y ${aliases.length - 12} ubicaciones adicionales registradas.`) : null));
+    return block;
+  }
+
   function reviewBadges(source) {
     return el(
       "div",
@@ -362,7 +506,9 @@ export function createSources({
       state.sources.filter(
         (source) =>
           source.category !== "previous_response" &&
-          source.validity !== "superseded",
+          source.category !== "archive_only" &&
+          source.validity !== "superseded" &&
+          (!isHistorical(source) || state.linkedCollections.includes(source.collection_id)),
       ).length;
     const isRunning = mapping?.status === "running";
     const stale = mapping?.stale || mapping?.status === "stale";
@@ -436,6 +582,8 @@ export function createSources({
       ),
       storageNote(),
     );
+    const collectionOptions = collectionPicker();
+    if (collectionOptions) panel.append(collectionOptions);
     if (!state.loaded || state.loading)
       panel.append(
         el(
@@ -720,6 +868,7 @@ export function createSources({
               categories[source.category] || source.category,
             ),
             reviewBadges(source),
+            supportRoles[source.role] ? el("p", { className: "warning-box small" }, supportRoles[source.role]) : null,
             group.map((support) =>
               el(
                 "article",
@@ -794,7 +943,7 @@ export function createSources({
       "select",
       { name: "category", disabled: Boolean(previous) },
       Object.entries(categories)
-        .filter(([value]) => current || value !== "case_evidence")
+        .filter(([value]) => manualCategories.has(value) && (current || value !== "case_evidence"))
         .map(([value, label]) => el("option", { value }, label)),
     );
     category.value =
@@ -958,6 +1107,7 @@ export function createSources({
           "Abrir archivo original ↗",
         ),
       );
+      if (isHistorical(source)) body.append(archiveMetadata(source));
       if (source.is_latest === false)
         body.append(
           el(
@@ -1054,6 +1204,7 @@ export function createSources({
             "ol",
             {
               className: "line-list source-full-text",
+              tabindex: "0",
               "aria-label": "Texto de la fuente con líneas numeradas",
             },
             textLines(page.text).map((line, index) =>
@@ -1079,7 +1230,7 @@ export function createSources({
       );
       renderPage(pageSelect.value);
       body.append(
-        el(
+        pages.length ? el(
           "div",
           { className: "source-page-toolbar" },
           field(
@@ -1088,7 +1239,7 @@ export function createSources({
               : "Texto por página",
             pageSelect,
           ),
-        ),
+        ) : null,
         pageView,
       );
       if (source.is_latest !== false) body.append(reviewForm(source));
@@ -1190,7 +1341,7 @@ export function createSources({
       el(
         "p",
         { className: "muted small" },
-        "Registra quién comprobó la procedencia y qué pudo verificar sobre la vigencia. Esta revisión no declara suficiente la fuente para responder una solicitud.",
+        "Registra quién revisó el documento, qué comprobó y con qué soporte. La revisión conserva ese alcance; no cambia automáticamente el estado de emisión ni declara suficiente la fuente para responder una solicitud.",
       ),
       field("Nombre del responsable de la revisión", name),
       field("Vigencia", validity),

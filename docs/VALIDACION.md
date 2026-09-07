@@ -63,3 +63,17 @@ El servidor estaba detenido. Se reinició y las cuatro bases SQLite pasaron `PRA
 Las escrituras de nuevos originales ahora ejecutan `flush` y `fsync` antes del registro en SQLite. Las rutas del original y de su imagen detectan archivos ausentes o alterados y explican que debe restaurarse la copia, sin borrar el expediente ni producir una imagen incorrecta. Esto mejora la persistencia y detección de fallos; no reemplaza un respaldo externo probado.
 
 Esta fase está validada como piloto local con ejemplos controlados. Todavía no se ha medido recuperación sobre un corpus institucional representativo; no se ha implementado conector Drive/SharePoint, respaldo automático, búsqueda semántica, redacción o exportación de respuestas.
+
+## Ampliación del archivo histórico
+
+Suite completa: **103 pruebas aprobadas**; Ruff, sintaxis JavaScript y comprobación de diferencias sin errores. El único aviso es la deprecación externa de Starlette/AnyIO ya descrita. Axe no encontró infracciones en las vistas históricas de escritorio/móvil inspeccionadas; se corrigió el acceso por teclado al texto desplazable. Sin desbordamiento horizontal a 320 px.
+
+Se incorporó el lote aportado por el usuario a una colección separada, conservando originales y procedencias. El inventario privado y sus conteos están en `data/imports/`, fuera de Git. La verificación posterior confirmó coincidencia SHA-256 de todos los originales importados y `PRAGMA quick_check` correcto. Los duplicados exactos mantienen sus alias; los archivos diferentes no se fusionaron por tener números o nombres parecidos.
+
+La lectura de esta importación fue nativa, sin OCR ni llamadas a OpenAI. Hay documentos con texto disponible, lecturas parciales, documentos pendientes de OCR y formatos conservados sin índice. Esos estados se registran y se muestran. Los documentos históricos no se habilitan en la búsqueda hasta vincular explícitamente su colección al expediente.
+
+Las pruebas nuevas cubren ámbito antes de enviar contenido al proveedor, antecedentes atribuidos, anexos documentales, borradores, verificación reportada frente a documentada, lecturas parciales, incorporación por SHA, conservación posterior de alias, descarga de formatos sin lector y actualización de resultados al vincular/desvincular colecciones. La revisión humana registra su alcance sin cambiar automáticamente un estado de emisión desconocido.
+
+Tres búsquedas léxicas de solo lectura sobre el corpus importado localizaron los oficios esperados en dos consultas. En la consulta sobre un acta recuperaron menciones y comunicaciones relacionadas; eso no demuestra haber encontrado el acta. Cada consulta tardó aproximadamente seis segundos en este equipo. Se confirmó que, sin la colección autorizada en el alcance de la solicitud, no se devuelve ninguno de esos fragmentos. Este muestreo no mide exhaustividad ni valida respuestas sustantivas; la evidencia privada está en `data/imports/.../retrieval-check.json`.
+
+El recorrido de navegador verificó paginación, filtros, radicados conflictivos, borradores, enlaces de original e imagen y selección de colecciones. La vinculación se probó únicamente en el ejemplo ficticio y se dejó desactivada al terminar. No se modificaron expedientes reales ni se solicitaron evaluaciones con IA sobre el lote durante la importación.

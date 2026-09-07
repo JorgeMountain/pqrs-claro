@@ -113,6 +113,12 @@ def read_source(path, pdf_extractor):
 
 
 def make_chunks(source, pages):
+    # Las rutas originales y los alias sirven al catálogo, no a la evaluación con IA.
+    source = {
+        key: value
+        for key, value in source.items()
+        if key not in {"aliases", "historical_groups", "import_notes", "excerpt"}
+    }
     chunks = []
     for page in pages:
         lines = page["text"].splitlines()
@@ -155,6 +161,12 @@ class SourceLibrary:
                 CREATE TABLE IF NOT EXISTS source_reviews(id TEXT, created_at TEXT, body TEXT);
                 CREATE TABLE IF NOT EXISTS source_runs(
                     id TEXT PRIMARY KEY, case_id TEXT, body TEXT);
+                CREATE TABLE IF NOT EXISTS source_collections(id TEXT PRIMARY KEY, body TEXT);
+                CREATE TABLE IF NOT EXISTS case_source_collections(
+                    case_id TEXT, collection_id TEXT, PRIMARY KEY(case_id,collection_id));
+                CREATE TABLE IF NOT EXISTS source_relationships(
+                    source_id TEXT, target_id TEXT, kind TEXT, body TEXT,
+                    PRIMARY KEY(source_id,target_id,kind));
             """)
 
     @contextmanager
@@ -184,15 +196,17 @@ class SourceLibrary:
 
     def get(self, source_id, case_id=None):
         with self.connect() as conn:
-            row = conn.execute("SELECT body,pages FROM sources WHERE id=?", (source_id,)).fetchone()
+            row = conn.execute(
+                "SELECT body,pages,(SELECT max(other.version) FROM sources other "
+                "WHERE other.document_id=sources.document_id) FROM sources WHERE id=?",
+                (source_id,),
+            ).fetchone()
         if not row:
             raise KeyError("Fuente no encontrada.")
         source, pages = json.loads(row[0]), json.loads(row[1])
         if source["case_id"] is not None and source["case_id"] != case_id:
             raise KeyError("Fuente no encontrada en este expediente.")
-        source["is_latest"] = any(
-            s["id"] == source_id and s["is_latest"] for s in self.list(case_id)
-        )
+        source["is_latest"] = source["version"] == row[2]
         return {"source": source, "pages": pages}
 
     def original(self, source_id, case_id=None):
@@ -294,6 +308,9 @@ class SourceLibrary:
                 review_status="reviewed",
                 reviewed_at=now(),
             )
+            if source.get("collection_id"):
+                source["verification_status"] = "documented"
+                source["verification_note"] = review_note.strip()[:3000]
             with self.connect() as conn:
                 conn.execute(
                     "INSERT INTO source_reviews VALUES (?,?,?)",
@@ -306,18 +323,79 @@ class SourceLibrary:
 
     def snapshot(self, case_id):
         with self.lock:
-            sources = [
-                s
-                for s in self.list(case_id)
-                if s["is_latest"]
-                and s["category"] != "previous_response"
-                and s["validity"] != "superseded"
-            ]
+            sources = self.eligible(case_id)
+            source_ids = {s["id"] for s in sources}
+            with self.connect() as conn:
+                rows = conn.execute("SELECT id,pages FROM sources").fetchall()
+            pages = {row[0]: json.loads(row[1]) for row in rows if row[0] in source_ids}
             chunks = []
             for source in sources:
-                self.original(source["id"], case_id)
-                chunks.extend(make_chunks(source, self.get(source["id"], case_id)["pages"]))
+                path = (
+                    self.root
+                    / source["id"]
+                    / ("original" + Path(source["filename"]).suffix.lower())
+                )
+                if (
+                    not path.is_file()
+                    or hashlib.sha256(path.read_bytes()).hexdigest() != source["sha256"]
+                ):
+                    raise DomainError(
+                        "Un original cambió o falta en la biblioteca. Restaura su copia."
+                    )
+                chunks.extend(make_chunks(source, pages[source["id"]]))
             return sources, chunks
+
+    def collections(self):
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT body FROM source_collections ORDER BY rowid DESC"
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def save_collection(self, collection):
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO source_collections VALUES (?,?) "
+                "ON CONFLICT(id) DO UPDATE SET body=excluded.body",
+                (collection["id"], json.dumps(collection)),
+            )
+
+    def linked_collections(self, case_id):
+        with self.connect() as conn:
+            return [
+                row[0]
+                for row in conn.execute(
+                    "SELECT collection_id FROM case_source_collections WHERE case_id=? "
+                    "ORDER BY collection_id",
+                    (case_id,),
+                ).fetchall()
+            ]
+
+    def link_collections(self, case_id, collection_ids):
+        if len(collection_ids) != len(set(collection_ids)):
+            raise DomainError("No repitas una colección en la selección.")
+        with self.lock, self.connect() as conn:
+            available = {row[0] for row in conn.execute("SELECT id FROM source_collections")}
+            if not set(collection_ids) <= available:
+                raise DomainError("No se encontró una de las colecciones seleccionadas.")
+            conn.execute("DELETE FROM case_source_collections WHERE case_id=?", (case_id,))
+            conn.executemany(
+                "INSERT INTO case_source_collections VALUES (?,?)",
+                [(case_id, item) for item in collection_ids],
+            )
+        return sorted(collection_ids)
+
+    def eligible(self, case_id):
+        linked = set(self.linked_collections(case_id))
+        return [
+            s
+            for s in self.list(case_id)
+            if s["is_latest"]
+            and s["category"] not in {"previous_response", "archive_only"}
+            and s["validity"] != "superseded"
+            and s.get("extraction_status", "ready") in {"ready", "partial"}
+            and (not s.get("collection_id") or s["collection_id"] in linked)
+        ]
 
     def save_run(self, run):
         with self.connect() as conn:

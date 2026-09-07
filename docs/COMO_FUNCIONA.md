@@ -79,7 +79,7 @@ Para cada solicitud, `source_retrieval.py` busca fragmentos por sus palabras med
 
 Por ejemplo, las reglas ficticias permiten localizar el procedimiento y requisitos de Aula Abierta. El registro de EJEMPLO-042 aporta recepción y estado a una fecha de corte. Ninguno contiene la copia del acta: la tercera solicitud conserva ese faltante.
 
-La persona puede abrir el original y contrastar el fragmento. Un oficio anterior orienta el estilo, pero no acredita hechos del expediente actual. Tampoco una coincidencia textual certifica que la fuente sea vigente o suficiente.
+La persona puede abrir el original y contrastar el fragmento. Las referencias de estilo se mantienen separadas de las respuestas históricas: estas últimas permiten recuperar contenido anterior atribuido y relacionarlo con sus anexos cuando se vincula la colección al expediente. Ninguna coincidencia textual certifica vigencia, suficiencia o aplicabilidad. [HISTORICOS.md](HISTORICOS.md) explica el nuevo recorrido.
 
 Si se incorpora otra versión de una fuente, el resultado anterior conserva su referencia y debe actualizarse para reflejar la nueva biblioteca. La identificación confirmada mantiene su hito propio. Este recorrido todavía no redacta respuestas ni genera oficios.
 

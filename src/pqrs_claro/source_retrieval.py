@@ -18,7 +18,29 @@ _STOPWORDS = frozenset(
     "atentamente cordialmente informar indique indicar informacion "
     "respetuosamente".split()
 )
-_EVIDENCE_CATEGORIES = frozenset({"national_norm", "institutional_norm", "case_evidence"})
+HISTORICAL_CATEGORIES = frozenset(
+    {"historical_response", "historical_petition", "historical_attachment"}
+)
+_EVIDENCE_CATEGORIES = (
+    frozenset({"national_norm", "institutional_norm", "case_evidence"}) | HISTORICAL_CATEGORIES
+)
+
+
+def source_in_scope(request: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Una colección histórica solo es visible tras vincularla al expediente.
+
+    El filtro también cubre normas guardadas en una colección. Ausencia de case_id
+    en una fuente histórica nunca la convierte en una fuente pública compartida.
+    """
+    collection_id = source.get("collection_id")
+    allowed = request.get("allowed_collection_ids", [])
+    if not isinstance(allowed, (list, tuple, set, frozenset)):
+        allowed = []
+    if collection_id and collection_id not in allowed:
+        return False
+    if source.get("category") in HISTORICAL_CATEGORIES and not collection_id:
+        return False
+    return "case_id" not in request or source.get("case_id") in (None, request["case_id"])
 
 
 def tokenize(text: str) -> list[str]:
@@ -40,9 +62,10 @@ def retrieve(
 ) -> list[dict[str, Any]]:
     """Ordena con BM25 y limita a tres fragmentos por documento.
 
-    El servicio debe suministrar únicamente fuentes públicas de la biblioteca y
-    fuentes de este expediente. Si request incluye case_id se verifica de nuevo.
-    Las respuestas anteriores orientan estilo; aquí nunca se usan como evidencia.
+    El servicio suministra fuentes públicas, del expediente y de las colecciones
+    vinculadas. Se verifica el alcance de nuevo antes de ordenar los fragmentos.
+    previous_response mantiene el uso de estilo; las categorías historical_*
+    distinguen antecedentes, peticiones y anexos sin convertirlos en hechos actuales.
     No encontrar coincidencias significa ausencia en esta búsqueda, no inexistencia.
     """
     if limit <= 0:
@@ -57,7 +80,7 @@ def retrieve(
         if chunk.get("category") in _EVIDENCE_CATEGORIES
         and chunk.get("validity") != "superseded"
         and str(chunk.get("quote") or "").strip()
-        and ("case_id" not in request or chunk.get("case_id") in (None, request["case_id"]))
+        and source_in_scope(request, chunk)
     ]
     if not eligible:
         return []
