@@ -239,6 +239,7 @@ export function draftsView({
   generate,
   load,
   back,
+  review,
   showSource,
   select,
 }) {
@@ -342,6 +343,11 @@ export function draftsView({
         id: "refresh-responses",
         disabled: state.loading || state.busy,
       }),
+      prepared && !run?.stale
+        ? button("Continuar a revisión humana", review, "secondary", {
+            id: "continue-review",
+          })
+        : null,
     ),
     state.error || run?.error
       ? el(

@@ -1,6 +1,6 @@
 # Fase 5 · Preparar respuestas con soporte
 
-Después de identificar y confirmar las solicitudes y actualizar su mapa de fuentes, preparar un borrador para cada una. El resultado muestra qué se propone responder, de dónde sale y qué sigue pendiente. La revisión humana de respuestas corresponde a la fase 6; la generación del oficio aprobado, a la fase 7.
+Después de identificar y confirmar las solicitudes y actualizar su mapa de fuentes, la fase 5 prepara un borrador para cada una. El resultado muestra qué se propone responder, de dónde sale y qué sigue pendiente. La revisión humana de respuestas está disponible en la [fase 6](FASE6.md); la generación del oficio aprobado corresponde a la fase 7.
 
 ## Recorrido en la página
 
@@ -10,6 +10,7 @@ Después de identificar y confirmar las solicitudes y actualizar su mapa de fuen
 4. Seguir el avance: preparar el plan, redactar y comprobar. Cada solicitud terminada aparece en la lista, aunque las siguientes continúen trabajando.
 5. Seleccionar una solicitud. Los pendientes concretos aparecen antes del texto; se muestran los primeros y se pueden desplegar los restantes.
 6. Leer el borrador y abrir las fuentes de cada párrafo. Los detalles permiten consultar el plan y las comprobaciones automáticas.
+7. Pulsar **Continuar a revisión humana** para editar, resolver pendientes, comprobar y aprobar cada respuesta en **6. Revisar y aprobar**. Ese recorrido conserva su propio historial de versiones.
 
 Un resultado **Para revisión humana** no está aprobado. **Con pendientes** identifica evidencia o comprobaciones por resolver. **Requiere ajustes** señala observaciones encontradas en el propio borrador. Los fallos de proveedor se muestran como errores y se pueden reintentar; los pendientes documentales no desaparecen por repetir una llamada.
 
@@ -33,7 +34,7 @@ flowchart LR
 
 Una respuesta histórica puede sustentar lo informado en ese trámite. El borrador debe atribuir su contenido y conservar la persona, el periodo y las condiciones que correspondan. La verificación previa informada por el usuario se conserva como tal; no obliga por sí sola a repetir toda la revisión anterior ni equivale a la aprobación de una respuesta nueva.
 
-Los archivos candidatos que no se seleccionaron permanecen disponibles para cotejo. Su presencia permite distinguir un archivo localizado de uno aún no encontrado, pero no los convierte automáticamente en soportes citables. El modelo puede señalar un contraste necesario; para citarlo como respaldo debe estar incluido en una selección evaluada de fuentes.
+Los archivos candidatos que no se seleccionaron permanecen disponibles para cotejo. Su presencia permite distinguir un archivo localizado de uno aún no encontrado, pero no los convierte automáticamente en soportes citables por el borrador. El modelo puede señalar un contraste necesario; en la fase 6 la persona puede seleccionar expresamente un fragmento candidato y comprobar su pertinencia junto con la respuesta editada.
 
 Un oficio que relata un hecho no sustituye una certificación pedida; una mención o correo no sustituye el anexo. La redacción no afirma adjuntos, entrega, firma, expedición o inexistencia a partir de la presencia o ausencia en la búsqueda. Los borradores documentales siguen identificados como borradores.
 
@@ -56,6 +57,6 @@ Si cambian la identificación, el mapa, las fuentes, sus revisiones o los origin
 
 ## Alcance y comprobación
 
-Esta fase no modifica la identificación confirmada ni aprueba, firma, envía o exporta respuestas. Los resultados no se editan todavía desde esta pantalla; ese trabajo pertenece al recorrido de revisión de fase 6. Las reglas locales detectan señales concretas, pero no sustituyen una evaluación semántica o institucional.
+Esta fase no modifica la identificación confirmada ni aprueba, firma, envía o exporta respuestas. **5. Borradores** permite consultar la propuesta; la edición y aprobación se realizan en el recorrido disponible de [fase 6](FASE6.md). Las reglas locales detectan señales concretas, pero no sustituyen una evaluación semántica o institucional.
 
 Las pruebas deben comprobar citas y ámbito, preservación de pendientes, diferencias de periodo, atribución de antecedentes, documentos pedidos, fallos por solicitud, recuperación y cambios de entrada. La validación real debe revisar además texto, plan y comprobaciones contra la fuente, distinguiendo las llamadas reales de los dobles de pruebas. El registro de lo efectivamente ejecutado está en [VALIDACION.md](VALIDACION.md).

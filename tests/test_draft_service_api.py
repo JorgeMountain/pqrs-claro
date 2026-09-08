@@ -168,7 +168,9 @@ def wait_drafts(app, client, case):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         run = client.get(f"/api/cases/{case['id']}/drafts").json()
-        if case["id"] not in app.state.drafts.active:
+        # El worker puede terminar después del GET: no devolver esa lectura
+        # anterior todavía running solo porque active ya quedó vacío.
+        if run["status"] != "running" and case["id"] not in app.state.drafts.active:
             return run
         time.sleep(0.01)
     pytest.fail("El grafo de borradores no terminó")

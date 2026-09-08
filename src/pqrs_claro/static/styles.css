@@ -2172,6 +2172,61 @@ select {
   .response-layout { grid-template-columns: minmax(0, 1fr); }
   .response-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Fase 6: el texto, el respaldo y la decisión permanecen juntos. */
+.case-stage-nav { flex-wrap: wrap; }
+.journey { max-width: 1000px; }
+@media (min-width: 700px) and (max-width: 1199px) {
+  .journey { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 20px; max-width: none; }
+  .journey li, .journey li:last-child { min-width: 0; max-width: none; }
+  .journey li::after { display: none; }
+}
+.review-card .field { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; min-width: 0; }
+.review-card .field input, .review-card .field textarea, .review-card .field select { width: 100%; min-width: 0; }
+.review-card textarea { resize: vertical; line-height: 1.7; }
+.review-card h4 { font-size: 15px; margin: 0 0 12px; }
+.review-card > .source-tag { display: inline-block; margin-bottom: 8px; }
+.review-pending { padding: 20px; margin: 20px 0; background: var(--amber-bg); border-left: 3px solid var(--amber); }
+.review-pending > .response-detail { padding: 16px 0; border-top-color: var(--line); }
+.review-pending summary { color: var(--ink); line-height: 1.7; overflow-wrap: anywhere; }
+.review-pending-body { min-width: 0; }
+.review-editor, .review-assessment { border-top: 1px solid var(--line); padding: 24px 0; margin-top: 12px; }
+.review-paragraph { border: 1px solid var(--line); padding: 16px; margin: 16px 0; border-radius: var(--radius); background: var(--page); }
+.review-paragraph .field { margin-top: 0; }
+.review-paragraph .response-detail { padding-bottom: 8px; }
+.review-reference-options { min-width: 0; }
+.review-source-group { border: 1px solid var(--line); margin: 16px 0; padding: 12px; border-radius: var(--radius); min-width: 0; background: var(--surface); }
+.review-source-group legend { padding: 0 8px; font-size: 12px; font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
+.review-reference + .review-reference { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+.review-choice { display: flex; align-items: flex-start; gap: 12px; padding: 12px 0; cursor: pointer; min-width: 0; font-size: 13px; line-height: 1.65; }
+.review-choice input[type="checkbox"] { width: 18px; height: 18px; margin: 3px 0 0; flex-shrink: 0; accent-color: var(--green); }
+.review-choice > span { display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.review-choice small { color: var(--muted); }
+.review-quote { white-space: pre-wrap; line-height: 1.7; font-size: 12px; }
+.review-fact { padding: 16px; margin: 16px 0; background: var(--green-light); border-left: 3px solid var(--green); font-size: 13px; }
+.review-fact p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-fact-form { padding-top: 8px; }
+.review-save-bar { padding: 20px; background: var(--green-light); border-radius: var(--radius); margin: 8px 0 24px; }
+.review-save-bar > p { margin: 0 0 12px; }
+.review-save-bar .button-group + .button-group { margin-top: 12px; }
+.review-save-bar .button-group { flex-wrap: wrap; }
+.review-assessment > p, .review-approval > p, .review-approved > p { font-size: 13px; line-height: 1.7; }
+.review-issue-list { font-size: 13px; line-height: 1.7; padding-left: 20px; }
+.review-issue-list li + li { margin-top: 8px; }
+.review-approval, .review-approved { padding: 20px; border: 1px solid var(--green); border-radius: var(--radius); margin: 12px 0 24px; background: var(--green-light); }
+.review-approval-help { font-size: 13px; color: var(--muted); margin: 0 0 24px; }
+.review-history-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+@media (max-width: 767px) {
+  .case-stage-nav { gap: 4px; }
+  .case-stage-nav .button { padding: 8px; font-size: 11px; }
+  .review-pending, .review-paragraph, .review-save-bar, .review-approval, .review-approved { padding: 12px; }
+  .review-source-group { padding: 8px; }
+  .review-save-bar .button-group { align-items: stretch; }
+  .review-save-bar .button-group .button { width: 100%; }
+  .review-workspace .response-actions { align-items: flex-start; }
+  .review-workspace .response-actions .button { max-width: 100%; white-space: normal; }
+  .journey { max-width: none; }
+}
 @media (max-width: 767px) {
   .response-workspace { padding: 20px; }
   .response-entry { flex-direction: column; align-items: stretch; padding: 20px; gap: 16px; }

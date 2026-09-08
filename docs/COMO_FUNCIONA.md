@@ -52,6 +52,13 @@ Los módulos se encuentran en `src/pqrs_claro/`.
 | `draft_graph.py` | Conecta planificar, redactar y comprobar con checkpoints por solicitud |
 | `draft_service.py` y `draft_store.py` | Controlan versiones, ámbito, avance e historial de borradores |
 | `draft_api.py` | Permite preparar y consultar los borradores desde la página |
+| `review_models.py` | Define los párrafos editables, aportes atribuidos, decisiones sobre pendientes y confirmación de aprobación |
+| `review_engine.py` | Comprueba la cobertura de la respuesta y su respaldo sin modificar el texto humano |
+| `review_graph.py` | Comprueba una revisión, pausa para la aprobación humana y reanuda con la versión correspondiente |
+| `review_service.py` | Conserva la revisión al actualizar fuentes y controla cambios, concurrencia y aprobaciones vigentes |
+| `review_store.py` | Guarda las revisiones, el historial y las copias inmutables de lo aprobado |
+| `review_api.py` | Recibe las acciones de guardar, aportar, comprobar y aprobar desde la pantalla |
+| `static/review*.js` | Editor por solicitud, fuentes de cada párrafo, pendientes, aportes, historial y protección de cambios sin guardar |
 | `static/` | La pantalla, su diseño y las acciones del navegador |
 | `__init__.py` | Identifica el paquete Python |
 
@@ -63,7 +70,9 @@ Los scripts preparan dependencias, inician la aplicación y ejecutan comprobacio
 
 **Checkpoint:** la fotografía interna del avance de LangGraph. Permite continuar después de un fallo o una pausa. No reemplaza el historial del expediente.
 
-Durante la revisión, la versión editable vive en el expediente. Al confirmar, esa versión pasa al nodo de revisión. Recuperar una pausa debe conservar la corrección humana, incluso cuando el checkpoint aún contenga la propuesta anterior.
+Durante la revisión de la identificación, la versión editable vive en el expediente. Al confirmar, esa versión pasa al nodo de revisión. Recuperar una pausa debe conservar la corrección humana, incluso cuando el checkpoint aún contenga la propuesta anterior.
+
+La revisión de respuestas tiene su propio historial en `data/revisiones.sqlite` y sus checkpoints en `data/review_checkpoints.sqlite`. Guardar una edición crea una revisión; aprobar conserva una copia de esa versión con sus referencias y huellas. Una aprobación anterior sigue en el historial, pero no aprueba los cambios posteriores.
 
 ## Fechas y OCR
 
@@ -95,4 +104,20 @@ Con las fuentes actualizadas, **5. Borradores** permite preparar un plan, redact
 
 En el ejemplo, se puede proponer el procedimiento y los requisitos y describir la fecha y el estado registrados. La copia del acta sigue pendiente: el texto no afirma que se haya adjuntado ni que no exista. Cada párrafo permite abrir sus fuentes. Los cambios de entradas dejan el resultado desactualizado; los errores técnicos pueden reintentarse sin repetir solicitudes terminadas.
 
-Los borradores permanecen pendientes de revisión humana. La fase 6 incorporará edición y aprobación; la fase 7 generará el oficio. [FASE5.md](FASE5.md) explica el recorrido, los módulos y las comprobaciones.
+Los borradores pasan al recorrido de revisión humana de la fase 6. [FASE5.md](FASE5.md) explica cómo se preparan y comprueban; la fase 7 generará el oficio a partir de respuestas aprobadas.
+
+## Revisar y aprobar las respuestas: fase 6
+
+**6. Revisar y aprobar** permite trabajar cada solicitud por separado. La pantalla muestra primero qué falta resolver; después presenta los aportes escritos y el editor de párrafos. Cada párrafo tiene sus propios fragmentos o aportes seleccionados, con acceso al documento original.
+
+Por ejemplo, si el estado de EJEMPLO-042 necesita una aclaración, la persona que consultó el registro puede aportar el dato, su nombre, cómo lo comprobó y la fecha. Ese aporte queda atribuido y se puede citar en la respuesta. Una petición de copia del acta sigue necesitando el documento correspondiente: el aporte no sustituye la copia.
+
+El recorrido tiene tres decisiones distintas:
+
+1. **Guardar cambios:** conserva el texto, las citas y las decisiones justificadas sobre pendientes, indicando quién editó. Los cambios sin guardar se protegen en la pestaña y pueden descargarse.
+2. **Comprobar esta versión:** Python valida las referencias y las entradas; la IA contrasta el contenido con la solicitud y sus soportes. La comprobación no reescribe la respuesta ni resuelve pendientes por su cuenta.
+3. **Aprobar esta versión:** cuando la comprobación es satisfactoria y no quedan pendientes abiertos, LangGraph espera una confirmación humana explícita. La aplicación registra quién aprueba y conserva lo aprobado.
+
+Si aparece un documento nuevo, se incorpora a la biblioteca y se actualiza **4. Fuentes**. Después, **Actualizar fuentes de la revisión** conserva el texto humano y los aportes, incorpora los nuevos pendientes y exige volver a comprobar. Un cambio de texto, cita, aporte, resolución o fuente deja sin vigencia la aprobación anterior.
+
+La fase 6 termina con respuestas revisadas y aprobadas; todavía no genera ni envía el oficio. [FASE6.md](FASE6.md) desarrolla el recorrido, los estados y los límites de la aprobación local.

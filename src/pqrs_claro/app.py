@@ -15,6 +15,8 @@ from .draft_api import draft_router
 from .draft_service import DraftService
 from .extraction import OpenAIOCR, PDFExtractor
 from .models import Identification
+from .review_api import review_router
+from .review_service import ReviewService
 from .service import CaseService
 from .source_api import source_router
 from .source_library import SourceLibrary
@@ -49,7 +51,13 @@ def check_pdf(data, settings):
 
 
 def create_app(
-    settings=None, *, extractor=None, identifier=None, source_assessor=None, draft_engine=None
+    settings=None,
+    *,
+    extractor=None,
+    identifier=None,
+    source_assessor=None,
+    draft_engine=None,
+    review_engine=None,
 ):
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
@@ -60,23 +68,35 @@ def create_app(
     library = SourceLibrary(settings.data_dir, source_extractor)
     sources_service = SourceService(settings, store, library, assessor=source_assessor)
     drafts_service = DraftService(settings, store, library, sources_service, engine=draft_engine)
+    reviews_service = ReviewService(
+        settings,
+        store,
+        library,
+        sources_service,
+        drafts_service,
+        engine=review_engine,
+    )
 
     @asynccontextmanager
     async def lifespan(app):
         store.recover_interrupted()
         library.recover()
         drafts_service.recover()
+        reviews_service.recover()
         yield
         service.close()
         sources_service.close()
         drafts_service.close()
+        reviews_service.close()
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
     app.state.library, app.state.sources = library, sources_service
     app.state.drafts = drafts_service
+    app.state.reviews = reviews_service
     app.include_router(source_router(library, sources_service, store))
     app.include_router(draft_router(drafts_service))
+    app.include_router(review_router(reviews_service))
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
     )

@@ -1,0 +1,616 @@
+"""Revisión humana por solicitud, con evaluación y aprobación de entradas exactas."""
+
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+from uuid import uuid4
+
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import Command
+
+from .models import DomainError
+from .review_store import ReviewStore
+from .service import user_error
+from .source_assessment import _allowed_roles
+from .source_documents import document_matches, requested_document
+from .source_library import digest
+from .storage import Conflict, now
+
+REVIEW_VERSION = 1
+
+
+def pending_id(item):
+    return (
+        "M"
+        + digest(
+            {
+                "kind": item["kind"],
+                "description": " ".join(item["description"].split()).casefold(),
+            }
+        )[:24]
+    )
+
+
+def input_hash(row):
+    return digest(
+        {
+            key: row.get(key)
+            for key in (
+                "case_id",
+                "request_id",
+                "base_fingerprint",
+                "paragraphs",
+                "facts",
+                "pending",
+                "available_supports",
+                "request_snapshot",
+            )
+        }
+    )
+
+
+def invalidate(row):
+    row.update(
+        status="stale" if row.get("stale") else "editing",
+        assessment=None,
+        approval=None,
+        error=None,
+        check_thread_id=None,
+    )
+
+
+class ReviewService:
+    def __init__(self, settings, cases, library, sources_service, drafts_service, engine=None):
+        self.settings, self.cases, self.library = settings, cases, library
+        self.sources_service, self.drafts_service = sources_service, drafts_service
+        self.engine = engine
+        self.store = ReviewStore(settings.data_dir)
+        self.lock = threading.RLock()
+        self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reviews")
+        self.active = set()
+
+    def _base(self, case_id):
+        case, sources, fingerprint, current = self.drafts_service._current(case_id)
+        return (
+            case,
+            sources,
+            digest(
+                {
+                    "inputs": fingerprint,
+                    "model": self.settings.model,
+                    "review_version": REVIEW_VERSION,
+                }
+            ),
+            current,
+        )
+
+    def _current(self, row, base=None):
+        case, _, fingerprint, current = base or self._base(row["case_id"])
+        if (
+            row.get("stale")
+            or not current
+            or row["base_fingerprint"] != fingerprint
+            or row["request_id"]
+            not in {
+                request["id"] for request in (case.get("identification") or {}).get("requests", [])
+            }
+        ):
+            return False
+        try:
+            self.cases.original(row["case_id"])
+            for source_id in {s["source_id"] for s in row["available_supports"]}:
+                self.library.original(source_id, row["case_id"])
+        except (ValueError, KeyError):
+            return False
+        return True
+
+    def _project(self, row, base=None):
+        if not self._current(row, base) and not row.get("stale"):
+            row.update(
+                stale=True,
+                status="stale",
+                assessment=None,
+                approval=None,
+                error="Actualiza las fuentes y sincroniza la revisión. Tu texto se conserva.",
+                check_thread_id=None,
+            )
+            row = self.store.save(row, expected=row["revision"], event="inputs_changed")
+        elif row.get("assessment") and row["assessment"].get("input_hash") != input_hash(row):
+            invalidate(row)
+            row = self.store.save(row, expected=row["revision"], event="revision_changed")
+        return row
+
+    def get(self, case_id):
+        with self.lock:
+            base = self._base(case_id)
+            case = base[0]
+            ids = [r["id"] for r in (case.get("identification") or {}).get("requests", [])]
+            rows = {row["request_id"]: row for row in self.store.list(case_id)}
+            requests = [self._project(rows[key], base) for key in ids if key in rows]
+            stale = any(row["stale"] for row in requests)
+            count = sum(row["status"] == "approved" for row in requests)
+            status = (
+                "idle"
+                if not requests
+                else "stale"
+                if stale
+                else "checking"
+                if any(row["status"] == "checking" for row in requests)
+                else "approved"
+                if count == len(ids) and len(requests) == len(ids)
+                else "ready"
+                if len(requests) == len(ids)
+                and all(row["status"] in {"ready", "approved"} for row in requests)
+                else "editing"
+            )
+            return dict(
+                case_id=case_id,
+                status=status,
+                stale=stale,
+                requests=requests,
+                approved_count=count,
+                total_count=len(ids),
+                error=None,
+            )
+
+    def _inputs(self, case_id, version):
+        case, source_run, findings, _ = self.drafts_service._inputs(case_id, version)
+        _, _, chunks, _ = self.sources_service.inputs(case_id)
+        return (
+            case,
+            source_run,
+            findings,
+            {c["chunk_id"]: c for c in chunks},
+            self._base(case_id)[2],
+        )
+
+    @staticmethod
+    def _supports(request, finding, chunks):
+        available = {
+            s["chunk_id"]: {**s, "origin_selection": "automatic"}
+            for s in finding.get("supports", [])
+        }
+        kind = requested_document(request)
+        for document in finding.get("candidate_documents", []):
+            for fragment in document["chunks"]:
+                chunk = chunks[fragment["chunk_id"]]
+                roles = _allowed_roles(chunk["category"], kind)
+                role = (
+                    "document"
+                    if "document" in roles
+                    and kind
+                    and document_matches(
+                        request,
+                        chunk,
+                        kind,
+                    )
+                    else roles[0]
+                    if roles
+                    else None
+                )
+                if not role:
+                    raise Conflict("Un candidato tiene una categoría no permitida.")
+                available.setdefault(
+                    chunk["chunk_id"], {**chunk, "role": role, "origin_selection": "candidate"}
+                )
+        if len(available) > 32:
+            raise Conflict("El mapa supera 32 fragmentos para una solicitud. Ajusta sus fuentes.")
+        return list(available.values())
+
+    @staticmethod
+    def _pending(old, finding, draft=None):
+        entries = {item["id"]: deepcopy(item) for item in old}
+        for origin, items in (
+            ("source", finding.get("missing", [])),
+            ("draft", (draft or {}).get("pending", [])),
+        ):
+            for item in items:
+                identifier = pending_id(item)
+                if identifier in entries:
+                    if origin not in entries[identifier]["origins"]:
+                        entries[identifier]["origins"].append(origin)
+                else:
+                    entries[identifier] = dict(
+                        id=identifier,
+                        kind=item["kind"],
+                        description=item["description"],
+                        resolution=None,
+                        origins=[origin],
+                    )
+        if len(entries) > 300:
+            raise Conflict(
+                "Hay más de 300 pendientes en esta solicitud. Ajusta el mapa de fuentes."
+            )
+        return list(entries.values())
+
+    def start(self, case_id, version):
+        with self.lock, self.library.lock:
+            if any(key[0] == case_id for key in self.active):
+                raise Conflict("Espera a que termine la comprobación antes de sincronizar fuentes.")
+            case, _, findings, chunks, fingerprint = self._inputs(case_id, version)
+            previous = {row["request_id"]: row for row in self.store.list(case_id)}
+            draft_run = self.drafts_service.get(case_id)
+            draft_current = draft_run["status"] in {"ready", "partial"} and not draft_run["stale"]
+            results = {r["request_id"]: r for r in draft_run.get("results", [])}
+            if not previous and (
+                not draft_current
+                or len(results) != len(findings)
+                or any(r["status"] == "error" for r in results.values())
+            ):
+                raise Conflict("Prepara primero los borradores actuales de todas las solicitudes.")
+            for request in case["identification"]["requests"]:
+                request = {
+                    **request,
+                    "case_id": case_id,
+                    "allowed_collection_ids": case["allowed_collection_ids"],
+                }
+                finding, old = findings[request["id"]], previous.get(request["id"])
+                draft = (results.get(request["id"], {}).get("draft") or {}) if draft_current else {}
+                supports = self._supports(request, finding, chunks)
+                pending = self._pending((old or {}).get("pending", []), finding, draft)
+                if old and old["base_fingerprint"] == fingerprint and not old["stale"]:
+                    continue
+                if old:
+                    row = deepcopy(old)
+                    invalidate(row)
+                    row.update(
+                        base_fingerprint=fingerprint,
+                        available_supports=supports,
+                        pending=pending,
+                        stale=False,
+                        status="editing",
+                        request_snapshot=request,
+                        label=request["label"],
+                        title=request["title"],
+                        description=request["description"],
+                    )
+                else:
+                    row = dict(
+                        case_id=case_id,
+                        request_id=request["id"],
+                        label=request["label"],
+                        title=request["title"],
+                        description=request["description"],
+                        revision=0,
+                        status="editing",
+                        stale=False,
+                        base_fingerprint=fingerprint,
+                        draft_run_id=draft_run.get("id") if draft_current else None,
+                        request_snapshot=request,
+                        paragraphs=[
+                            {**p, "cited_fact_ids": []} for p in draft.get("paragraphs", [])
+                        ],
+                        available_supports=supports,
+                        facts=[],
+                        pending=pending,
+                        assessment=None,
+                        approval=None,
+                        error=None,
+                        updated_at=now(),
+                        edited_by=None,
+                        check_thread_id=None,
+                    )
+                self.store.save(
+                    row,
+                    expected=(old or {}).get("revision", 0),
+                    event="synchronized" if old else "started",
+                )
+            return self.get(case_id)
+
+    def _row(self, case_id, request_id, revision=None, *, fresh=True):
+        case = self.cases.get(case_id)
+        if request_id not in {
+            r["id"] for r in (case.get("identification") or {}).get("requests", [])
+        }:
+            raise KeyError("La solicitud ya no forma parte de la identificación vigente.")
+        row = self.store.get(case_id, request_id)
+        if not row:
+            raise KeyError("Inicia primero la revisión de esta solicitud.")
+        row = self._project(row)
+        if revision is not None and row["revision"] != revision:
+            raise Conflict("La revisión cambió. Recarga antes de continuar.")
+        if fresh and row["stale"]:
+            raise Conflict("Actualiza las fuentes y sincroniza la revisión antes de continuar.")
+        return row
+
+    @staticmethod
+    def _check_references(row, paragraphs, resolutions):
+        chunks = {s["chunk_id"] for s in row["available_supports"]}
+        facts = {fact["id"] for fact in row["facts"]}
+        # Referencias retiradas ya presentes pueden conservarse al guardar; la evaluación
+        # las señalará y no se elimina texto humano para esconder el problema.
+        old_chunks = {identifier for p in row["paragraphs"] for identifier in p["cited_chunk_ids"]}
+        old_facts = {identifier for p in row["paragraphs"] for identifier in p["cited_fact_ids"]}
+        for paragraph in paragraphs:
+            if (
+                not set(paragraph["cited_chunk_ids"]) <= chunks | old_chunks
+                or not set(paragraph["cited_fact_ids"]) <= facts | old_facts
+            ):
+                raise ValueError("Selecciona referencias disponibles en esta solicitud.")
+        for resolution in resolutions:
+            if resolution["action"] == "open":
+                continue
+            if (
+                not set(resolution["cited_chunk_ids"]) <= chunks
+                or not set(resolution["cited_fact_ids"]) <= facts
+            ):
+                raise ValueError("La resolución contiene referencias que ya no están disponibles.")
+
+    def edit(self, case_id, request_id, edit):
+        body = edit.model_dump(mode="json") if hasattr(edit, "model_dump") else edit
+        with self.lock:
+            row = self._row(case_id, request_id, body["revision"], fresh=False)
+            self._check_references(row, body["paragraphs"], body["pending_resolutions"])
+            pending = deepcopy(row["pending"])
+            by_id = {item["id"]: item for item in pending}
+            seen = set()
+            for resolution in body["pending_resolutions"]:
+                identifier = resolution["pending_id"]
+                if identifier not in by_id or identifier in seen:
+                    raise ValueError("El pendiente no existe o está repetido.")
+                seen.add(identifier)
+                item = by_id[identifier]
+                if resolution["action"] == "open":
+                    item["resolution"] = None
+                    continue
+                if (
+                    resolution["action"] == "resolved"
+                    and item["kind"] == "document"
+                    and not resolution["cited_chunk_ids"]
+                ):
+                    raise ValueError(
+                        "Un documento pendiente necesita una fuente documental citada."
+                    )
+                value = {
+                    k: resolution[k]
+                    for k in ("action", "note", "cited_chunk_ids", "cited_fact_ids")
+                }
+                old = item["resolution"]
+                if old and all(old.get(key) == value[key] for key in value):
+                    continue
+                item["resolution"] = {**value, "by": body["edited_by"], "at": now()}
+            if row["paragraphs"] == body["paragraphs"] and row["pending"] == pending:
+                return row
+            row.update(paragraphs=body["paragraphs"], pending=pending, edited_by=body["edited_by"])
+            invalidate(row)
+            return self.store.save(
+                row, expected=body["revision"], event="edited", actor=body["edited_by"]
+            )
+
+    def add_fact(self, case_id, request_id, fact):
+        body = fact.model_dump(mode="json") if hasattr(fact, "model_dump") else fact
+        with self.lock:
+            row = self._row(case_id, request_id, body["revision"], fresh=False)
+            if len(row["facts"]) >= 30:
+                raise ValueError("Esta solicitud admite hasta 30 declaraciones activas.")
+            value = {key: body[key] for key in ("text", "author", "basis", "observed_at")}
+            value.update(
+                id="F" + uuid4().hex, recorded_at=now(), case_id=case_id, request_id=request_id
+            )
+            value["sha256"] = digest(value)
+            row["facts"].append(value)
+            row["edited_by"] = value["author"]
+            invalidate(row)
+            return self.store.save(
+                row, expected=body["revision"], event="fact_added", actor=value["author"]
+            )
+
+    def remove_fact(self, case_id, request_id, fact_id, revision, edited_by):
+        with self.lock:
+            row = self._row(case_id, request_id, revision, fresh=False)
+            if fact_id not in {fact["id"] for fact in row["facts"]}:
+                raise KeyError("No existe la declaración activa.")
+            row["facts"] = [fact for fact in row["facts"] if fact["id"] != fact_id]
+            row["edited_by"] = edited_by
+            invalidate(row)
+            return self.store.save(row, expected=revision, event="fact_removed", actor=edited_by)
+
+    def assess(self, case_id, request_id, revision):
+        with self.lock:
+            row = self._row(case_id, request_id, revision)
+            key = (case_id, request_id)
+            if key in self.active:
+                raise Conflict("Esta solicitud ya se está comprobando.")
+            if not self.settings.api_key and self.engine is None:
+                raise ValueError("Falta configurar OpenAI para comprobar la revisión.")
+            row.update(
+                status="checking",
+                assessment=None,
+                approval=None,
+                error=None,
+                check_thread_id=f"review:{case_id}:{request_id}:{uuid4().hex}",
+            )
+            row = self.store.save(row, expected=revision, event="assessment_started")
+            self.active.add(key)
+            self.pool.submit(self.run, deepcopy(row))
+            return row
+
+    def _engine(self):
+        from .review_engine import OpenAIReviewEngine
+
+        return self.engine or OpenAIReviewEngine(self.settings.api_key, self.settings.model)
+
+    def run(self, original):
+        from .review_graph import build_review_graph
+
+        key = (original["case_id"], original["request_id"])
+        try:
+            if not self._current(original):
+                raise Conflict("Las fuentes cambiaron durante la comprobación.")
+            with SqliteSaver.from_conn_string(
+                str(self.settings.data_dir / "review_checkpoints.sqlite")
+            ) as saver:
+                graph = build_review_graph(self._engine(), saver)
+                state = graph.invoke(
+                    {
+                        "request": original["request_snapshot"],
+                        "review": original,
+                        "input_hash": input_hash(original),
+                    },
+                    {"configurable": {"thread_id": original["check_thread_id"]}},
+                )
+            with self.lock:
+                row = self.store.get(*key)
+                if (
+                    row["revision"] != original["revision"]
+                    or row["check_thread_id"] != original["check_thread_id"]
+                ):
+                    return
+                if not self._current(row):
+                    self._project(row)
+                    return
+                assessment = {
+                    **state["assessment"],
+                    "input_hash": input_hash(row),
+                    "assessed_at": now(),
+                    "model": self.settings.model,
+                }
+                pending = any(item["resolution"] is None for item in row["pending"])
+                row.update(
+                    assessment=assessment,
+                    error=None,
+                    status="needs_evidence"
+                    if pending
+                    else "ready"
+                    if assessment["status"] == "passed"
+                    else "needs_changes",
+                )
+                self.store.save(row, expected=original["revision"], event="assessed")
+        except Exception as exc:
+            with self.lock:
+                row = self.store.get(*key)
+                if row and row["revision"] == original["revision"]:
+                    if not self._current(row):
+                        self._project(row)
+                    else:
+                        error = user_error(exc if isinstance(exc, DomainError) else RuntimeError())
+                        row.update(status="error", error=error, assessment=None, approval=None)
+                        self.store.save(row, expected=row["revision"], event="assessment_failed")
+        finally:
+            with self.lock:
+                self.active.discard(key)
+
+    def approve(self, case_id, request_id, approval):
+        from .review_graph import build_review_graph
+
+        body = approval.model_dump(mode="json") if hasattr(approval, "model_dump") else approval
+        with self.lock, self.library.lock:
+            row = self._row(case_id, request_id, body["revision"])
+            assessment, fingerprint = row["assessment"], input_hash(row)
+            if (
+                row["status"] != "ready"
+                or not assessment
+                or assessment["status"] != "passed"
+                or body["assessment_hash"] != fingerprint
+                or assessment["input_hash"] != fingerprint
+                or not row["paragraphs"]
+                or any(item["resolution"] is None for item in row["pending"])
+            ):
+                raise Conflict(
+                    "Comprueba y resuelve los pendientes de esta versión antes de aprobar."
+                )
+            from .review_engine import structural_checks, validate_review_input
+
+            _, issues = structural_checks(validate_review_input(row["request_snapshot"], row))
+            if issues:
+                raise Conflict("Corrige las citas y resoluciones de esta versión antes de aprobar.")
+            case = self.cases.get(case_id)
+            self._inputs(case_id, case["version"])
+            with SqliteSaver.from_conn_string(
+                str(self.settings.data_dir / "review_checkpoints.sqlite")
+            ) as saver:
+                graph = build_review_graph(self._engine(), saver)
+                config = {"configurable": {"thread_id": row["check_thread_id"]}}
+                state = graph.get_state(config)
+                if (
+                    state.values.get("evaluated_input_hash") != fingerprint
+                    or input_hash(state.values.get("review", {})) != fingerprint
+                    or state.values.get("assessment")
+                    != {key: assessment[key] for key in ("status", "issues", "local_checks")}
+                ):
+                    raise Conflict(
+                        "La pausa de aprobación no corresponde a esta evaluación. "
+                        "Comprueba de nuevo."
+                    )
+                decision = {key: body[key] for key in ("approved_by", "note", "confirmed")}
+                resume = {**decision, "input_hash": fingerprint}
+                if state.next == ("esperar_aprobacion",):
+                    state = graph.invoke(Command(resume=resume), config)
+                elif state.values.get("approval_decision") == resume:
+                    # Un apagado puede ocurrir entre confirmar el grafo y guardar la
+                    # proyección SQLite. La misma decisión explícita recupera ese corte.
+                    if state.next == ("registrar_aprobacion",):
+                        state = graph.invoke(None, config)
+                    elif not state.next and state.values.get("approval"):
+                        state = state.values
+                    else:
+                        raise Conflict("La pausa cambió. Vuelve a comprobar esta revisión.")
+                else:
+                    raise Conflict(
+                        "La aprobación interrumpida tenía otra decisión. "
+                        "Vuelve a comprobar antes de aprobar con datos diferentes."
+                    )
+            approved = state.get("approval")
+            if not approved or approved["input_hash"] != fingerprint:
+                raise Conflict("El grafo no confirmó la aprobación de esta versión.")
+            if not self._current(row):
+                self._project(row)
+                raise Conflict("Las fuentes cambiaron antes de registrar la aprobación.")
+            snapshot = dict(
+                id=approved["id"],
+                case_id=case_id,
+                request_id=request_id,
+                case_version=case["version"],
+                case_original_sha256=case["sha256"],
+                identification=deepcopy(case["identification"]),
+                review=deepcopy(row),
+                approval=deepcopy(approved),
+            )
+            snapshot["snapshot_hash"] = digest(snapshot)
+            row.update(
+                status="approved",
+                approval={**approved, "snapshot_hash": snapshot["snapshot_hash"]},
+                edited_by=body["approved_by"],
+                error=None,
+            )
+            return self.store.save(
+                row,
+                expected=body["revision"],
+                event="approved",
+                actor=body["approved_by"],
+                snapshot=snapshot,
+            )
+
+    def history(self, case_id, request_id):
+        self.cases.get(case_id)
+        if not self.store.get(case_id, request_id):
+            raise KeyError("No existe historial de esta solicitud.")
+        return {"revisions": self.store.history(case_id, request_id), "limit": 100}
+
+    def approved(self, case_id):
+        with self.lock:
+            value = self.get(case_id)
+            if value["status"] != "approved" or not value["requests"]:
+                raise Conflict(
+                    "Todas las respuestas vigentes deben estar aprobadas antes de continuar."
+                )
+            snapshots = [self.store.approval(row["approval"]["id"]) for row in value["requests"]]
+            for row, snapshot in zip(value["requests"], snapshots, strict=True):
+                if snapshot["snapshot_hash"] != digest(
+                    {key: val for key, val in snapshot.items() if key != "snapshot_hash"}
+                ) or row["approval"]["input_hash"] != input_hash(row):
+                    raise Conflict("La versión aprobada no corresponde a la revisión vigente.")
+            result = dict(
+                case_id=case_id,
+                status="approved",
+                requests=snapshots,
+                approved_count=len(snapshots),
+                total_count=len(snapshots),
+            )
+            return {**result, "snapshot_hash": digest(result)}
+
+    def recover(self):
+        self.store.recover()
+
+    def close(self):
+        self.pool.shutdown(wait=True)

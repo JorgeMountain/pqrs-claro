@@ -8,6 +8,7 @@ export function createDrafts({
   render,
   showSource,
   back,
+  review,
 }) {
   const state = {
     caseId: null,
@@ -104,6 +105,7 @@ export function createDrafts({
       generate,
       load,
       back,
+      review,
       showSource,
       select(id) {
         state.selected = id;

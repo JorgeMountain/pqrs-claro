@@ -70,8 +70,14 @@ Preparar un plan y un borrador por solicitud, con comprobaciones de respaldo, ci
 
 Los antecedentes previamente verificados se reutilizan con atribución y contraste de aplicabilidad. Los archivos candidatos pendientes de cotejo siguen disponibles sin convertirse automáticamente en soporte. La fase produce borradores internos, pendientes de revisión humana; su alcance y recorrido están en [FASE5.md](FASE5.md).
 
+## Entrega 4: parte 6
+
+Revisar cada borrador con un editor por párrafos, fuentes seleccionables, aportes escritos atribuidos y decisiones justificadas sobre pendientes. Guardar conserva una versión; comprobar evalúa ese contenido; aprobar reanuda una pausa de LangGraph y conserva una copia de la versión aprobada.
+
+Los cambios de texto, evidencia o entradas invalidan la evaluación y la aprobación. Actualizar las fuentes preserva el trabajo humano. El recorrido se explica en [FASE6.md](FASE6.md); esta etapa todavía no genera ni envía el oficio.
+
 ## Lo que sigue
 
-Parte 6: revisión humana de respuestas y faltantes. Parte 7: DOCX/PDF fieles a lo aprobado. Parte 8: evaluación ampliada, operación e integraciones concretas.
+Parte 7: DOCX/PDF fieles a lo aprobado. Parte 8: evaluación ampliada, operación e integraciones concretas.
 
 Cada nueva entrega debe mostrar qué entra, qué transforma Python, qué propone la IA, qué coordina LangGraph y qué se puede comprobar al terminar. Mantendremos un plan y un repositorio, con cambios registrados en Git.

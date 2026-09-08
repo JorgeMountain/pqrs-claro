@@ -13,6 +13,7 @@ import {
 import { requestsView, quoteFor } from "./requests.js";
 import { createSources } from "./sources.js";
 import { createDrafts } from "./drafts.js";
+import { createReview } from "./review.js";
 
 const state = {
   config: null,
@@ -30,6 +31,7 @@ const state = {
   conflict: false,
   library: false,
   responses: new URL(location.href).searchParams.get("view") === "drafts",
+  reviewing: new URL(location.href).searchParams.get("view") === "review",
 };
 const $ = (id) => document.getElementById(id);
 
@@ -157,6 +159,7 @@ function adopt(current, reset = false) {
   state.current = current;
   sources.setCase(current);
   drafts.setCase(current);
+  reviews.setCase(current);
   if (
     current.status === "confirmed" &&
     (!sources.state.loaded || !sources.state.mapping)
@@ -168,6 +171,13 @@ function adopt(current, reset = false) {
     !drafts.state.loading
   )
     void drafts.load({ quiet: true });
+  if (
+    current.status === "confirmed" &&
+    state.reviewing &&
+    !reviews.state?.loaded &&
+    !reviews.state?.loading
+  )
+    void reviews.load({ quiet: true });
   if (reset) {
     clearDraft();
     state.page = current.pages?.[0]?.number || 1;
@@ -201,6 +211,7 @@ async function selectCase(id) {
     adopt(current, true);
     state.library = false;
     state.responses = false;
+    state.reviewing = false;
     state.notice = null;
     const url = new URL(location.href);
     url.searchParams.set("case", id);
@@ -216,7 +227,9 @@ function newCase() {
   state.library = false;
   sources.setCase(null);
   drafts.setCase(null);
+  reviews.setCase(null);
   state.responses = false;
+  state.reviewing = false;
   state.notice = null;
   const url = new URL(location.href);
   url.searchParams.delete("case");
@@ -588,6 +601,8 @@ function renderSidebar() {
 
 function render() {
   const focusedId = document.activeElement?.id;
+  const selectionStart = document.activeElement?.selectionStart;
+  const selectionEnd = document.activeElement?.selectionEnd;
   const processOpen = $("process-details")?.open;
   const identityOpen = $("identity-details")?.open;
   renderSidebar();
@@ -595,9 +610,11 @@ function render() {
   const status = state.current?.status;
   const stage =
     status === "confirmed"
-      ? state.responses
-        ? 4
-        : 3
+      ? state.reviewing
+        ? 5
+        : state.responses
+          ? 4
+          : 3
       : !status || status === "uploaded"
         ? 0
         : running(status) || status === "error"
@@ -609,6 +626,7 @@ function render() {
     "step-review",
     "step-sources",
     "step-drafts",
+    "step-approve",
   ].forEach((id, index) => {
     $(id).className = index < stage ? "done" : index === stage ? "active" : "";
     $(id).setAttribute("aria-current", index === stage ? "step" : "false");
@@ -623,16 +641,20 @@ function render() {
   document.querySelector(".workspace-heading h1").textContent = state.library
     ? "Biblioteca de fuentes"
     : sourcesStage
-      ? state.responses
-        ? "Preparar las respuestas"
-        : "Encontrar el respaldo"
+      ? state.reviewing
+        ? "Revisar y aprobar las respuestas"
+        : state.responses
+          ? "Preparar las respuestas"
+          : "Encontrar el respaldo"
       : "Entender la petición";
   document.querySelector(".page-intro").textContent = state.library
     ? "Organiza los documentos que sirven de consulta y soporte."
     : sourcesStage
-      ? state.responses
-        ? "Un borrador trazable, con sus fuentes y pendientes visibles."
-        : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
+      ? state.reviewing
+        ? "El texto, sus soportes y una decisión humana para cada solicitud."
+        : state.responses
+          ? "Un borrador trazable, con sus fuentes y pendientes visibles."
+          : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
       : "Identifica qué se solicita y compruébalo con el original.";
   document.querySelector(".journey").hidden = state.library;
   actions.busy = state.busy;
@@ -694,15 +716,24 @@ function render() {
               },
               button("4. Fuentes", openSources, "quiet", {
                 id: "stage-sources",
-                "aria-current": !state.responses ? "step" : null,
+                "aria-current":
+                  !state.responses && !state.reviewing ? "step" : null,
               }),
               button("5. Borradores", openResponses, "quiet", {
                 id: "stage-drafts",
                 "aria-current": state.responses ? "step" : null,
               }),
+              button("6. Revisar y aprobar", openReview, "quiet", {
+                id: "stage-approval",
+                "aria-current": state.reviewing ? "step" : null,
+              }),
             ),
-            state.responses ? drafts.view() : sources.caseView(),
-            !state.responses
+            state.reviewing
+              ? reviews.view()
+              : state.responses
+                ? drafts.view()
+                : sources.caseView(),
+            !state.responses && !state.reviewing
               ? el(
                   "div",
                   { className: "response-entry" },
@@ -753,12 +784,25 @@ function render() {
     : current
       ? `${current.filename} · PQRS Claro`
       : "PQRS Claro · Entender la petición";
-  if (focusedId)
-    document.getElementById(focusedId)?.focus({ preventScroll: true });
+  if (focusedId) {
+    const focused = document.getElementById(focusedId);
+    focused?.focus({ preventScroll: true });
+    if (
+      selectionStart != null &&
+      typeof focused?.setSelectionRange === "function"
+    ) {
+      try {
+        focused.setSelectionRange(selectionStart, selectionEnd);
+      } catch {
+        /* Date inputs do not support a text selection. */
+      }
+    }
+  }
 }
 
 function setResponseStage(value) {
   state.responses = value;
+  state.reviewing = false;
   state.library = false;
   const url = new URL(location.href);
   if (value) url.searchParams.set("view", "drafts");
@@ -775,6 +819,18 @@ function openSources() {
   setResponseStage(false);
   void sources.load({ quiet: true });
 }
+function openReview() {
+  state.responses = false;
+  state.reviewing = true;
+  state.library = false;
+  const url = new URL(location.href);
+  url.searchParams.set("view", "review");
+  history.replaceState(null, "", url);
+  render();
+  void sources.load({ quiet: true });
+  void drafts.load({ quiet: true });
+  void reviews.load({ quiet: true });
+}
 
 function openLibrary() {
   if (state.busy) return;
@@ -786,6 +842,7 @@ function closeLibrary() {
   state.library = false;
   render();
   if (state.responses) void drafts.load({ quiet: true });
+  if (state.reviewing) void reviews.load({ quiet: true });
   $("workspace").focus({ preventScroll: true });
 }
 const sources = createSources({
@@ -804,6 +861,18 @@ const drafts = createDrafts({
   render,
   showSource: (id, ref) => sources.showSource(id, ref),
   back: openSources,
+  review: openReview,
+});
+const reviews = createReview({
+  api,
+  notify,
+  getCase: () => state.current,
+  getDrafts: () => drafts.state.run,
+  getSources: () => sources.state.mapping,
+  render,
+  showSource: (id, ref) => sources.showSource(id, ref),
+  openSources,
+  openLibrary,
 });
 
 function schedulePoll() {
@@ -853,7 +922,7 @@ $("file-picker").addEventListener("change", (event) => {
   event.target.value = "";
 });
 window.addEventListener("beforeunload", (event) => {
-  if (state.dirty) {
+  if (state.dirty || reviews.hasUnsaved()) {
     event.preventDefault();
     event.returnValue = "";
   }
