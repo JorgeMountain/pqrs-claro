@@ -20,7 +20,11 @@ from test_review_service_api import FakeReviewEngine, approve, assess, current, 
 from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
 from pqrs_claro.models import DomainError
-from pqrs_claro.office_service import attachment_name
+from pqrs_claro.office_service import (
+    LETTERHEAD_DEPARTMENT,
+    LETTERHEAD_INSTITUTION,
+    attachment_name,
+)
 from pqrs_claro.source_library import digest
 
 
@@ -34,9 +38,11 @@ class FakeOfficeRenderer:
         self.bad_pdf = False
         self.block = False
         self.entered, self.release = threading.Event(), threading.Event()
+        self.template_paths = []
 
-    def __call__(self, document, output_dir):
+    def __call__(self, document, output_dir, *, template_path=None):
         self.calls += 1
+        self.template_paths.append(template_path)
         if self.block:
             self.block = False
             self.entered.set()
@@ -611,3 +617,240 @@ def test_final_publication_serializes_against_review_edit_and_then_blocks_downlo
     assert publication == [False] and edit_result[0]["status"] == "editing"
     assert final["status"] == "stale"
     assert client.get(url(case, f"/runs/{running['id']}/files/pdf")).status_code == 409
+
+
+def activate_letterhead(settings, label="Primera versión"):
+    folder = settings.data_dir / "templates"
+    folder.mkdir(exist_ok=True)
+    path = folder / "institucional.docx"
+    document = Document()
+    document.sections[0].header.paragraphs[0].text = label
+    document.save(path)
+    registry = dict(
+        version=1,
+        id="ingenieria-udea",
+        name="Membrete de Ingeniería",
+        filename=path.name,
+        sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        source_url="https://drive.google.com/file/d/plantilla-ficticia/view",
+    )
+    (folder / "active.json").write_text(json.dumps(registry), encoding="utf-8")
+    return path, {k: v for k, v in registry.items() if k not in {"version", "filename"}}
+
+
+def institutional_inputs(client, case):
+    body = inputs(client, case)
+    body["metadata"].update(institution=LETTERHEAD_INSTITUTION, department=LETTERHEAD_DEPARTMENT)
+    return body
+
+
+def assert_no_local_path(value, private_root):
+    if isinstance(value, dict):
+        for item in value.values():
+            assert_no_local_path(item, private_root)
+    elif isinstance(value, list):
+        for item in value:
+            assert_no_local_path(item, private_root)
+    elif isinstance(value, str):
+        assert str(private_root) not in value and private_root.as_posix() not in value
+
+
+def test_active_letterhead_defaults_preview_and_manifest_keep_only_public_identity(office_app):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    before = app.state.reviews.approved(case["id"])
+    template_path, public = activate_letterhead(settings)
+    available = client.get(url(case)).json()
+    assert available["letterhead"] == public
+    assert available["defaults"]["institution"] == LETTERHEAD_INSTITUTION
+    assert available["defaults"]["department"] == LETTERHEAD_DEPARTMENT
+    body = institutional_inputs(client, case)
+    shown = preview(client, case, body)
+    assert shown["document"]["letterhead"] == public
+    assert (
+        shown["document"]["requests"][0]["paragraphs"][0]["text"]
+        == (before["requests"][0]["review"]["paragraphs"][0]["text"])
+    )
+    ready = wait_office(app, client, case, generate(client, case, body))
+    assert ready["status"] == "ready" and ready["letterhead"] == public
+    assert ready["office_version"] == 2
+    assert renderer.template_paths == [template_path.resolve()]
+    folder = settings.data_dir / "oficios" / case["id"] / ready["id"]
+    manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["letterhead"] == public and manifest["document"]["letterhead"] == public
+    assert manifest["office_version"] == 2
+    assert_no_local_path([available, shown, ready, manifest["letterhead"]], settings.data_dir)
+    assert generate(client, case, body)["id"] == ready["id"] and renderer.calls == 1
+    assert app.state.reviews.approved(case["id"]) == before
+    assert client.get(url(case)).json()["history"][0]["letterhead"] == public
+
+
+@pytest.mark.parametrize("field", ["institution", "department"])
+def test_incompatible_institution_is_rejected_with_active_letterhead(office_app, field):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    body["metadata"][field] = "Otra entidad"
+    response = client.post(url(case, "/preview"), json=body)
+    assert response.status_code == 422 and "Universidad de Antioquia" in response.text
+    assert not renderer.calls and not app.state.offices.store.list(case["id"])
+
+
+def test_letterhead_change_requires_new_preview_and_never_reuses_previous_files(office_app):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    old_preview = preview(client, case, body)
+    first = wait_office(app, client, case, generate(client, case, body))
+    _, updated = activate_letterhead(settings, "Segunda versión")
+    response = client.post(
+        url(case, "/generate"), json={**body, "preview_hash": old_preview["preview_hash"]}
+    )
+    assert response.status_code == 409 and renderer.calls == 1
+    changed_preview = preview(client, case, body)
+    assert changed_preview["preview_hash"] != old_preview["preview_hash"]
+    second = wait_office(app, client, case, generate(client, case, body))
+    assert second["status"] == "ready" and second["id"] != first["id"]
+    assert second["letterhead"] == updated and renderer.calls == 2
+    for tail in ("files/docx", "files/pdf", "files/zip", "pages/1"):
+        assert client.get(url(case, f"/runs/{first['id']}/{tail}")).status_code == 409
+    assert client.get(url(case, f"/runs/{second['id']}/files/pdf")).status_code == 200
+
+
+@pytest.mark.parametrize("mode", ["activate", "remove"])
+def test_switching_between_neutral_and_letterhead_stales_existing_versions(office_app, mode):
+    app, client, _, settings = office_app
+    case, _ = approved_case(app, client)
+    if mode == "remove":
+        activate_letterhead(settings)
+        body = institutional_inputs(client, case)
+    else:
+        body = inputs(client, case)
+        assert client.get(url(case)).json()["letterhead"] is None
+    first = wait_office(app, client, case, generate(client, case, body))
+    if mode == "remove":
+        (settings.data_dir / "templates" / "active.json").unlink()
+    else:
+        activate_letterhead(settings)
+    result = client.get(url(case)).json()
+    assert result["latest"]["stale"] and result["latest"]["status"] == "stale"
+    assert client.get(url(case, f"/runs/{first['id']}/files/pdf")).status_code == 409
+    assert client.get(url(case, f"/runs/{first['id']}/pages/1")).status_code == 409
+
+
+def test_letterhead_changed_during_background_render_never_publishes_downloads(office_app):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    renderer.block = True
+    try:
+        running = generate(client, case, body)
+        assert renderer.entered.wait(5)
+        activate_letterhead(settings, "Membrete cambiado durante la conversión")
+    finally:
+        renderer.release.set()
+    result = wait_office(app, client, case, running)
+    assert result["status"] == "stale" and not result["files"]
+    assert client.get(url(case, f"/runs/{running['id']}/files/pdf")).status_code == 409
+
+
+@pytest.mark.parametrize("mode", ["corrupt_bytes", "invalid_registry"])
+def test_invalid_active_template_blocks_api_without_fallback_or_private_path(office_app, mode):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    path, _ = activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    shown = preview(client, case, body)
+    ready = wait_office(app, client, case, generate(client, case, body))
+    if mode == "corrupt_bytes":
+        path.write_bytes(path.read_bytes() + b"contenido cambiado")
+    else:
+        (path.parent / "active.json").write_text('{"filename":"../../private.docx"}')
+    responses = [
+        client.get(url(case)),
+        client.post(url(case, "/preview"), json=body),
+        client.post(url(case, "/generate"), json={**body, "preview_hash": shown["preview_hash"]}),
+        client.get(url(case, f"/runs/{ready['id']}/files/pdf")),
+        client.get(url(case, f"/runs/{ready['id']}/pages/1")),
+    ]
+    assert all(r.status_code == 422 for r in responses)
+    assert all("membrete" in r.text for r in responses)
+    assert_no_local_path([r.json() for r in responses], settings.data_dir)
+    assert renderer.calls == 1
+
+
+def test_old_run_without_format_identity_is_stale_under_current_renderer(office_app):
+    app, client, _, _ = office_app
+    case, _ = approved_case(app, client)
+    ready = wait_office(app, client, case, generate(client, case, inputs(client, case)))
+    old = app.state.offices.store.get(case["id"], ready["id"])
+    old.pop("office_version")
+    old.pop("letterhead")
+    with app.state.offices.store.connect() as connection:
+        connection.execute("UPDATE office_runs SET body=? WHERE id=?", (json.dumps(old), old["id"]))
+    assert app.state.offices._files_intact(old)
+    projected = client.get(url(case, f"/runs/{old['id']}")).json()
+    assert projected["stale"] and projected["letterhead"] is None
+    assert projected["office_version"] == 1
+    assert client.get(url(case, f"/runs/{old['id']}/files/pdf")).status_code == 409
+
+
+@pytest.mark.parametrize("boundary", ["during_preview", "before_generation_lock"])
+def test_template_is_rechecked_after_preview_and_before_accepting_job(
+    office_app, monkeypatch, boundary
+):
+    app, client, renderer, settings = office_app
+    case, _ = approved_case(app, client)
+    activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    shown = preview(client, case, body)
+    if boundary == "during_preview":
+        from pqrs_claro import office_service
+
+        original = office_service.build_document
+
+        def changed(*args, **kwargs):
+            result = original(*args, **kwargs)
+            activate_letterhead(settings, "Cambio mientras se compone la vista")
+            return result
+
+        monkeypatch.setattr(office_service, "build_document", changed)
+        response = client.post(url(case, "/preview"), json=body)
+    else:
+        original = app.state.offices._preview
+
+        def changed(*args, **kwargs):
+            result = original(*args, **kwargs)
+            activate_letterhead(settings, "Cambio antes de aceptar la generación")
+            return result
+
+        monkeypatch.setattr(app.state.offices, "_preview", changed)
+        response = client.post(
+            url(case, "/generate"), json={**body, "preview_hash": shown["preview_hash"]}
+        )
+    assert response.status_code == 409 and "membrete" in response.text
+    assert not app.state.offices.store.list(case["id"]) and renderer.calls == 0
+
+
+def test_restart_reuses_only_files_with_the_current_letterhead(office_app):
+    app, client, _, settings = office_app
+    case, _ = approved_case(app, client)
+    activate_letterhead(settings)
+    body = institutional_inputs(client, case)
+    ready = wait_office(app, client, case, generate(client, case, body))
+    renderer = FakeOfficeRenderer()
+    reopened = create_app(settings, office_renderer=renderer)
+    with TestClient(reopened) as second_client:
+        assert second_client.get(url(case, f"/runs/{ready['id']}/files/pdf")).status_code == 200
+        assert generate(second_client, case, body)["id"] == ready["id"]
+        assert renderer.calls == 0
+        activate_letterhead(settings, "Versión posterior al reinicio")
+        assert second_client.get(url(case, f"/runs/{ready['id']}/files/pdf")).status_code == 409
+        replacement = wait_office(
+            reopened, second_client, case, generate(second_client, case, body)
+        )
+        assert replacement["status"] == "ready" and replacement["id"] != ready["id"]
+        assert renderer.calls == 1

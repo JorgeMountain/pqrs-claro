@@ -1,5 +1,15 @@
 import { el, button, dateLabel, textLines } from "./ui.js";
 
+function driveUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && ["drive.google.com", "docs.google.com"].includes(parsed.hostname) ? parsed.href : null;
+  } catch { return null; }
+}
+function driveLink(url, label = "Abrir en Drive ↗") {
+  return el("a", { href: url, target: "_blank", rel: "noopener noreferrer", className: "small-link" }, label);
+}
+
 const categories = {
   national_norm: "Normativa nacional",
   institutional_norm: "Normativa institucional",
@@ -201,7 +211,9 @@ export function createSources({
         "p",
         {},
         el("strong", {}, "Biblioteca local"),
-        " · Originales y versiones en este equipo. Drive no está conectado.",
+        state.sources.some((source) => source.aliases?.some((alias) => alias.drive_url))
+          ? " · Originales y versiones en este equipo. Las copias de Drive se actualizan manualmente."
+          : " · Originales y versiones en este equipo. Drive no está conectado.",
       ),
     );
   }
@@ -469,7 +481,11 @@ export function createSources({
       el("ul", {}, related.map((id) => { const other = state.sources.find((item) => item.id === id); return el("li", {}, smallButton(other?.title || other?.filename || "Consultar documento relacionado", () => { block.closest("dialog")?.close(); showSource(id); }, "quiet")); }))));
     if (aliases.length) block.append(el("details", { className: "archive-aliases" }, el("summary", {}, `${aliases.length} ${aliases.length === 1 ? "ubicación de origen conservada" : "ubicaciones de origen conservadas"}`),
       el("p", { className: "small muted" }, "Las copias idénticas comparten un original conservado. Estos nombres permiten reconocer de dónde provienen."),
-      el("ul", {}, aliases.slice(0, 12).map((alias) => el("li", {}, `${String(alias.member || alias.path || alias.zip_path || source.filename).split(/[\\/]/).at(-1)}${alias.group ? ` · ${alias.group}` : ""}`))),
+      el("ul", {}, aliases.slice(0, 12).map((alias) => {
+        const url = driveUrl(alias.drive_url);
+        const name = url ? (alias.filename || alias.member || source.filename) : String(alias.member || alias.path || alias.zip_path || source.filename).split(/[\\/]/).at(-1);
+        return el("li", {}, `${name}${alias.group ? ` · ${alias.group}` : ""}`, url ? [" · ", driveLink(url)] : null);
+      })),
       aliases.length > 12 ? el("p", { className: "small muted" }, `Y ${aliases.length - 12} ubicaciones adicionales registradas.`) : null));
     return block;
   }
@@ -1117,6 +1133,9 @@ export function createSources({
           "Abrir archivo original ↗",
         ),
       );
+      const driveUrls = [...new Set((source.aliases || []).map(alias => driveUrl(alias.drive_url)).filter(Boolean))];
+      if (driveUrls.length) body.append(el("div", { className: "response-citations", "aria-label": "Originales en Drive" },
+        driveUrls.map(url => driveLink(url))));
       if (isHistorical(source)) body.append(archiveMetadata(source));
       if (source.is_latest === false)
         body.append(

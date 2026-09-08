@@ -8,13 +8,21 @@ La generación no vuelve a consultar a la IA ni reescribe la respuesta. Tampoco 
 
 1. Terminar **6. Revisar y aprobar**: todas las respuestas deben tener una aprobación vigente. Los cambios y aportes locales pendientes deben guardarse y pasar por la revisión correspondiente, o descartarse expresamente.
 2. Pulsar **Continuar a generar oficio** o abrir **7. Generar oficio**. Si falta una aprobación, la pantalla indica qué solicitud requiere atención.
-3. Completar **Institución**, ciudad, fecha del oficio, destinatario, asunto y nombre y cargo de quien suscribe. El asunto y destinatario identificados se proponen para revisar; la fecha se inicia con el día local del equipo y puede corregirse. La dependencia, el contacto y los números de oficio y petición son opcionales. Los nombres de quienes preparan y suscriben quedan vacíos para diligenciarlos.
+3. Comprobar el **membrete activo** y completar ciudad, fecha del oficio, destinatario, asunto y nombre y cargo de quien suscribe. Con el membrete institucional configurado, institución y dependencia quedan fijadas como Universidad de Antioquia y Facultad de Ingeniería. El asunto y destinatario identificados se proponen para revisar; la fecha se inicia con el día local del equipo y puede corregirse. El contacto y los números de oficio y petición son opcionales. Los nombres de quienes preparan y suscriben quedan vacíos para diligenciarlos.
 4. Indicar quién prepara el documento y elegir los anexos que se incluirán. Solo se ofrecen originales citados por las respuestas aprobadas; no se adjunta automáticamente toda la biblioteca.
 5. Pulsar **Preparar vista previa** y comprobar los datos, las respuestas, sus referencias y los anexos elegidos.
 6. Pulsar **Generar Word y PDF**. El sistema crea el Word, lo convierte a PDF y comprueba el contenido antes de habilitar las descargas.
 7. Revisar las páginas del PDF y descargar Word, PDF o el paquete con ambos archivos y los anexos seleccionados.
 
 El nombre de quien aprobó una respuesta no se usa automáticamente como firmante. El formulario registra los datos del bloque de firma, pero no inserta una firma manuscrita o digital.
+
+## Membrete institucional
+
+El piloto utiliza el DOCX original de la carpeta **Membretes** de Drive, cotejado con los oficios anteriores. Conserva su logotipo, encabezado, pie, tamaño de papel y márgenes. Se reemplaza todo el cuerpo del modelo, incluidos los nombres de sus firmantes antiguos. El documento nuevo contiene exclusivamente los datos expresos del formulario, las solicitudes, las respuestas aprobadas y sus referencias y anexos.
+
+La plantilla original y su registro viven en `data/templates/`, fuera de Git. La vista previa muestra su nombre y enlace a Drive; el manifiesto conserva su identidad y SHA-256. Cambiar el membrete exige nueva vista previa y generación. Un archivo de plantilla ausente, alterado o incompatible bloquea la operación con una explicación. La instalación sin registro de plantilla mantiene el formato neutral original; una configuración inválida nunca cae silenciosamente en ese formato.
+
+La conversión comprueba tanto el contenido aprobado como las partes institucionales. La configuración y su procedencia se explican en [DRIVE.md](DRIVE.md).
 
 ## Qué se conserva
 
@@ -61,6 +69,7 @@ flowchart LR
 |---|---|
 | `office_models.py` | Datos permitidos para el oficio y la generación |
 | `office_renderer.py` | Contenido canónico, Word y comprobación del PDF |
+| `office_templates.py` | Registro, lectura y preservación del membrete local |
 | `office_word.py` | Conversión local de Word a PDF |
 | `office_service.py` | Versiones, vigencia, anexos y descargas |
 | `office_store.py` | Registro persistente de generaciones |

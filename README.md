@@ -27,7 +27,7 @@ Para practicar la fase 4, incorpora las fuentes ficticias del ejemplo después d
 
 La biblioteca también admite un [archivo histórico de peticiones, respuestas y anexos](docs/HISTORICOS.md), con duplicados por SHA, procedencias, relaciones y advertencias de lectura. Una colección histórica se vincula expresamente al expediente que la va a consultar.
 
-La recomendación de alojamiento es **Drive institucional, preferiblemente una unidad compartida, para la futura biblioteca del equipo**. La implementación actual usa almacenamiento local y catálogo SQLite propio. No hay conexión a la nube ni respaldo automático. [ALMACENAMIENTO.md](docs/ALMACENAMIENTO.md) compara Drive, SharePoint y almacenamiento de objetos.
+La recomendación de alojamiento es **Drive institucional, preferiblemente una unidad compartida, para la futura biblioteca del equipo**. La aplicación usa almacenamiento local y catálogo SQLite propio. Se incorporó una [selección cotejada de las carpetas de Drive y su membrete](docs/DRIVE.md); conserva enlaces de procedencia y originales locales. La aplicación no sincroniza Drive ni hace respaldos automáticos. [ALMACENAMIENTO.md](docs/ALMACENAMIENTO.md) compara Drive, SharePoint y almacenamiento de objetos.
 
 ## Entender lo que hay detrás
 

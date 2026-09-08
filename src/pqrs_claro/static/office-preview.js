@@ -15,6 +15,59 @@ export const officeStatus = (run) =>
         stale: "Versión desactualizada",
       }[run?.status] || "Por preparar";
 
+export function letterheadView(letterhead, active = true) {
+  if (!letterhead) return null;
+  let sourceUrl = null;
+  try {
+    const parsed = new URL(letterhead.source_url);
+    if (
+      parsed.protocol === "https:" &&
+      ["drive.google.com", "docs.google.com"].includes(parsed.hostname)
+    )
+      sourceUrl = parsed.href;
+  } catch {
+    /* Show the template name even when its source link is unavailable. */
+  }
+  return el(
+    "aside",
+    {
+      className: "office-letterhead",
+      "aria-label": active
+        ? "Membrete activo"
+        : "Membrete de esta vista previa",
+    },
+    el(
+      "div",
+      {},
+      el(
+        "strong",
+        {},
+        active ? "Membrete activo" : "Membrete de esta vista previa",
+      ),
+      el("p", {}, letterhead.name),
+      el(
+        "p",
+        { className: "small muted" },
+        active
+          ? "Se aplicará al Word y al PDF. La institución y la dependencia corresponden a este membrete; las respuestas aprobadas conservan su texto."
+          : "Esta vista muestra el contenido aprobado, sin editarlo. El membrete y la presentación final se comprueban en las páginas del PDF generado.",
+      ),
+    ),
+    sourceUrl
+      ? el(
+          "a",
+          {
+            href: sourceUrl,
+            target: "_blank",
+            rel: "noopener noreferrer",
+            className: "button button-quiet button-small",
+          },
+          "Ver membrete en Drive ↗",
+        )
+      : null,
+  );
+}
+
 export function textPreview(state, actions) {
   const preview = state.preview;
   const changed = actions.changedPreview();
@@ -33,9 +86,10 @@ export function textPreview(state, actions) {
       !preview
         ? "Completa los datos y prepara la vista previa. Aquí aparecerán el texto aprobado, sus referencias y los anexos elegidos."
         : changed
-          ? "Los datos o las aprobaciones cambiaron. Prepara de nuevo la vista previa para generar esta versión."
-          : "Vista previa de los datos y del contenido aprobado. La presentación final se podrá comprobar en el PDF generado.",
+          ? "Los datos, el membrete o las aprobaciones cambiaron. Prepara de nuevo la vista previa para generar esta versión."
+          : "Vista de lectura de los datos y del contenido aprobado; aquí no se editan las respuestas. La presentación final se podrá comprobar en el PDF generado.",
     ),
+    document?.letterhead ? letterheadView(document.letterhead, false) : null,
     document
       ? detail(
           "Leer el oficio y sus referencias",

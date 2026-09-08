@@ -8,6 +8,7 @@ import unicodedata
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from pathlib import Path
+from zipfile import ZipFile
 
 import pymupdf
 from docx import Document
@@ -15,6 +16,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from lxml import etree
 from pydantic import ValidationError
 
 from .models import DomainError
@@ -25,13 +27,20 @@ from .office_models import (
     OfficeMetadata,
     xml_text,
 )
+from .office_templates import (
+    image_pixels,
+    template_profile,
+    validate_letterhead,
+    validate_template_file,
+    verify_preserved_template,
+)
 from .office_word import convert_word, pdf_capabilities
 from .review_models import ReviewParagraph
 from .review_service import input_hash
 from .source_library import digest
 from .source_retrieval import source_in_scope
 
-OFFICE_VERSION = 1
+OFFICE_VERSION = 2
 __all__ = ["OFFICE_VERSION", "build_document", "render_office", "pdf_capabilities"]
 _MONTHS = (
     "enero",
@@ -155,7 +164,9 @@ def _approved_snapshots(approved: dict) -> list[dict]:
     return snapshots
 
 
-def build_document(approved, metadata_dict, attachments_list, prepared_by) -> dict:
+def build_document(
+    approved, metadata_dict, attachments_list, prepared_by, *, letterhead=None
+) -> dict:
     """Deriva únicamente contenido publicable de snapshots aprobados completos."""
     try:
         metadata = OfficeMetadata.model_validate(metadata_dict).model_dump(mode="json")
@@ -295,6 +306,8 @@ def build_document(approved, metadata_dict, attachments_list, prepared_by) -> di
         "attachments": attachments,
         "prepared_by": prepared_by,
     }
+    if letterhead is not None:
+        document["letterhead"] = validate_letterhead(letterhead)
     _blocks(document)
     return document
 
@@ -308,12 +321,21 @@ def _blocks(document: dict) -> list[dict]:
     def add(kind, text, **extra):
         blocks.append({"kind": kind, "text": _text(text), **extra})
 
-    add("institution", metadata["institution"])
-    if metadata["department"]:
-        add("department", metadata["department"])
-    add("date", f"{metadata['city']}, {issued.day} de {_MONTHS[issued.month - 1]} de {issued.year}")
+    if not document.get("letterhead"):
+        add("institution", metadata["institution"])
+        if metadata["department"]:
+            add("department", metadata["department"])
+        add(
+            "date",
+            f"{metadata['city']}, {issued.day} de {_MONTHS[issued.month - 1]} de {issued.year}",
+        )
     if metadata["office_number"]:
         add("metadata", "Oficio " + metadata["office_number"])
+    if document.get("letterhead"):
+        add(
+            "date",
+            f"{metadata['city']}, {issued.day} de {_MONTHS[issued.month - 1]} de {issued.year}",
+        )
     add("recipient", metadata["recipient"])
     if metadata["recipient_contact"]:
         add("metadata", metadata["recipient_contact"])
@@ -452,6 +474,65 @@ def _make_docx(blocks: list[dict], path: Path) -> None:
     document.save(path)
 
 
+def _make_template_docx(blocks: list[dict], path: Path, template_path: Path, profile: dict) -> None:
+    """Reemplaza solo el cuerpo editable y los metadatos personales de la copia."""
+    document = Document(template_path)
+    body = document.element.body
+    for child in list(body):
+        if child.tag != qn("w:sectPr"):
+            body.remove(child)
+    for index, block in enumerate(blocks):
+        paragraph = document.add_paragraph()
+        if profile["paragraph_properties"] is not None:
+            paragraph._p.insert(0, deepcopy(profile["paragraph_properties"]))
+        kind = block["kind"]
+        # El cuerpo original emplea formato de carácter directo. Cambiar Normal
+        # modificaría también el pie institucional que hereda ese estilo.
+        run = paragraph.add_run(block["text"])
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        fonts = run._r.get_or_add_rPr().find(qn("w:rFonts"))
+        for name in ("ascii", "hAnsi", "eastAsia", "cs"):
+            fonts.set(qn(f"w:{name}"), "Times New Roman")
+        if kind in {"heading", "subject", "signer"}:
+            run.bold = True
+        if kind == "request":
+            run.italic = True
+        paragraph.paragraph_format.space_after = Pt(6)
+        paragraph.paragraph_format.widow_control = True
+        if kind in {"heading", "subject", "closing", "signer"}:
+            paragraph.paragraph_format.keep_with_next = True
+        if kind not in {"response", "request"}:
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        if kind == "closing":
+            paragraph.paragraph_format.space_before = Pt(12)
+        if "bookmark" in block:
+            start, end = OxmlElement("w:bookmarkStart"), OxmlElement("w:bookmarkEnd")
+            start.set(qn("w:id"), str(index))
+            start.set(qn("w:name"), block["bookmark"])
+            end.set(qn("w:id"), str(index))
+            paragraph._p.insert(1 if paragraph._p.pPr is not None else 0, start)
+            paragraph._p.append(end)
+        paragraph._p.get_or_add_pPr().append(OxmlElement("w:suppressAutoHyphens"))
+    properties = document.core_properties
+    properties.author = properties.last_modified_by = properties.subject = properties.comments = ""
+    properties.title = "Respuesta a petición"
+    properties.created = properties.modified = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    replacements = {
+        "word/document.xml": etree.tostring(
+            document.element, xml_declaration=True, encoding="UTF-8", standalone=True
+        ),
+        "docProps/core.xml": etree.tostring(
+            properties._element, xml_declaration=True, encoding="UTF-8", standalone=True
+        ),
+    }
+    with ZipFile(template_path) as original, ZipFile(path, "w") as output:
+        for item in original.infolist():
+            output.writestr(item, replacements.get(item.filename, original.read(item.filename)))
+    verify_preserved_template(template_path, path)
+
+
 def _verify_docx(blocks: list[dict], path: Path) -> bool:
     docx = Document(path)
     if [paragraph.text for paragraph in docx.paragraphs] != [block["text"] for block in blocks]:
@@ -495,15 +576,112 @@ def _pdf_body_text(page) -> str:
     return "\n".join(lines)
 
 
-def _verify_pdf(blocks: list[dict], path: Path) -> int:
+def _template_pdf_body_text(page, profile: dict) -> str:
+    if (
+        abs(page.rect.width - profile["page_width"]) > 1
+        or abs(page.rect.height - profile["page_height"]) > 1
+    ):
+        raise DomainError("El PDF no conserva el tamaño de página del membrete.")
+    header, footer = profile["regions"]
+    parts = {"header": [], "footer": [], "body": []}
+    for block in page.get_text("dict", sort=True)["blocks"]:
+        for line in block.get("lines", []):
+            text = "".join(span["text"] for span in line["spans"])
+            y0 = line["bbox"][1]
+            region = (
+                "header"
+                if y0 < header["boundary"]
+                else "footer"
+                if y0 >= footer["boundary"] - 2
+                else "body"
+            )
+            parts[region].append(text)
+    # La zona estática no se ignora: debe contener exactamente el texto aprobado
+    # del membrete en cada página. Cualquier añadido, ausencia o cruce falla.
+    for region in (header, footer):
+        if _normalized("\n".join(parts[region["kind"]])) != _normalized(region["text"]):
+            raise DomainError(
+                "El PDF alteró u omitió el encabezado o pie institucional del membrete."
+            )
+    return "\n".join(parts["body"])
+
+
+def _verify_template_images(page, profile: dict) -> None:
+    images = page.get_image_info(xrefs=True)
+    if len(images) != len(profile["images"]):
+        raise DomainError("El PDF omitió o añadió una imagen del membrete institucional.")
+    masks = {item[0]: item[1] for item in page.get_images(full=True)}
+    used = set()
+    for expected in profile["images"]:
+        matched = False
+        for index, actual in enumerate(images):
+            if index in used or (actual["width"], actual["height"]) != (
+                expected["width"],
+                expected["height"],
+            ):
+                continue
+            bbox = actual["bbox"]
+            if expected["bbox"] is not None:
+                if any(abs(a - b) > 1 for a, b in zip(bbox, expected["bbox"])):
+                    continue
+            elif expected["region"] == "header":
+                if bbox[1] < 0 or bbox[3] > profile["regions"][0]["boundary"] + 1:
+                    continue
+            elif bbox[1] < profile["regions"][1]["boundary"] - 2 or bbox[3] > page.rect.height:
+                continue
+            if not actual["xref"]:
+                continue
+            pixmap = pymupdf.Pixmap(page.parent, actual["xref"])
+            mask = masks.get(actual["xref"])
+            if mask:
+                if pixmap.alpha:
+                    pixmap = pymupdf.Pixmap(pixmap, 0)
+                pixmap = pymupdf.Pixmap(pixmap, pymupdf.Pixmap(page.parent, mask))
+            pixels = image_pixels(pixmap)
+            # Word mantiene resolución y píxeles del PNG; la composición de su
+            # máscara introduce redondeos de como máximo 2 niveles sobre 255.
+            if len(pixels) == len(expected["pixels"]) and all(
+                abs(a - b) <= 2 for a, b in zip(pixels, expected["pixels"])
+            ):
+                used.add(index)
+                matched = True
+                break
+        if not matched:
+            raise DomainError("El PDF alteró el logo institucional o su posición en el membrete.")
+
+
+def _pdf_text_matches(expected: str, actual: str) -> bool:
+    expected = _normalized(expected)
+    if _normalized(actual) == expected:
+        return True
+    lines = [_normalized(line) for line in actual.splitlines() if line.strip()]
+    if not lines:
+        return False
+    pattern = re.escape(lines[0])
+    for previous, current in zip(lines, lines[1:]):
+        # Word puede cortar físicamente 2026-09-07 después del guion. Solo
+        # permitimos ese espacio de extracción en límites reales de línea;
+        # jamás eliminamos espacios internos ni modificamos un carácter.
+        separator = " ?" if previous.endswith("-") and current[0].isalnum() else " "
+        pattern += separator + re.escape(current)
+    return re.fullmatch(pattern, expected) is not None
+
+
+def _verify_pdf(blocks: list[dict], path: Path, *, profile=None) -> int:
     try:
         with pymupdf.open(path) as pdf:
             if not pdf.is_pdf or pdf.needs_pass or not 1 <= len(pdf) <= MAX_OFFICE_PAGES:
                 raise DomainError("El PDF debe ser legible y tener entre 1 y 200 páginas.")
-            pages = [_pdf_body_text(page) for page in pdf]
-            actual = _normalized("\n".join(pages))
+            pages = [
+                _template_pdf_body_text(page, profile) if profile else _pdf_body_text(page)
+                for page in pdf
+            ]
+            if profile:
+                for page in pdf:
+                    _verify_template_images(page, profile)
+            actual = "\n".join(pages)
             expected = _normalized("\n".join(block["text"] for block in blocks))
-            if actual != expected:
+            if not _pdf_text_matches(expected, actual):
                 raise DomainError(
                     "El PDF no reproduce todos los bloques y referencias en su orden exacto. "
                     "No se habilitará la descarga de una conversión incompleta o alterada."
@@ -515,16 +693,30 @@ def _verify_pdf(blocks: list[dict], path: Path) -> int:
         raise DomainError("No fue posible comprobar el PDF producido por Word.") from None
 
 
-def render_office(document, output_dir, *, converter=None) -> dict:
+def render_office(document, output_dir, *, converter=None, template_path=None) -> dict:
     """Escribe una vez; solo declara éxito después de cotejar Word y PDF completos."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     docx, pdf = output_dir / "oficio.docx", output_dir / "oficio.pdf"
     if docx.exists() or pdf.exists():
         raise DomainError("La generación no sobrescribe archivos de una versión anterior.")
+    letterhead = document.get("letterhead")
+    profile = None
+    if bool(letterhead) != (template_path is not None):
+        raise DomainError("La plantilla no corresponde al membrete revisado en la vista previa.")
+    if letterhead:
+        letterhead = validate_letterhead(letterhead)
+        template_path = validate_template_file(template_path, letterhead["sha256"])
+        profile = template_profile(template_path)
     blocks = _blocks(document)
-    _make_docx(blocks, docx)
+    if profile:
+        _make_template_docx(blocks, docx, template_path, profile)
+    else:
+        _make_docx(blocks, docx)
     _verify_docx(blocks, docx)
+    if profile:
+        validate_template_file(template_path, letterhead["sha256"])
+        verify_preserved_template(template_path, docx)
     original_sha = hashlib.sha256(docx.read_bytes()).hexdigest()
     try:
         result = (converter or convert_word)(docx, pdf)
@@ -535,9 +727,12 @@ def render_office(document, output_dir, *, converter=None) -> dict:
     if hashlib.sha256(docx.read_bytes()).hexdigest() != original_sha:
         raise DomainError("El conversor modificó el Word canónico; la generación fue descartada.")
     _verify_docx(blocks, docx)
+    if profile:
+        validate_template_file(template_path, letterhead["sha256"])
+        verify_preserved_template(template_path, docx)
     if not pdf.is_file() or not pdf.stat().st_size:
         raise DomainError("El conversor no produjo un PDF válido; el oficio no quedó listo.")
-    pages = _verify_pdf(blocks, pdf)
+    pages = _verify_pdf(blocks, pdf, profile=profile)
     return {
         "page_count": pages,
         "converter": result

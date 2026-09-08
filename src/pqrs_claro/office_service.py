@@ -16,10 +16,14 @@ import pymupdf
 from .models import DomainError
 from .office_renderer import OFFICE_VERSION, build_document, pdf_capabilities, render_office
 from .office_store import OfficeStore
+from .office_templates import load_letterhead
 from .source_library import digest
 from .storage import Conflict, now, write_original
 
 MAX_ATTACHMENTS_BYTES = 200 * 1024 * 1024
+LETTERHEAD_INSTITUTION = "Universidad de Antioquia"
+LETTERHEAD_DEPARTMENT = "Facultad de Ingeniería"
+_UNSPECIFIED = object()
 FILES = {"docx": "oficio.docx", "pdf": "oficio.pdf", "zip": "entrega.zip"}
 MIMES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -37,7 +41,10 @@ def file_hash(path):
 
 
 def public_run(run):
-    return {key: deepcopy(value) for key, value in run.items() if not key.startswith("_")}
+    result = {key: deepcopy(value) for key, value in run.items() if not key.startswith("_")}
+    result.setdefault("letterhead", None)
+    result.setdefault("office_version", 1)
+    return result
 
 
 def attachment_name(number, filename):
@@ -77,6 +84,23 @@ class OfficeService:
             )
         return approved
 
+    def _letterhead(self, expected=_UNSPECIFIED):
+        letterhead = load_letterhead(self.settings.data_dir)
+        public = letterhead.public() if letterhead else None
+        if expected is not _UNSPECIFIED and public != expected:
+            raise Conflict("El membrete activo cambió. Prepara de nuevo la vista del oficio.")
+        return letterhead
+
+    def _letterhead_metadata(self, metadata, letterhead):
+        if letterhead and (
+            metadata.get("institution") != LETTERHEAD_INSTITUTION
+            or metadata.get("department") != LETTERHEAD_DEPARTMENT
+        ):
+            raise DomainError(
+                "El membrete activo corresponde a la Universidad de Antioquia, "
+                "Facultad de Ingeniería. Conserva esos datos de institución y dependencia."
+            )
+
     def _sources(self, case_id, approved):
         sources = {}
         for snapshot in approved["requests"]:
@@ -108,6 +132,9 @@ class OfficeService:
 
     def _preview(self, case_id, body):
         approved = self._approved(case_id, body["approval_snapshot_hash"])
+        letterhead = self._letterhead()
+        public_letterhead = letterhead.public() if letterhead else None
+        self._letterhead_metadata(body["metadata"], letterhead)
         sources = self._sources(case_id, approved)
         available = {option["source_id"]: option for option in self._attachment_options(sources)}
         identifiers = body["attachment_source_ids"]
@@ -118,10 +145,17 @@ class OfficeService:
         attachments = [available[identifier] for identifier in identifiers]
         if sum(item["size"] for item in attachments) > MAX_ATTACHMENTS_BYTES:
             raise ValueError("Los anexos seleccionados superan el límite total de 200 MiB.")
-        document = build_document(approved, body["metadata"], attachments, body["prepared_by"])
+        document = build_document(
+            approved,
+            body["metadata"],
+            attachments,
+            body["prepared_by"],
+            letterhead=public_letterhead,
+        )
         if sum(len(p["text"]) for r in document["requests"] for p in r["paragraphs"]) > 600_000:
             raise ValueError("El texto del oficio supera el límite de 600.000 caracteres.")
         self._approved(case_id, approved["snapshot_hash"])
+        self._letterhead(public_letterhead)
         return approved, sources, document
 
     def preview(self, case_id, input_value):
@@ -158,8 +192,13 @@ class OfficeService:
         except (OSError, ValueError, KeyError):
             return False
 
-    def _project(self, run, current_hash):
-        stale = run["stale"] or run["approval_snapshot_hash"] != current_hash
+    def _project(self, run, current_hash, current_letterhead):
+        stale = (
+            run["stale"]
+            or run["approval_snapshot_hash"] != current_hash
+            or run.get("letterhead") != current_letterhead
+            or run.get("office_version", 1) != OFFICE_VERSION
+        )
         if run["status"] == "ready" and not self._files_intact(run):
             stale = True
         if stale and not run["stale"]:
@@ -168,7 +207,7 @@ class OfficeService:
                 run["id"],
                 stale=True,
                 status="stale",
-                error="Esta versión quedó obsoleta o sus archivos cambiaron. "
+                error="Esta versión quedó obsoleta, cambió el membrete o sus archivos cambiaron. "
                 "Prepara un nuevo oficio.",
             )
         return public_run(run)
@@ -179,6 +218,8 @@ class OfficeService:
 
     def _get_locked(self, case_id):
         case = self.cases.get(case_id)
+        letterhead = self._letterhead()
+        public_letterhead = letterhead.public() if letterhead else None
         review = self.reviews_service.get(case_id)
         approved, sources, error = None, [], None
         if review["status"] == "approved":
@@ -205,7 +246,10 @@ class OfficeService:
                 )
         current_hash = approved["snapshot_hash"] if approved else None
         with self.lock:
-            runs = [self._project(run, current_hash) for run in self.store.list(case_id)]
+            runs = [
+                self._project(run, current_hash, public_letterhead)
+                for run in self.store.list(case_id)
+            ]
         return dict(
             case_id=case_id,
             eligible=approved is not None,
@@ -213,9 +257,15 @@ class OfficeService:
             approved_count=review["approved_count"],
             total_count=review["total_count"],
             blockers=blockers,
+            letterhead=public_letterhead,
             defaults={
                 "recipient": (case.get("identification") or {}).get("requester") or "",
                 "subject": (case.get("identification") or {}).get("subject") or "",
+                **(
+                    {"institution": LETTERHEAD_INSTITUTION, "department": LETTERHEAD_DEPARTMENT}
+                    if letterhead
+                    else {}
+                ),
             },
             capabilities=pdf_capabilities(),
             attachment_options=self._attachment_options(sources),
@@ -234,6 +284,8 @@ class OfficeService:
                         "metadata",
                         "approval_snapshot_hash",
                         "preview_hash",
+                        "letterhead",
+                        "office_version",
                         "attachment_count",
                         "error",
                     )
@@ -251,7 +303,8 @@ class OfficeService:
                 current_hash = self._approved(case_id)["snapshot_hash"]
             except (ValueError, KeyError):
                 current_hash = None
-            return self._project(run, current_hash)
+            letterhead = self._letterhead()
+            return self._project(run, current_hash, letterhead.public() if letterhead else None)
 
     def generate(self, case_id, input_value):
         body = (
@@ -274,6 +327,7 @@ class OfficeService:
         )
         with self.lock, self.reviews_service.lock, self.library.lock:
             self._approved(case_id, approved["snapshot_hash"])
+            self._letterhead(document.get("letterhead"))
             for previous in self.store.matching_input(case_id, fingerprint):
                 if previous["input_hash"] == fingerprint and not previous["stale"]:
                     if previous["status"] == "ready" and self._files_intact(previous):
@@ -300,6 +354,8 @@ class OfficeService:
                 approval_snapshot_hash=approved["snapshot_hash"],
                 preview_hash=preview_hash,
                 input_hash=fingerprint,
+                office_version=OFFICE_VERSION,
+                letterhead=deepcopy(document.get("letterhead")),
                 error=None,
                 files=[],
                 page_count=None,
@@ -315,17 +371,20 @@ class OfficeService:
 
     def _ensure_current(self, run, sources):
         self._approved(run["case_id"], run["approval_snapshot_hash"])
+        letterhead = self._letterhead(run.get("letterhead"))
         for source in sources:
             path = self.library.original(source["source_id"], run["case_id"])
             if file_hash(path) != source["sha256"]:
                 raise Conflict("Un original cambió durante la generación del oficio.")
+        return letterhead
 
     def run(self, run, approved, sources, document):
         try:
-            self._ensure_current(run, sources)
+            letterhead = self._ensure_current(run, sources)
             folder = self._folder(run)
             folder.mkdir(parents=True, exist_ok=False)
-            rendered = self.renderer(document, folder)
+            render_options = {"template_path": letterhead.path} if letterhead else {}
+            rendered = self.renderer(document, folder, **render_options)
             if digest(document) != run["preview_hash"]:
                 raise DomainError(
                     "El documento cambió durante la generación. "
@@ -381,6 +440,7 @@ class OfficeService:
                 preview_hash=run["preview_hash"],
                 input_hash=run["input_hash"],
                 office_version=OFFICE_VERSION,
+                letterhead=run.get("letterhead"),
                 document=document,
                 approved=approved,
                 cited_sources=sources,

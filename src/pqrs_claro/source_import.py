@@ -19,9 +19,10 @@ HISTORICAL_CATEGORIES = {
 
 
 class HistoryImporter:
-    def __init__(self, library, collection_id):
+    def __init__(self, library, collection_id, *, verification_context=None):
         self.library = library
         self.collection_id = collection_id
+        self.verification_context = verification_context
         if collection_id not in {c["id"] for c in library.collections()}:
             raise DomainError("Crea la colección antes de incorporar sus archivos.")
         self.existing = {
@@ -98,7 +99,8 @@ class HistoryImporter:
             document_status=metadata.get("document_status", "unknown"),
             document_date_text=metadata.get("date_text"),
             verification_status="pending",
-            verification_note=(
+            verification_note=self.verification_context
+            or (
                 "El usuario informó que algunas respuestas de esta colección habían sido "
                 "verificadas previamente. No se ha identificado el alcance ni el responsable "
                 "de esa verificación para este archivo."

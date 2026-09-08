@@ -5,6 +5,7 @@ import {
   generatedView,
   sizeLabel,
   officeStatus,
+  letterheadView,
 } from "./office-preview.js";
 
 const fields = [
@@ -27,6 +28,10 @@ function metadataForm(state, actions) {
   const form = state.form;
   const eligible = state.data?.eligible && !actions.hasReviewChanges();
   const disabled = state.busy;
+  const fixedField = (name) =>
+    Boolean(state.data?.letterhead) &&
+    ["institution", "department"].includes(name) &&
+    typeof state.data.defaults?.[name] === "string";
   return el(
     "section",
     {
@@ -41,7 +46,9 @@ function metadataForm(state, actions) {
     el(
       "p",
       { className: "small muted" },
-      "El destinatario y el asunto se sugieren a partir de la petición. Revisa la fecha y escribe los datos institucionales y la persona que figurará al cierre.",
+      state.data?.letterhead
+        ? "La institución y la dependencia vienen del membrete activo. Revisa el destinatario, el asunto y la fecha, y escribe quién figurará al cierre."
+        : "El destinatario y el asunto se sugieren a partir de la petición. Revisa la fecha y escribe los datos institucionales y la persona que figurará al cierre.",
     ),
     el(
       "form",
@@ -57,7 +64,7 @@ function metadataForm(state, actions) {
         { className: "office-fields" },
         fields.map(([name, label, maxLength, required, type]) =>
           field(
-            label,
+            name === "department" && fixedField(name) ? "Dependencia" : label,
             `office-${name}`,
             form.metadata[name],
             (value) => {
@@ -67,6 +74,9 @@ function metadataForm(state, actions) {
             {
               required,
               disabled,
+              ...(fixedField(name)
+                ? { readonly: true, hint: "Dato del membrete activo." }
+                : {}),
               ...(maxLength ? { maxLength } : {}),
               ...(type ? { type } : {}),
               ...(name === "subject" ? { multiline: true, rows: 2 } : {}),
@@ -261,6 +271,7 @@ export function officeView({ state, actions }) {
       { className: "response-boundary" },
       "La generación conserva el texto aprobado sin volver a redactarlo con IA. Preparar estos archivos no registra su firma, envío ni entrega.",
     ),
+    data?.letterhead ? letterheadView(data.letterhead) : null,
     localChanges
       ? el(
           "div",

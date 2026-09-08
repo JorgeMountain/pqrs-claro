@@ -27,8 +27,8 @@ function blankForm(defaults) {
     prepared_by: "",
     attachment_source_ids: [],
     metadata: {
-      institution: "",
-      department: "",
+      institution: defaults.institution || "",
+      department: defaults.department || "",
       city: "",
       issue_date: localDate(),
       office_number: "",
@@ -51,6 +51,15 @@ function storedForm(caseId) {
     return null;
   }
 }
+const letterheadSignature = (letterhead) =>
+  letterhead
+    ? JSON.stringify([
+        letterhead.id,
+        letterhead.name,
+        letterhead.sha256,
+        letterhead.source_url || null,
+      ])
+    : null;
 export function createOffice({
   api,
   notify,
@@ -106,11 +115,16 @@ export function createOffice({
   const changedPreview = (s = state) =>
     !s.preview ||
     s.previewSignature !== signature(s.form) ||
-    s.preview.approval_snapshot_hash !== s.data?.approval_snapshot_hash;
+    s.preview.approval_snapshot_hash !== s.data?.approval_snapshot_hash ||
+    letterheadSignature(s.preview.document?.letterhead) !==
+      letterheadSignature(s.data?.letterhead);
   function selectedMatchesForm(s = state) {
     return Boolean(
       s.run &&
+      !s.run.stale &&
       s.form &&
+      letterheadSignature(s.run.letterhead) ===
+        letterheadSignature(s.data?.letterhead) &&
       ((s.generated?.run_id === s.run.id &&
         s.generated.form_signature === signature(s.form)) ||
         (s.run.preview_hash === s.preview?.preview_hash && !changedPreview(s))),
@@ -132,6 +146,12 @@ export function createOffice({
     try {
       s.data = await api(path(s));
       if (!s.form) s.form = blankForm(s.data.defaults || {});
+      if (s.data.letterhead) {
+        for (const name of ["institution", "department"]) {
+          if (typeof s.data.defaults?.[name] === "string")
+            s.form.metadata[name] = s.data.defaults[name];
+        }
+      }
       if (!s.selectedRun || s.selectedRun === s.data.latest?.id)
         s.run = s.data.latest;
       else
