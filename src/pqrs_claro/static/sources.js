@@ -83,7 +83,7 @@ export function createSources({
     poll: null,
     selected: null,
     loadToken: 0,
-    collections: [], linkedCollections: [], collectionsError: null,
+    collections: [], linkedCollections: [], collectionsError: null, collectionPickerOpen: false,
     archiveText: "", archiveGroup: "", archiveCollection: "", archivePage: 1,
   };
   const context = () =>
@@ -136,6 +136,7 @@ export function createSources({
       state.selected = null;
       state.error = null;
       state.linkedCollections = [];
+      state.collectionPickerOpen = false;
     }
   }
   function schedule() {
@@ -456,8 +457,22 @@ export function createSources({
         form.querySelectorAll("input,button").forEach((control) => { control.disabled = false; });
       } finally { busy = false; updateSave(); }
     });
-    return el("details", { className: "collection-picker", open: state.linkedCollections.length > 0 },
-      el("summary", {}, `Antecedentes para consultar · ${state.linkedCollections.length ? `${state.linkedCollections.length} ${state.linkedCollections.length === 1 ? "colección vinculada" : "colecciones vinculadas"}` : "Ninguna colección vinculada"}`), form);
+    const pickerId = `collection-picker-${current.id}`;
+    const previous = document.getElementById(pickerId);
+    if (previous?.isConnected) state.collectionPickerOpen = previous.open;
+    return el("details", {
+      id: pickerId,
+      className: "collection-picker",
+      open: state.collectionPickerOpen || Boolean(state.collectionsError),
+      onToggle: (event) => {
+        if (state.caseId === current.id && event.currentTarget.isConnected)
+          state.collectionPickerOpen = event.currentTarget.open;
+      },
+    },
+      el("summary", { onClick: (event) => {
+        if (!event.defaultPrevented && state.caseId === current.id)
+          state.collectionPickerOpen = !event.currentTarget.parentElement.open;
+      } }, `Antecedentes para consultar · ${state.linkedCollections.length ? `${state.linkedCollections.length} ${state.linkedCollections.length === 1 ? "colección vinculada" : "colecciones vinculadas"}` : "Ninguna colección vinculada"}`), form);
   }
 
   function archiveMetadata(source) {
@@ -549,7 +564,7 @@ export function createSources({
           el(
             "p",
             { className: "section-kicker" },
-            "PARTE 4 · FUENTES Y EVIDENCIA",
+            "FUENTES Y EVIDENCIA",
           ),
           el("h2", { id: "sources-heading" }, "Qué tenemos para responder"),
           el(

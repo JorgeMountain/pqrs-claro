@@ -584,11 +584,13 @@ function renderSidebar() {
               "aria-current": current.id === state.current?.id ? "page" : null,
               onClick: () => selectCase(current.id),
               disabled: state.busy,
+              title: current.subject || current.filename,
             },
             el(
               "span",
               { className: "case-item-title" },
-              current.subject || current.filename,
+              current.subject ||
+                current.filename.replace(/_/g, " ").replace(/\.pdf$/i, ""),
             ),
             el(
               "span",
@@ -650,10 +652,15 @@ function render() {
   const configNode = $("connection-state");
   configNode.className = `connection-state ${state.config?.ready ? "ready" : "unavailable"}`;
   configNode.textContent = state.config?.ready
-    ? "Análisis con IA disponible"
+    ? "IA disponible"
     : "IA pendiente de configuración";
   const current = state.current;
   const sourcesStage = current?.status === "confirmed";
+  $("workspace-kicker").textContent = state.library
+    ? "FUENTES DE CONSULTA"
+    : current
+      ? `EXPEDIENTE · PASO ${stage + 1} DE 7`
+      : "INICIO";
   document.querySelector(".workspace-heading h1").textContent = state.library
     ? "Biblioteca de fuentes"
     : sourcesStage
@@ -664,7 +671,9 @@ function render() {
           : state.responses
             ? "Preparar las respuestas"
             : "Encontrar el respaldo"
-      : "Entender la petición";
+      : current
+        ? "Entender la petición"
+        : "Prepara respuestas con respaldo";
   document.querySelector(".page-intro").textContent = state.library
     ? "Organiza los documentos que sirven de consulta y soporte."
     : sourcesStage
@@ -675,8 +684,10 @@ function render() {
           : state.responses
             ? "Un borrador trazable, con sus fuentes y pendientes visibles."
             : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
-      : "Identifica qué se solicita y compruébalo con el original.";
-  document.querySelector(".journey").hidden = state.library;
+      : current
+        ? "Identifica qué se solicita y compruébalo con el original."
+        : "Organiza las solicitudes, consulta sus fuentes y revisa cada respuesta.";
+  document.querySelector(".journey").hidden = state.library || !current;
   actions.busy = state.busy;
   actions.ready = state.config?.ready;
   if (state.library) $("work-content").replaceChildren(sources.libraryView());
@@ -808,10 +819,10 @@ function render() {
         control.disabled = true;
       });
   document.title = state.library
-    ? "Biblioteca de fuentes · PQRS Claro"
+    ? "Biblioteca de fuentes · Gestión de Peticiones"
     : current
-      ? `${current.filename} · PQRS Claro`
-      : "PQRS Claro · Entender la petición";
+      ? `${document.querySelector(".workspace-heading h1").textContent} · Gestión de Peticiones`
+      : "Gestión de Peticiones";
   if (focusedId) {
     const focused = document.getElementById(focusedId);
     focused?.focus({ preventScroll: true });
@@ -967,6 +978,11 @@ async function poll() {
 }
 
 $("new-case").addEventListener("click", newCase);
+const sidebarLayout = window.matchMedia("(min-width: 768px)");
+$("sidebar-cases").open = sidebarLayout.matches;
+sidebarLayout.addEventListener("change", (event) => {
+  $("sidebar-cases").open = event.matches;
+});
 $("open-library").addEventListener("click", openLibrary);
 $("file-picker").addEventListener("change", (event) => {
   upload(event.target.files[0]);

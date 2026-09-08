@@ -258,7 +258,7 @@ export function reviewView({ state, drafts, mapping, actions }) {
       el(
         "div",
         {},
-        el("p", { className: "section-kicker" }, "FASE 6 · REVISIÓN HUMANA"),
+        el("p", { className: "section-kicker" }, "REVISIÓN HUMANA"),
         el("h2", { id: "reviews-heading" }, "Revisar, comprobar y decidir"),
         el(
           "p",
@@ -274,7 +274,7 @@ export function reviewView({ state, drafts, mapping, actions }) {
     el(
       "p",
       { className: "response-boundary" },
-      "La revisión conserva el texto y las decisiones de cada persona. Cuando todas las respuestas estén aprobadas, podrás generar el oficio en la fase 7.",
+      "La revisión conserva el texto y las decisiones de cada persona. Cuando todas las respuestas estén aprobadas, podrás elegir «Continuar a generar oficio».",
     ),
     state.error || data?.error
       ? el(
@@ -371,7 +371,7 @@ export function reviewView({ state, drafts, mapping, actions }) {
             ? "Cargando revisiones guardadas…"
             : canStart
               ? "Los borradores están disponibles. Empieza la revisión para trabajar cada respuesta y conservar su historial."
-              : "Completa las fuentes y prepara los borradores en la fase 5 para comenzar la revisión.",
+              : "Completa las fuentes y prepara los borradores para comenzar la revisión.",
         )
       : null,
     rows.length

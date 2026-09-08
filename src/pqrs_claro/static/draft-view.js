@@ -278,7 +278,7 @@ export function draftsView({
         el(
           "p",
           { className: "section-kicker" },
-          "FASE 5 · RESPUESTAS CON SOPORTE",
+          "RESPUESTAS CON SOPORTE",
         ),
         el(
           "h2",

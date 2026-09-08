@@ -39,7 +39,7 @@ export function requestsView(state, actions) {
       el(
         "div",
         { className: "confirmed-panel", role: "status" },
-        el("div", { className: "confirmed-mark" }, "✓ PARTE 3 COMPLETADA"),
+        el("div", { className: "confirmed-mark" }, "✓ IDENTIFICACIÓN CONFIRMADA"),
         el("h2", {}, "Ya sabemos qué se solicita."),
         el(
           "p",

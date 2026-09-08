@@ -252,7 +252,7 @@ export function officeView({ state, actions }) {
         el(
           "p",
           { className: "section-kicker" },
-          "FASE 7 · OFICIO DESDE LA VERSIÓN APROBADA",
+          "GENERACIÓN DEL OFICIO",
         ),
         el("h2", { id: "office-heading" }, "Preparar el documento final"),
         el(
@@ -279,7 +279,7 @@ export function officeView({ state, actions }) {
           el(
             "p",
             {},
-            "Este expediente tiene cambios locales de revisión sin guardar. Resuélvelos en la fase 6 antes de generar o descargar el oficio.",
+            "Este expediente tiene cambios locales de revisión sin guardar. Resuélvelos en Revisar y aprobar antes de generar o descargar el oficio.",
           ),
           button("Volver a la revisión", actions.back, "secondary"),
         )

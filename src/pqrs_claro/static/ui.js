@@ -71,7 +71,7 @@ export function welcome(config, actions) {
     el(
       "p",
       { className: "dropzone-title" },
-      "Empieza con el documento original",
+      "Carga el documento original",
     ),
     button("Seleccionar un PDF", actions.pickFile, "primary", {
       disabled: actions.busy,
@@ -109,55 +109,55 @@ export function welcome(config, actions) {
     el(
       "section",
       { className: "upload-panel", "aria-labelledby": "upload-heading" },
-      el("p", { className: "section-kicker" }, "UN EXPEDIENTE A LA VEZ"),
-      el("h2", { id: "upload-heading" }, "Primero, entender bien."),
+      el("p", { className: "section-kicker" }, "EMPIEZA AQUÍ"),
+      el("h2", { id: "upload-heading" }, "Comienza con una petición"),
       el(
         "p",
         { className: "muted" },
-        "Carga la petición. Encontraremos sus solicitudes y el fragmento exacto de donde sale cada una.",
+        "Carga el PDF para comprender lo que se solicita, preparar respuestas con sus fuentes y generar un oficio después de tu revisión.",
       ),
       drop,
       el(
         "div",
         { className: "demo-entry" },
-        button("Practicar con un ejemplo ↗", actions.demo, "quiet", {
+        button("Iniciar ejemplo de demostración", actions.demo, "quiet", {
           disabled: actions.busy || !config?.ready,
         }),
         el(
           "p",
           {},
-          "Documento ficticio de tres solicitudes. El análisis con IA es real.",
+          "Documento ficticio con tres solicitudes. El análisis con IA es real.",
         ),
       ),
     ),
     el(
       "aside",
       { className: "intro-aside", "aria-labelledby": "expect-heading" },
-      el("h2", { id: "expect-heading" }, "Qué vas a poder comprobar"),
+      el("h2", { id: "expect-heading" }, "De la petición al oficio"),
       el(
         "ol",
         { className: "explain-list" },
         explain(
           "01",
-          "Qué pide la persona",
-          "Una lista de solicitudes y apartados, conservando su relación con el original.",
+          "Comprender la petición",
+          "Identifica cada solicitud, compárala con el original y confirma que esté completa.",
         ),
         explain(
           "02",
-          "De dónde salió cada solicitud",
-          "La página, las líneas y la cita que te permiten verificar la interpretación.",
+          "Buscar fuentes y preparar respuestas",
+          "Reúne los soportes, consulta antecedentes y prepara respuestas con citas y faltantes visibles.",
         ),
         explain(
           "03",
-          "Qué necesitas corregir",
-          "Puedes ajustar el texto, agregar lo que falte y confirmar cuando esté completo.",
+          "Revisar y generar el oficio",
+          "Corrige las respuestas, comprueba su sustento y aprueba la versión que se llevará a Word y PDF.",
         ),
       ),
       el(
         "p",
         { className: "intro-boundary" },
-        el("strong", {}, "Tú confirmas la identificación."),
-        " El sistema conserva el original y guarda cada versión de tu revisión.",
+        el("strong", {}, "Tú revisas y apruebas."),
+        " El oficio conserva el texto aprobado, sin volver a redactarlo.",
       ),
     ),
   );

@@ -3,51 +3,64 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#173e35" />
+    <meta name="theme-color" content="#176b38" />
     <meta
       name="description"
-      content="Entiende una petición y encuentra las fuentes para responder cada solicitud."
+      content="Gestión de Peticiones: del documento original a una respuesta con fuentes, revisión humana y oficio. Facultad de Ingeniería, Universidad de Antioquia."
     />
-    <title>PQRS Claro · Entender la petición</title>
+    <title>Gestión de Peticiones</title>
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%23173e35'/%3E%3Cpath d='M12 10h16v20H12zm4 6h8m-8 5h8' fill='none' stroke='%23ffffff' stroke-width='2'/%3E%3C/svg%3E"
     />
     <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/institutional.css" />
     <script type="module" src="/static/app.js"></script>
   </head>
   <body>
     <a class="skip-link" href="#workspace">Ir al expediente</a>
     <header class="app-header">
-      <a class="brand" href="/" aria-label="PQRS Claro, inicio"
-        ><span class="brand-symbol" aria-hidden="true">P</span
-        ><span>PQRS <strong>Claro</strong></span></a
-      >
-      <div class="header-caption">Una petición, paso a paso.</div>
-      <div class="phase-label">
-        <span aria-hidden="true">07</span> Oficio desde lo aprobado
+      <a class="brand" href="/" aria-label="Gestión de Peticiones, inicio">
+        <img
+          class="university-logo"
+          src="/static/assets/udea-ingenieria.png"
+          width="437"
+          height="131"
+          alt="Universidad de Antioquia · Facultad de Ingeniería"
+        />
+        <span class="brand-copy">
+          <strong>Gestión de Peticiones</strong>
+          <span>Atención y respuesta institucional</span>
+        </span>
+      </a>
+      <div class="header-status">
+        <span class="demo-label">Demo</span>
+        <span id="connection-state" class="connection-state">Conectando…</span>
       </div>
     </header>
     <div class="app-layout">
       <aside class="case-sidebar" aria-label="Expedientes">
-        <div class="sidebar-heading">
-          <h2>Mis expedientes</h2>
-          <span id="case-count" class="count">0</span>
-        </div>
-        <button id="new-case" class="button button-secondary new-case">
+        <p class="sidebar-label">Espacio de trabajo</p>
+        <button id="new-case" class="button button-primary new-case">
           <span aria-hidden="true">＋</span> Nueva petición
         </button>
         <button id="open-library" class="button button-quiet library-nav">
           Biblioteca de fuentes
         </button>
-        <div id="case-list" class="case-list" aria-live="polite">
-          <p class="muted small">Cargando expedientes…</p>
-        </div>
+        <details id="sidebar-cases" class="sidebar-cases" open>
+          <summary class="sidebar-heading">
+            <span>Mis expedientes</span>
+            <span id="case-count" class="count">0</span>
+          </summary>
+          <div id="case-list" class="case-list" aria-live="polite">
+            <p class="muted small">Cargando expedientes…</p>
+          </div>
+        </details>
         <div class="sidebar-foot">
           <span class="connection-dot" aria-hidden="true"></span
           ><span
-            >Trabajo local<br /><span class="muted"
-              >El avance se guarda aquí.</span
+            >Guardado en este equipo<br /><span class="muted"
+              >Cada expediente conserva su avance.</span
             ></span
           >
         </div>
@@ -55,17 +68,13 @@
       <main id="workspace" tabindex="-1">
         <div class="workspace-heading">
           <div>
-            <p class="eyebrow" id="workspace-kicker">
-              PQRS CLARO · PASO A PASO
-            </p>
-            <h1>Entender la petición</h1>
+            <p class="eyebrow" id="workspace-kicker">INICIO</p>
+            <h1>Prepara respuestas con respaldo</h1>
             <p class="page-intro">
-              Identifica qué se solicita y compruébalo con el original.
+              Organiza las solicitudes, consulta sus fuentes y revisa cada
+              respuesta.
             </p>
           </div>
-          <span id="connection-state" class="connection-state"
-            >Conectando…</span
-          >
         </div>
         <ol class="journey" aria-label="Etapas del expediente">
           <li id="step-upload"><span>1</span> Cargar</li>
@@ -85,13 +94,19 @@
         ></div>
         <div id="work-content"></div>
         <footer class="scope-note">
-          Cada versión conserva sus fuentes, aportes y decisiones. El oficio se
-          genera desde las respuestas aprobadas. La firma y el envío requieren
-          el trámite institucional correspondiente.
+          Las fuentes y decisiones quedan en el expediente. El oficio requiere
+          aprobación humana; la firma y el envío se realizan por el trámite
+          institucional.
         </footer>
       </main>
     </div>
-    <input id="file-picker" type="file" accept=".pdf,application/pdf" hidden />
+    <input
+      id="file-picker"
+      type="file"
+      accept=".pdf,application/pdf"
+      aria-label="Documento original en PDF"
+      hidden
+    />
     <noscript
       >Activa JavaScript para cargar una petición y revisar sus
       solicitudes.</noscript

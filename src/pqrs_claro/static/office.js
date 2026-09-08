@@ -188,7 +188,7 @@ export function createOffice({
   function validReview(s) {
     if (hasReviewChanges(s.caseId))
       throw new Error(
-        "Hay cambios de revisión sin guardar en este expediente. Vuelve a la fase 6 para guardarlos, comprobarlos y aprobarlos o descartar la edición local.",
+        "Hay cambios de revisión sin guardar en este expediente. Vuelve a Revisar y aprobar para guardarlos, comprobarlos y aprobarlos o descartar la edición local.",
       );
     if (!s.data?.eligible)
       throw new Error(
