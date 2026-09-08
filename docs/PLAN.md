@@ -76,8 +76,12 @@ Revisar cada borrador con un editor por párrafos, fuentes seleccionables, aport
 
 Los cambios de texto, evidencia o entradas invalidan la evaluación y la aprobación. Actualizar las fuentes preserva el trabajo humano. El recorrido se explica en [FASE6.md](FASE6.md); esta etapa todavía no genera ni envía el oficio.
 
+## Entrega 5: parte 7
+
+Generar un oficio Word y su PDF desde las copias aprobadas, sin reescritura por IA. Completar los datos de salida, elegir anexos concretos y revisar una vista previa. Comprobar el texto y los archivos antes de habilitar las descargas; conservar versiones e invalidar la vigencia si cambian las respuestas aprobadas. El recorrido se explica en [FASE7.md](FASE7.md).
+
 ## Lo que sigue
 
-Parte 7: DOCX/PDF fieles a lo aprobado. Parte 8: evaluación ampliada, operación e integraciones concretas.
+Parte 8: evaluación ampliada, operación e integraciones concretas, incluyendo usuarios, permisos y respaldo para el trabajo institucional.
 
 Cada nueva entrega debe mostrar qué entra, qué transforma Python, qué propone la IA, qué coordina LangGraph y qué se puede comprobar al terminar. Mantendremos un plan y un repositorio, con cambios registrados en Git.

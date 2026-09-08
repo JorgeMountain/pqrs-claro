@@ -15,6 +15,8 @@ from .draft_api import draft_router
 from .draft_service import DraftService
 from .extraction import OpenAIOCR, PDFExtractor
 from .models import Identification
+from .office_api import office_router
+from .office_service import OfficeService
 from .review_api import review_router
 from .review_service import ReviewService
 from .service import CaseService
@@ -58,6 +60,7 @@ def create_app(
     source_assessor=None,
     draft_engine=None,
     review_engine=None,
+    office_renderer=None,
 ):
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
@@ -76,6 +79,9 @@ def create_app(
         drafts_service,
         engine=review_engine,
     )
+    offices_service = OfficeService(
+        settings, store, library, reviews_service, renderer=office_renderer
+    )
 
     @asynccontextmanager
     async def lifespan(app):
@@ -83,20 +89,24 @@ def create_app(
         library.recover()
         drafts_service.recover()
         reviews_service.recover()
+        offices_service.recover()
         yield
         service.close()
         sources_service.close()
         drafts_service.close()
         reviews_service.close()
+        offices_service.close()
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
     app.state.library, app.state.sources = library, sources_service
     app.state.drafts = drafts_service
     app.state.reviews = reviews_service
+    app.state.offices = offices_service
     app.include_router(source_router(library, sources_service, store))
     app.include_router(draft_router(drafts_service))
     app.include_router(review_router(reviews_service))
+    app.include_router(office_router(offices_service))
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
     )

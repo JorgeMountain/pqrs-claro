@@ -2,7 +2,7 @@
 
 La fase 5 propone un borrador. En esta etapa una persona trabaja sobre él: corrige el texto, elige qué fragmentos lo respaldan, aporta datos que conoce, resuelve los pendientes y registra su aprobación de una versión concreta.
 
-La aprobación prepara el contenido para generar el oficio en fase 7. No representa firma digital, envío ni entrega al peticionario.
+La aprobación prepara el contenido para generar el oficio en la [fase 7 disponible](FASE7.md). No representa firma digital, envío ni entrega al peticionario.
 
 ## El recorrido
 
@@ -13,6 +13,7 @@ La aprobación prepara el contenido para generar el oficio en fase 7. No represe
 5. Indicar quién guarda los cambios y pulsar **Guardar cambios**. Guardar no aprueba.
 6. Pulsar **Comprobar esta versión**. El sistema contrasta el texto guardado con la solicitud, las fuentes, los aportes y las decisiones sobre pendientes. El resultado identifica ajustes concretos o habilita la aprobación.
 7. Cuando no queden pendientes y la evaluación corresponda a la versión guardada, registrar quién aprueba y confirmar explícitamente que revisó la respuesta y sus soportes.
+8. Con todas las respuestas aprobadas y sin cambios locales pendientes, pulsar **Continuar a generar oficio** para preparar los archivos en fase 7.
 
 Se revisa una solicitud a la vez. El expediente solo queda preparado para el oficio cuando todas sus respuestas vigentes tienen una aprobación válida. El historial permite consultar las versiones y aprobaciones anteriores.
 
@@ -34,9 +35,9 @@ El sistema conserva el texto de los pendientes originales. La persona decide có
 
 ## Si aparecen fuentes nuevas
 
-Agregar el archivo a la biblioteca del expediente, actualizar el mapa en **4. Fuentes** y sincronizar la revisión permite trabajar con ese respaldo. La sincronización conserva los párrafos editados, los aportes y las decisiones; incorpora los pendientes nuevos y exige una nueva comprobación.
+Agregar el archivo a la biblioteca del expediente y actualizar el mapa en **4. Fuentes** permite localizar ese respaldo. Al volver a la revisión, guardar las ediciones pendientes y pulsar **Actualizar fuentes de la revisión**. La sincronización conserva los párrafos editados, los aportes y las decisiones; incorpora los pendientes nuevos y exige una nueva comprobación.
 
-Los candidatos del mapa pueden seleccionarse expresamente como citas durante la revisión. Se muestran como candidatos hasta que la persona los incorpora; su elección queda sometida al contraste de la respuesta. Los fragmentos conservan documento, versión, ubicación y texto original.
+Los candidatos del mapa pueden seleccionarse expresamente como citas durante la revisión. Se identifican como archivos encontrados para cotejo; seleccionarlos deja su pertinencia sometida a la comprobación de la respuesta. Los fragmentos conservan documento, versión, ubicación y texto original.
 
 Las verificaciones históricas informadas por el usuario mantienen su atribución. La revisión comprueba cómo se aplica ese antecedente a la nueva pregunta, sin convertir las alegaciones reproducidas en un correo en conclusiones de la institución.
 
@@ -79,4 +80,4 @@ La aprobación anterior permanece en el historial con una copia de lo aprobado y
 
 `data/revisiones.sqlite` conserva el trabajo de revisión y sus versiones. `data/review_checkpoints.sqlite` guarda el avance de LangGraph. Ambas bases permanecen fuera de Git junto con los expedientes y documentos privados. GitHub conserva el código y la documentación, no una copia de esos datos.
 
-La evidencia de las pruebas realizadas y sus límites se registra en [VALIDACION.md](VALIDACION.md). La etapa siguiente generará DOCX/PDF a partir de una versión aprobada, conservando la relación con sus soportes.
+La evidencia de las pruebas realizadas y sus límites se registra en [VALIDACION.md](VALIDACION.md). La [fase 7](FASE7.md) genera DOCX/PDF a partir de una versión aprobada, conservando la relación con sus soportes.

@@ -26,7 +26,7 @@ flowchart LR
 | LangGraph | Orden, checkpoints y pausa | Reanudar después de que la persona confirme |
 | Persona | Contrastar el resultado | Detectar una solicitud omitida o un OCR equivocado |
 
-La pantalla **Ver proceso** muestra entradas, etapas y resultados. No representa el razonamiento privado del modelo.
+El detalle **Ver cómo funciona este proceso**, dentro de la identificación, muestra etapas y resultados. No representa el razonamiento privado del modelo.
 
 ## Los archivos, uno por uno
 
@@ -104,7 +104,7 @@ Con las fuentes actualizadas, **5. Borradores** permite preparar un plan, redact
 
 En el ejemplo, se puede proponer el procedimiento y los requisitos y describir la fecha y el estado registrados. La copia del acta sigue pendiente: el texto no afirma que se haya adjuntado ni que no exista. Cada párrafo permite abrir sus fuentes. Los cambios de entradas dejan el resultado desactualizado; los errores técnicos pueden reintentarse sin repetir solicitudes terminadas.
 
-Los borradores pasan al recorrido de revisión humana de la fase 6. [FASE5.md](FASE5.md) explica cómo se preparan y comprueban; la fase 7 generará el oficio a partir de respuestas aprobadas.
+Los borradores pasan al recorrido de revisión humana de la fase 6. [FASE5.md](FASE5.md) explica cómo se preparan y comprueban; la [fase 7](FASE7.md) genera el oficio a partir de respuestas aprobadas.
 
 ## Revisar y aprobar las respuestas: fase 6
 
@@ -121,3 +121,13 @@ El recorrido tiene tres decisiones distintas:
 Si aparece un documento nuevo, se incorpora a la biblioteca y se actualiza **4. Fuentes**. Después, **Actualizar fuentes de la revisión** conserva el texto humano y los aportes, incorpora los nuevos pendientes y exige volver a comprobar. Un cambio de texto, cita, aporte, resolución o fuente deja sin vigencia la aprobación anterior.
 
 La fase 6 termina con respuestas revisadas y aprobadas; todavía no genera ni envía el oficio. [FASE6.md](FASE6.md) desarrolla el recorrido, los estados y los límites de la aprobación local.
+
+## Generar el oficio: fase 7
+
+La pantalla **7. Generar oficio** recibe únicamente las copias aprobadas de la revisión. La persona completa los datos del oficio y selecciona los anexos; una vista previa muestra el contenido que se va a generar.
+
+`office_models.py` valida los datos de salida. `office_renderer.py` organiza las solicitudes y referencias y crea el Word conservando los párrafos. `office_word.py` convierte ese archivo a PDF mediante una instancia propia de Word de escritorio. Después se contrasta el texto extraído del PDF y el Word con el contenido esperado.
+
+`office_service.py` comprueba que las aprobaciones sigan vigentes, prepara los anexos y controla qué archivos se pueden descargar. `office_store.py` conserva las generaciones en `oficios.sqlite`; los originales generados y su trazabilidad quedan en `data/oficios/`. `office_api.py` ofrece la vista previa, generación, imágenes de páginas y descargas. Los módulos `static/office*.js` conectan esas acciones con la pantalla.
+
+Este recorrido no invoca un modelo de IA. LangGraph ya dejó una versión aprobada en fase 6 y el generador trabaja con ese contenido. Cambiar los datos de encabezado produce otra versión de oficio; cambiar una respuesta o sus fuentes exige volver a comprobar y aprobar antes de generar una versión vigente. [FASE7.md](FASE7.md) explica el recorrido y sus límites.

@@ -274,7 +274,7 @@ export function reviewView({ state, drafts, mapping, actions }) {
     el(
       "p",
       { className: "response-boundary" },
-      "La revisión conserva el texto y las decisiones de cada persona. La generación y el envío del oficio corresponden a las siguientes etapas.",
+      "La revisión conserva el texto y las decisiones de cada persona. Cuando todas las respuestas estén aprobadas, podrás generar el oficio en la fase 7.",
     ),
     state.error || data?.error
       ? el(
@@ -421,6 +421,30 @@ export function reviewView({ state, drafts, mapping, actions }) {
             }),
           ),
           selected ? requestView(selected, state, actions) : null,
+        )
+      : null,
+    rows.length
+      ? el(
+          "div",
+          { className: "response-entry" },
+          el(
+            "div",
+            {},
+            el("strong", {}, "Siguiente paso: generar el oficio"),
+            el(
+              "p",
+              { className: "small muted" },
+              "Prepara Word y PDF conservando el texto de las respuestas aprobadas.",
+            ),
+          ),
+          button("Continuar a generar oficio", actions.openOffice, "primary", {
+            id: "continue-office",
+            disabled:
+              state.busy ||
+              approvedCount !== rows.length ||
+              data?.stale ||
+              actions.hasLocalChanges(),
+          }),
         )
       : null,
   );

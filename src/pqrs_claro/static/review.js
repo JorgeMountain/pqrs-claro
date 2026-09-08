@@ -21,6 +21,7 @@ export function createReview({
   showSource,
   openSources,
   openLibrary,
+  openOffice,
 }) {
   const cases = new Map();
   let state = null;
@@ -116,6 +117,8 @@ export function createReview({
           local.revision !== row.revision;
       const start = document.getElementById("review-start");
       if (start) start.disabled = true;
+      const next = document.getElementById("continue-office");
+      if (next) next.disabled = true;
       const requestLabel = document.querySelector(
         `#review-select-${CSS.escape(row.request_id)} .muted`,
       );
@@ -207,12 +210,27 @@ export function createReview({
     showSource,
     openSources,
     openLibrary,
+    openOffice,
+    hasLocalChanges() {
+      return (
+        [...state.locals.values()].some(isUnsent) ||
+        loadCaseLocals(state.caseId).size > 0
+      );
+    },
     load,
     start,
     localFor,
     changed,
     formChanged(row, local) {
       persist(row, local);
+      const next = document.getElementById("continue-office");
+      if (next)
+        next.disabled =
+          state.busy ||
+          state.data?.stale ||
+          !state.data?.requests?.length ||
+          state.data.requests.some((item) => !item.approval || item.stale) ||
+          actions.hasLocalChanges();
     },
     select(id) {
       state.selected = id;
@@ -378,6 +396,12 @@ export function createReview({
         [...cases.values()].some((s) =>
           [...s.locals.values()].some(isUnsent),
         ) || hasStoredUnsent()
+      );
+    },
+    hasUnsavedFor(caseId) {
+      return (
+        [...(cases.get(caseId)?.locals.values() || [])].some(isUnsent) ||
+        loadCaseLocals(caseId).size > 0
       );
     },
     view() {

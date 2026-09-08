@@ -1,6 +1,6 @@
 # Fase 5 · Preparar respuestas con soporte
 
-Después de identificar y confirmar las solicitudes y actualizar su mapa de fuentes, la fase 5 prepara un borrador para cada una. El resultado muestra qué se propone responder, de dónde sale y qué sigue pendiente. La revisión humana de respuestas está disponible en la [fase 6](FASE6.md); la generación del oficio aprobado corresponde a la fase 7.
+Después de identificar y confirmar las solicitudes y actualizar su mapa de fuentes, la fase 5 prepara un borrador para cada una. El resultado muestra qué se propone responder, de dónde sale y qué sigue pendiente. La revisión humana de respuestas está disponible en la [fase 6](FASE6.md); la generación del oficio aprobado está disponible en la [fase 7](FASE7.md).
 
 ## Recorrido en la página
 

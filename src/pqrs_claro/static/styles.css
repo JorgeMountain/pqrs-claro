@@ -2216,6 +2216,212 @@ select {
 .review-approval, .review-approved { padding: 20px; border: 1px solid var(--green); border-radius: var(--radius); margin: 12px 0 24px; background: var(--green-light); }
 .review-approval-help { font-size: 13px; color: var(--muted); margin: 0 0 24px; }
 .review-history-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.office-workspace {
+  min-width: 0;
+}
+.office-workspace h3 {
+  margin: 0 0 12px;
+  font-size: 17px;
+}
+.office-workspace .button {
+  max-width: 100%;
+  white-space: normal;
+}
+.office-form-section,
+.office-preview,
+.office-generated {
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+.office-form .field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+  min-width: 0;
+}
+.office-form input,
+.office-form textarea {
+  width: 100%;
+  min-width: 0;
+}
+.office-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 24px;
+}
+.office-fields .field:has(#office-subject) {
+  grid-column: 1 / -1;
+}
+.office-signer {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin: 20px 0;
+  min-width: 0;
+  background: var(--page);
+}
+.office-signer legend {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 8px;
+  max-width: 100%;
+}
+.office-paper {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 32px;
+  margin: 16px 0 24px;
+  max-width: 800px;
+  font-size: 14px;
+  color: var(--ink);
+}
+.office-paper > p,
+.office-exact-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.85;
+}
+.office-paper .office-institution {
+  font-family: var(--serif);
+  font-size: 22px;
+  margin-top: 0;
+}
+.office-preview-request {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  margin-top: 24px;
+}
+.office-paper h4 {
+  font-size: 15px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.office-request-description {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.office-reference-list {
+  padding-left: 24px;
+}
+.office-reference-list li {
+  padding-left: 4px;
+  margin: 12px 0;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.office-blockers {
+  padding: 20px;
+  margin: 20px 0;
+  background: var(--amber-bg);
+  border-left: 3px solid var(--amber);
+}
+.office-blockers ul {
+  font-size: 13px;
+  line-height: 1.7;
+  padding-left: 20px;
+}
+.office-blockers li + li {
+  margin-top: 8px;
+}
+.office-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 20px 0;
+}
+.office-pdf-preview {
+  margin: 24px 0;
+  max-width: 850px;
+}
+.office-page-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.office-page-controls span {
+  font-size: 12px;
+  text-align: center;
+}
+.office-page-controls .button {
+  font-size: 12px;
+  padding: 8px;
+}
+.office-pdf-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.office-run-metadata {
+  display: grid;
+  gap: 12px;
+}
+.office-run-metadata > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr);
+  gap: 16px;
+}
+.office-run-metadata dt {
+  font-weight: 600;
+}
+.office-run-metadata dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.office-history {
+  display: grid;
+  gap: 12px;
+}
+@media (min-width: 1200px) {
+  .journey {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 12px;
+    max-width: 1100px;
+  }
+  .journey li {
+    min-width: 0;
+  }
+  .journey li::after {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .office-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .office-paper {
+    padding: 16px;
+    font-size: 13px;
+  }
+  .office-signer {
+    padding: 12px;
+  }
+  .office-downloads {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .office-page-controls {
+    gap: 4px;
+  }
+  .office-page-controls .button {
+    font-size: 11px;
+    padding: 8px 4px;
+  }
+  .office-run-metadata > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
 @media (max-width: 767px) {
   .case-stage-nav { gap: 4px; }
   .case-stage-nav .button { padding: 8px; font-size: 11px; }

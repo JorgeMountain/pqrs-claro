@@ -1,6 +1,6 @@
 # PQRS Claro
 
-Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes y preparar, revisar y aprobar respuestas trazables por solicitud**.
+Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes y preparar, revisar, aprobar y documentar respuestas trazables por solicitud**.
 
 ## Empezar
 
@@ -19,8 +19,9 @@ Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza
 - Parte 4: [biblioteca local y búsqueda por solicitud](docs/FASE4.md), con fuentes PDF/DOCX/TXT, originales versionados, procedencia, revisión y vigencia, referencias a fragmentos y faltantes explícitos.
 - Parte 5: [plan, redacción y comprobaciones](docs/FASE5.md), con borradores por solicitud, citas por párrafo, pendientes visibles y recuperación del avance.
 - Parte 6: [revisión humana y aprobación](docs/FASE6.md), con edición, aportes escritos atribuidos, resolución de pendientes, reevaluación y aprobación de una versión concreta.
+- Parte 7: [oficio en Word y PDF](docs/FASE7.md), con datos de salida, vista previa, anexos seleccionados, comprobación de fidelidad e historial de generaciones.
 
-**Confirmar identificación** cierra el primer hito y permite buscar fuentes. Con un mapa actualizado, **5. Borradores** prepara las propuestas y **6. Revisar y aprobar** permite trabajar sobre ellas. La generación del oficio corresponde a la parte 7. La aprobación local conserva el contenido revisado; esta entrega no calcula términos legales ni registra entregas documentales.
+**Confirmar identificación** cierra el primer hito y permite buscar fuentes. Con un mapa actualizado, **5. Borradores** prepara las propuestas y **6. Revisar y aprobar** permite trabajar sobre ellas. **7. Generar oficio** prepara el Word, PDF y paquete de anexos desde las respuestas aprobadas. La aprobación local conserva el contenido revisado; esta entrega no calcula términos legales ni registra entregas documentales.
 
 Para practicar la fase 4, incorpora las fuentes ficticias del ejemplo después de confirmar sus solicitudes y ejecuta la búsqueda. Deben aparecer reglas para el procedimiento, un registro para recepción y estado, y un pendiente para la copia del acta. [FASE4.md](docs/FASE4.md) explica qué comprobar.
 
@@ -30,11 +31,11 @@ La recomendación de alojamiento es **Drive institucional, preferiblemente una u
 
 ## Entender lo que hay detrás
 
-Lee [COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md). En la aplicación, **Ver proceso** muestra las etapas y resultados del expediente.
+Lee [COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md). En la identificación de la aplicación, **Ver cómo funciona este proceso** muestra las etapas y resultados del expediente.
 
 ## Instalación y configuración
 
-Requisitos de este equipo: `uv`, Python 3.12 y navegador. En una instalación nueva:
+Requisitos de este equipo: `uv`, Python 3.12 y navegador. La conversión del oficio a PDF requiere Word de escritorio en Windows; no usa una cuenta de conversión externa. En una instalación nueva:
 
 ```powershell
 .\scripts\setup.ps1
@@ -45,7 +46,7 @@ Los scripts usan el Python administrado por uv y las dependencias propias de `.r
 
 La clave existente se reutiliza con autorización, leyendo `../langgraph-pqrs/.env.local`. No se copia ni se registra. Se puede indicar otro archivo mediante `PQRS_CLARO_KEY_FILE`. La configuración propia opcional vive en `.env.local` (ignorada por Git); `.env.example` muestra las opciones sin secretos. Si no existe archivo, se admite `OPENAI_API_KEY` del entorno. El modelo se puede cambiar con `PQRS_CLARO_MODEL`.
 
-La identificación, el OCR y la evaluación de pertinencia usan OpenAI con `store=False`; el texto o la imagen necesarios se transmiten al proveedor. La recuperación inicial de fuentes usa BM25 local y todavía no incorpora embeddings. La aplicación escucha únicamente en `127.0.0.1`. No contiene un modo simulado de operación: si falta configuración o falla la IA, muestra el problema.
+La identificación, el OCR, la evaluación de pertinencia, la redacción y las comprobaciones de respuestas usan OpenAI con `store=False`; el texto o la imagen necesarios se transmiten al proveedor. La generación del oficio aprobado es local y no llama a la IA. La recuperación inicial de fuentes usa BM25 local y todavía no incorpora embeddings. La aplicación escucha únicamente en `127.0.0.1`. No contiene un modo simulado de operación: si falta configuración o falla la IA, muestra el problema.
 
 ## Datos y límites
 

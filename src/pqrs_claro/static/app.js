@@ -14,6 +14,7 @@ import { requestsView, quoteFor } from "./requests.js";
 import { createSources } from "./sources.js";
 import { createDrafts } from "./drafts.js";
 import { createReview } from "./review.js";
+import { createOffice } from "./office.js";
 
 const state = {
   config: null,
@@ -32,6 +33,7 @@ const state = {
   library: false,
   responses: new URL(location.href).searchParams.get("view") === "drafts",
   reviewing: new URL(location.href).searchParams.get("view") === "review",
+  office: new URL(location.href).searchParams.get("view") === "office",
 };
 const $ = (id) => document.getElementById(id);
 
@@ -160,6 +162,7 @@ function adopt(current, reset = false) {
   sources.setCase(current);
   drafts.setCase(current);
   reviews.setCase(current);
+  offices.setCase(current);
   if (
     current.status === "confirmed" &&
     (!sources.state.loaded || !sources.state.mapping)
@@ -178,6 +181,13 @@ function adopt(current, reset = false) {
     !reviews.state?.loading
   )
     void reviews.load({ quiet: true });
+  if (
+    current.status === "confirmed" &&
+    state.office &&
+    !offices.state?.loaded &&
+    !offices.state?.loading
+  )
+    void offices.load({ quiet: true });
   if (reset) {
     clearDraft();
     state.page = current.pages?.[0]?.number || 1;
@@ -212,6 +222,7 @@ async function selectCase(id) {
     state.library = false;
     state.responses = false;
     state.reviewing = false;
+    state.office = false;
     state.notice = null;
     const url = new URL(location.href);
     url.searchParams.set("case", id);
@@ -228,8 +239,10 @@ function newCase() {
   sources.setCase(null);
   drafts.setCase(null);
   reviews.setCase(null);
+  offices.setCase(null);
   state.responses = false;
   state.reviewing = false;
+  state.office = false;
   state.notice = null;
   const url = new URL(location.href);
   url.searchParams.delete("case");
@@ -610,11 +623,13 @@ function render() {
   const status = state.current?.status;
   const stage =
     status === "confirmed"
-      ? state.reviewing
-        ? 5
-        : state.responses
-          ? 4
-          : 3
+      ? state.office
+        ? 6
+        : state.reviewing
+          ? 5
+          : state.responses
+            ? 4
+            : 3
       : !status || status === "uploaded"
         ? 0
         : running(status) || status === "error"
@@ -627,6 +642,7 @@ function render() {
     "step-sources",
     "step-drafts",
     "step-approve",
+    "step-office",
   ].forEach((id, index) => {
     $(id).className = index < stage ? "done" : index === stage ? "active" : "";
     $(id).setAttribute("aria-current", index === stage ? "step" : "false");
@@ -641,20 +657,24 @@ function render() {
   document.querySelector(".workspace-heading h1").textContent = state.library
     ? "Biblioteca de fuentes"
     : sourcesStage
-      ? state.reviewing
-        ? "Revisar y aprobar las respuestas"
-        : state.responses
-          ? "Preparar las respuestas"
-          : "Encontrar el respaldo"
+      ? state.office
+        ? "Generar el oficio"
+        : state.reviewing
+          ? "Revisar y aprobar las respuestas"
+          : state.responses
+            ? "Preparar las respuestas"
+            : "Encontrar el respaldo"
       : "Entender la petición";
   document.querySelector(".page-intro").textContent = state.library
     ? "Organiza los documentos que sirven de consulta y soporte."
     : sourcesStage
-      ? state.reviewing
-        ? "El texto, sus soportes y una decisión humana para cada solicitud."
-        : state.responses
-          ? "Un borrador trazable, con sus fuentes y pendientes visibles."
-          : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
+      ? state.office
+        ? "Las respuestas aprobadas, listas para preparar el documento."
+        : state.reviewing
+          ? "El texto, sus soportes y una decisión humana para cada solicitud."
+          : state.responses
+            ? "Un borrador trazable, con sus fuentes y pendientes visibles."
+            : "Comprueba qué tenemos para cada solicitud y qué falta aportar."
       : "Identifica qué se solicita y compruébalo con el original.";
   document.querySelector(".journey").hidden = state.library;
   actions.busy = state.busy;
@@ -717,7 +737,9 @@ function render() {
               button("4. Fuentes", openSources, "quiet", {
                 id: "stage-sources",
                 "aria-current":
-                  !state.responses && !state.reviewing ? "step" : null,
+                  !state.responses && !state.reviewing && !state.office
+                    ? "step"
+                    : null,
               }),
               button("5. Borradores", openResponses, "quiet", {
                 id: "stage-drafts",
@@ -727,13 +749,19 @@ function render() {
                 id: "stage-approval",
                 "aria-current": state.reviewing ? "step" : null,
               }),
+              button("7. Generar oficio", openOffice, "quiet", {
+                id: "stage-office",
+                "aria-current": state.office ? "step" : null,
+              }),
             ),
-            state.reviewing
-              ? reviews.view()
-              : state.responses
-                ? drafts.view()
-                : sources.caseView(),
-            !state.responses && !state.reviewing
+            state.office
+              ? offices.view()
+              : state.reviewing
+                ? reviews.view()
+                : state.responses
+                  ? drafts.view()
+                  : sources.caseView(),
+            !state.responses && !state.reviewing && !state.office
               ? el(
                   "div",
                   { className: "response-entry" },
@@ -803,6 +831,7 @@ function render() {
 function setResponseStage(value) {
   state.responses = value;
   state.reviewing = false;
+  state.office = false;
   state.library = false;
   const url = new URL(location.href);
   if (value) url.searchParams.set("view", "drafts");
@@ -822,6 +851,7 @@ function openSources() {
 function openReview() {
   state.responses = false;
   state.reviewing = true;
+  state.office = false;
   state.library = false;
   const url = new URL(location.href);
   url.searchParams.set("view", "review");
@@ -830,6 +860,17 @@ function openReview() {
   void sources.load({ quiet: true });
   void drafts.load({ quiet: true });
   void reviews.load({ quiet: true });
+}
+function openOffice() {
+  state.responses = false;
+  state.reviewing = false;
+  state.office = true;
+  state.library = false;
+  const url = new URL(location.href);
+  url.searchParams.set("view", "office");
+  history.replaceState(null, "", url);
+  render();
+  void offices.load({ quiet: true });
 }
 
 function openLibrary() {
@@ -843,6 +884,7 @@ function closeLibrary() {
   render();
   if (state.responses) void drafts.load({ quiet: true });
   if (state.reviewing) void reviews.load({ quiet: true });
+  if (state.office) void offices.load({ quiet: true });
   $("workspace").focus({ preventScroll: true });
 }
 const sources = createSources({
@@ -873,6 +915,15 @@ const reviews = createReview({
   showSource: (id, ref) => sources.showSource(id, ref),
   openSources,
   openLibrary,
+  openOffice,
+});
+const offices = createOffice({
+  api,
+  notify,
+  getCase: () => state.current,
+  hasReviewChanges: (caseId) => reviews.hasUnsavedFor(caseId),
+  render,
+  back: openReview,
 });
 
 function schedulePoll() {
@@ -922,7 +973,7 @@ $("file-picker").addEventListener("change", (event) => {
   event.target.value = "";
 });
 window.addEventListener("beforeunload", (event) => {
-  if (state.dirty || reviews.hasUnsaved()) {
+  if (state.dirty || reviews.hasUnsaved() || offices.hasUnprotectedChanges()) {
     event.preventDefault();
     event.returnValue = "";
   }

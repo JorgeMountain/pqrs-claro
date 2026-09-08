@@ -153,3 +153,31 @@ El reinicio del servidor QA conservó exactamente las cinco revisiones, incluyen
 Evidencia privada en `output/validation-f6/`: referencia, scripts y llamadas por intento, resultados, `semantic-initial.json`, `semantic-final.json/.md`, `restart-check.json`, comprobaciones de integridad y de arranque, e `INFORME.md`. Capturas y recorridos de navegador en `output/playwright/fase6-*` y `.playwright-cli/`. Ningún expediente, original ni resultado privado se incluye en Git. La exportación, firma y entrega del oficio no forman parte de esta fase; continúan pendientes la evaluación representativa ampliada y las brechas documentales de fase 4.
 
 La aplicación principal se reinició en `127.0.0.1:8770`: configuración y consulta de revisión respondieron 200; la consulta devolvió `idle` sin crear una revisión. HTML y módulos de revisión servidos coincidieron byte a byte con el código del workspace. Las nueve tablas preexistentes conservaron filas y hashes lógicos; las tres tablas nuevas de revisión quedaron vacías. Se abrió además la página principal en navegador. Evidencia: `main-start-check.json` y `live-integrity.json` privados.
+
+## Fase 7 — 7 de septiembre de 2026
+
+Se implementaron datos del oficio, selección manual de anexos citados, vista previa, DOCX, conversión del mismo archivo a PDF, imágenes por página, descargas y versiones persistentes. El generador consume las copias aprobadas de fase 6, sin llamadas de IA. Comprueba todos los bloques del Word y el texto completo del PDF en orden; en PDF solo normaliza Unicode NFC y espacios de composición, excluyendo el número de página exacto en su posición fija. Una falla no habilita descargas.
+
+La suite completa inicial pasó **390 pruebas**. Tras los ajustes surgidos de Word real, pasaron **77 pruebas focales** sobre renderer, aislamiento de Word y servicio/API, incluidas nueve regresiones nuevas. Ruff, Prettier de los módulos JavaScript/HTML afectados y `git diff --check` pasaron. Se conservó el formato anterior del CSS ajeno a esta fase. Persiste únicamente el aviso externo de Starlette/AnyIO. Estas pruebas utilizan un conversor doble cuando corresponde; las conversiones reales se describen aparte.
+
+### Conversión real, fidelidad y presentación
+
+La referencia se fijó sobre una copia independiente del ejemplo ficticio de fase 6: **tres solicitudes aprobadas, seis párrafos, cuatro referencias y dos originales seleccionados como anexos**. Los dos casos históricos de QA continuaron sin aprobación. El servidor QA se ejecutó sin clave de IA y restringido a la generación del ejemplo y su posterior ensayo de invalidación. No hubo nuevas evaluaciones ni aprobaciones.
+
+La primera generación falló al buscar `Hwnd` en `Word.Application`. Se corrigió identificando la ventana de un documento temporal propio, comprobando PID y fecha de creación antes de administrar esa instancia. La conversión diagnóstica conservó el SHA del DOCX. El segundo intento produjo un PDF correcto, pero el cotejo incorporaba sus pies de página: la diferencia exacta eran 18 caracteres de «Página 1/2», con los 3.733 caracteres del cuerpo intactos. Se reemplazó el recorte de región por reconocimiento del pie exacto; texto adicional, numeración equivocada o fuera de posición siguen causando rechazo. Se eliminaron además borde azul y fuentes heredadas del tema. Los intentos fallidos permanecen registrados.
+
+Se generaron desde el navegador **dos versiones correctas de dos páginas**, cambiando únicamente el número de oficio. Se conservaron la aprobación y los seis párrafos. Un cotejo independiente con `python-docx` y `pdfplumber` comprobó texto y orden, ausencia de notas internas, límites de página y bytes del ZIP: Word, PDF y únicamente los dos anexos elegidos. Las tres descargas reales del navegador coincidieron con sus SHA registrados.
+
+Se inspeccionaron las dos páginas completas del oficio mediante Poppler. Un ensayo adicional, claramente sintético y sin aprobación, produjo **cinco páginas con ocho párrafos largos**, saltos explícitos, acentos, comillas, letras griegas y símbolo de número. Las cinco páginas se renderizaron e inspeccionaron: sin recortes, superposiciones o glifos ausentes; el cotejo completo del texto pasó. El renderer de documentos empaquetado se intentó con el entorno bundled y diagnosticó ausencia de LibreOffice; la revisión visual utilizó el PDF de Word real y Poppler bundled.
+
+### Versiones, interfaz y aplicación principal
+
+Repetir los mismos datos devolvió la misma generación sin otra conversión. Reiniciar QA conservó exactamente historial, archivos y aprobaciones. Modificar un dato exigió nueva vista previa; una huella anterior, un anexo ajeno, páginas inexistentes, descarga de manifiesto o acceso al archivo desde otro expediente fueron rechazados.
+
+Al editar exclusivamente P1 del ejemplo QA se retiró su aprobación: quedaron dos de tres respuestas aprobadas y ambos oficios anteriores pasaron a desactualizados. Vista previa, generación, páginas y descargas quedaron bloqueadas. La pantalla indicó la solicitud pendiente. No se volvió a comprobar ni aprobar ese cambio de ensayo.
+
+En navegador se comprobaron formulario persistente, firmante inicialmente vacío, selección de anexos, vista previa literal, generación, navegación por ambas páginas, descargas y aviso de versión anterior. A 320, 768, 1024 y 1440 px no hubo desbordamiento horizontal ni infracciones detectadas por Axe WCAG 2 A/AA y 2.1 AA en la vista examinada. Se inspeccionaron capturas móvil y escritorio; los recorridos comprobados no registraron errores de página. No es una auditoría completa con lector de pantalla.
+
+La aplicación principal quedó activa en `127.0.0.1:8770`, con Word disponible, rutas fase 7 respondiendo 200 y seis activos servidos idénticos a los del workspace. Las **12 tablas preexistentes** conservaron filas y hashes lógicos, con `quick_check=ok`; el nuevo registro de oficios quedó vacío. Ningún oficio institucional se generó o aprobó durante QA.
+
+Evidencia privada en `output/validation-f7/`: referencia, intentos completos, diagnósticos, `results/`, páginas renderizadas, `layout-fixture/` e `INFORME.md`. El piloto requiere Windows y Word de escritorio; conserva almacenamiento local e identidades declaradas. Firma, radicación, envío, respaldo externo, evaluación ampliada y permisos institucionales siguen fuera de esta entrega.
