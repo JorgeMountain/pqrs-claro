@@ -166,6 +166,47 @@ def test_assess_is_one_structured_call_without_changing_human_content():
     assert context["review"]["pending"][0]["resolution"]["cited_chunk_ids"] == ["S1"]
 
 
+@pytest.mark.parametrize("sections", [
+    ["context"], ["conclusion"], ["context", "conclusion"],
+])
+def test_context_and_conclusion_alone_cannot_pass_as_a_response(sections):
+    worker, calls = engine()
+    value = review(paragraphs=[paragraph(office_section=section) for section in sections])
+    original = deepcopy(value)
+    result = worker.assess(inquiry(), value)
+    assert result["status"] == "needs_changes"
+    assert {item["code"] for item in result["issues"]} == {"response_section_present"}
+    assert result["issues"][0]["paragraph_index"] is None
+    assert calls == []
+    assert value == original
+
+
+@pytest.mark.parametrize("section", [None, "response"])
+def test_legacy_or_explicit_response_with_context_keeps_cites_and_can_be_reviewed(section):
+    worker, calls = engine()
+    answer = paragraph(**({"office_section": section} if section else {}))
+    value = review(paragraphs=[paragraph(office_section="context"), answer])
+    original = deepcopy(value)
+    result = worker.assess(inquiry(), value)
+    assert result["status"] == "passed"
+    assert len(calls) == 1
+    paragraphs = json.loads(calls[0]["input"])["review"]["paragraphs"]
+    assert [item["office_section"] for item in paragraphs] == ["context", "response"]
+    assert [item["cited_chunk_ids"] for item in paragraphs] == [["S1"], ["S1"]]
+    assert value == original
+
+
+def test_context_section_does_not_exempt_its_paragraph_from_citations():
+    worker, calls = engine()
+    result = worker.assess(inquiry(), review(paragraphs=[
+        paragraph(office_section="context", cited_chunk_ids=[]), paragraph(),
+    ]))
+    assert result["status"] == "needs_changes"
+    assert any(item["code"] == "paragraph_cited" and item["paragraph_index"] == 0
+               for item in result["issues"])
+    assert calls == []
+
+
 def test_written_declaration_can_sustain_attributed_fact_without_attachment():
     worker, calls = engine()
     result = worker.assess(
@@ -260,6 +301,35 @@ def test_open_pending_blocks_passed_even_when_provider_says_passed():
     result = worker.assess(inquiry(), review(pending=[pending()]))
     assert result["status"] == "needs_changes"
     assert any(item["code"] == "pending_closed" for item in result["issues"])
+
+
+def test_later_signature_remains_visible_without_circular_approval_requirement():
+    worker, calls = engine()
+    value = review(pending=[pending(
+        description="Tramitar la firma de esta respuesta aprobada.",
+        stage="fulfillment", blocks_approval=False,
+    )])
+    result = worker.assess(inquiry(), value)
+    assert result["status"] == "passed"
+    assert value["pending"][0]["resolution"] is None
+    assert json.loads(calls[0]["input"])["review"]["pending"][0]["stage"] == "fulfillment"
+    assert any(item["code"] == "fulfillment_deferred" for item in result["local_checks"])
+
+
+def test_required_independent_action_still_blocks_final_approval():
+    worker, _ = engine()
+    result = worker.assess(inquiry(), review(pending=[pending(
+        description="Obtener la certificación independiente exigida para esta respuesta.",
+        stage="fulfillment", blocks_approval=True,
+    )]))
+    assert result["status"] == "needs_changes"
+    assert any(item["code"] == "pending_closed" for item in result["issues"])
+
+
+def test_evidence_check_cannot_disguise_itself_as_nonblocking():
+    worker, _ = engine()
+    with pytest.raises(DomainError, match="comprobación de evidencia"):
+        worker.assess(inquiry(), review(pending=[pending(stage="evidence", blocks_approval=False)]))
 
 
 def test_declaration_cannot_replace_requested_document():
@@ -474,6 +544,7 @@ def test_resume_rejects_missing_confirmation_wrong_hash_or_injected_fields(chang
         review(pending=[pending()]),
         review(paragraphs=[paragraph(cited_chunk_ids=[])]),
         review(paragraphs=[paragraph(cited_chunk_ids=["retirada"])]),
+        review(paragraphs=[paragraph(office_section="context")]),
     ],
 )
 def test_graph_independently_blocks_structural_gaps_even_with_a_passing_engine(value):

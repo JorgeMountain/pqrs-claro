@@ -13,6 +13,13 @@ const fields = [
   ["department", "Dependencia (opcional)", 200, false],
   ["city", "Ciudad", 120, true],
   ["issue_date", "Fecha del oficio", null, true, "date"],
+  [
+    "received_date",
+    "Fecha de recepción confirmada (opcional)",
+    null,
+    false,
+    "date",
+  ],
   ["office_number", "Número de oficio (opcional)", 100, false],
   ["petition_number", "Radicado de la petición (opcional)", 100, false],
   ["recipient", "Destinatario", 300, true],
@@ -79,6 +86,11 @@ function metadataForm(state, actions) {
                 : {}),
               ...(maxLength ? { maxLength } : {}),
               ...(type ? { type } : {}),
+              ...(name === "received_date"
+                ? {
+                    hint: "Completa esta fecha solo si está confirmada. Se incluirá en la introducción; puedes dejarla vacía.",
+                  }
+                : {}),
               ...(name === "subject" ? { multiline: true, rows: 2 } : {}),
             },
           ),
@@ -258,7 +270,7 @@ export function officeView({ state, actions }) {
         el(
           "p",
           { className: "muted" },
-          "Completa los datos, comprueba el contenido y genera Word y PDF con las respuestas aprobadas.",
+          "Completa los datos y comprueba el oficio: introducción, antecedentes compartidos, respuestas por numeral y conclusión, según lo aprobado en la revisión. Después genera Word y PDF.",
         ),
       ),
       button("Actualizar estado", () => actions.load(), "quiet", {
@@ -329,7 +341,7 @@ export function officeView({ state, actions }) {
               el(
                 "li",
                 {},
-                `${item.label}. ${item.title} · ${{ editing: "por comprobar", needs_changes: "requiere ajustes", needs_evidence: "falta respaldo", checking: "en comprobación", stale: "actualizar fuentes", ready: "falta aprobación", error: "requiere atención" }[item.status] || "revisión pendiente"}`,
+                `${item.label}. ${item.title} · ${{ editing: "por comprobar", needs_changes: "requiere ajustes", needs_evidence: "comprobaciones pendientes", checking: "en comprobación", stale: "actualizar fuentes", ready: "falta aprobación", error: "requiere atención" }[item.status] || "revisión pendiente"}`,
               ),
             ),
           ),

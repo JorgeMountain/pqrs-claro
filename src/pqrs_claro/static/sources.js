@@ -1,4 +1,5 @@
 import { el, button, dateLabel, textLines } from "./ui.js";
+import { createVerifications } from "./verifications.js";
 
 function driveUrl(value) {
   try {
@@ -37,12 +38,33 @@ const validityLabels = {
   superseded: "Reemplazada o sin vigencia",
   not_applicable: "No requiere vigencia normativa",
 };
-const statusLabels = {
-  references_found: "Referencias encontradas",
-  needs_evidence: "Necesita evidencia",
-  no_matches: "Sin coincidencias",
-  error: "Requiere atención",
+const evidenceLabels = {
+  support_found: "Respaldo encontrado",
+  confirmation_pending: "Confirmación pendiente",
+  document_missing: "Documento faltante",
+  analysis_error: "Error de análisis",
 };
+const evidenceHints = {
+  support_found: "Hay pasajes pertinentes disponibles para responder.",
+  confirmation_pending: "Hay una comprobación concreta o una búsqueda por completar.",
+  document_missing: "El documento identificado no se encontró en el catálogo local consultado.",
+  analysis_error: "No se pudo completar la lectura o el análisis.",
+};
+function evidenceStates(result) {
+  if (!result) return [];
+  if (result.evidence_states?.length)
+    return [...new Set(result.evidence_states)].filter(code => evidenceLabels[code]);
+  // Un mapa antiguo no acredita una búsqueda suficiente ni permite inferir ausencia.
+  const states = [];
+  if (result.supports?.some(source => source.category !== "historical_petition")) states.push("support_found");
+  if (result.status === "error") states.push("analysis_error");
+  else if (result.missing?.length || !states.length) states.push("confirmation_pending");
+  return states;
+}
+function stateBadge(code, count) {
+  return el("span", { className: `source-tag evidence-state-${code}`, title: evidenceHints[code] },
+    count === undefined ? evidenceLabels[code] : `${count} · ${evidenceLabels[code]}`);
+}
 const textOf = (value) =>
   typeof value === "string"
     ? value
@@ -71,6 +93,7 @@ export function createSources({
   render,
   openLibrary,
   closeLibrary,
+  uploadEvidence = null,
 }) {
   const state = {
     caseId: null,
@@ -90,6 +113,14 @@ export function createSources({
     state.caseId ? `?case_id=${encodeURIComponent(state.caseId)}` : "";
   const sourceUrl = (id, suffix = "") =>
     `/api/sources/${encodeURIComponent(id)}${suffix}${context()}`;
+  const verifications = createVerifications({
+    api, notify, getCase, render, showSource,
+    getMapping: () => state.mapping,
+    onChanged: async () => {
+      await search();
+      await load({ quiet: true });
+    },
+  });
 
   async function load({ quiet = false } = {}) {
     const token = ++state.loadToken;
@@ -104,6 +135,7 @@ export function createSources({
         ? api(`/api/cases/${encodeURIComponent(current.id)}/sources`)
         : Promise.resolve(null),
       api(`/api/source-collections${context()}`),
+      verifications.load({ quiet: true }),
     ]);
     if (token !== state.loadToken || state.caseId !== (getCase()?.id || null))
       return;
@@ -137,6 +169,7 @@ export function createSources({
       state.error = null;
       state.linkedCollections = [];
       state.collectionPickerOpen = false;
+      verifications.reset();
     }
   }
   function schedule() {
@@ -296,7 +329,7 @@ export function createSources({
           el(
             "p",
             {},
-            "Agrega un PDF, DOCX o TXT. Las normas y los oficios anteriores pueden ser compartidos; los soportes del caso quedan dentro de su expediente.",
+            "Agrega un PDF, DOCX, TXT o imagen. Las normas y los oficios anteriores pueden ser compartidos; los soportes del caso quedan dentro de su expediente.",
           ),
         ),
       );
@@ -570,7 +603,7 @@ export function createSources({
           el(
             "p",
             { className: "muted" },
-            "Relaciona cada solicitud con sus posibles soportes y comprueba qué información falta.",
+            "Consulta los respaldos de cada solicitud y distingue qué comprobaciones o documentos quedan pendientes.",
           ),
         ),
         smallButton("Abrir biblioteca", openLibrary),
@@ -653,12 +686,16 @@ export function createSources({
           el(
             "strong",
             {},
-            `Buscando por solicitud · ${mapping.completed_count || 0} de ${mapping.total_count || requests.length}`,
+            mapping.retrieval_progress?.phase === "indexing"
+              ? `Preparando las fuentes para la búsqueda · ${mapping.retrieval_progress.prepared || 0} fragmentos`
+              : `Buscando por solicitud · ${mapping.completed_count || 0} de ${mapping.total_count || requests.length}`,
           ),
           el(
             "p",
             {},
-            "Se consultan los documentos disponibles y se conservan las citas encontradas. Puedes volver a este expediente después.",
+            mapping.retrieval_progress?.phase === "indexing"
+              ? "Esta preparación se guarda y se reutiliza en las siguientes búsquedas. Puedes volver a este expediente después."
+              : "Se consultan los documentos disponibles y se conservan las citas encontradas. Puedes volver a este expediente después.",
           ),
           el(
             "div",
@@ -694,7 +731,7 @@ export function createSources({
             "p",
             {},
             searchableCount
-              ? "La búsqueda recorrerá cada solicitud confirmada. Aquí verás las referencias y los faltantes que debes comprobar."
+              ? "La búsqueda recorrerá cada solicitud confirmada. Aquí verás los respaldos, las comprobaciones pendientes y los problemas de lectura."
               : "Carga normas o soportes del expediente y revisa su procedencia. Necesitas al menos una fuente de consulta que no esté marcada como reemplazada.",
           ),
           isDemo
@@ -707,11 +744,6 @@ export function createSources({
       return panel;
     }
     if (results.length) {
-      const missingCount = results.filter(
-        (item) =>
-          item.missing?.length ||
-          ["needs_evidence", "no_matches", "error"].includes(item.status),
-      ).length;
       panel.append(
         el(
           "div",
@@ -720,7 +752,6 @@ export function createSources({
             "p",
             {},
             el("strong", {}, `${results.length} solicitudes consultadas`),
-            ` · ${missingCount} con faltantes o revisión pendiente`,
           ),
           el(
             "p",
@@ -729,6 +760,18 @@ export function createSources({
           ),
         ),
       );
+      panel.append(
+        el("div", { className: "evidence-state-summary", "aria-label": "Estados de las solicitudes" },
+          Object.keys(evidenceLabels).map(code => el("div", { className: `evidence-state-total evidence-state-${code}` },
+            el("strong", {}, String(results.filter(result => evidenceStates(result).includes(code)).length)),
+            el("span", {}, evidenceLabels[code]),
+            el("p", { className: "small muted" }, evidenceHints[code])))),
+        el("p", { className: "small muted evidence-state-help" },
+          "Una solicitud puede tener respaldo y una confirmación pendiente al mismo tiempo. Los estados no se excluyen."),
+      );
+      const shared = sharedChecksView(mapping.shared_checks || [], requests);
+      if (shared) panel.append(shared);
+      panel.append(verifications.view());
       const selector = el(
         "select",
         {
@@ -746,7 +789,7 @@ export function createSources({
           return el(
             "option",
             { value: request.id },
-            `${request.label}. ${request.title} — ${statusLabels[result?.status] || "Por consultar"}`,
+            `${request.label}. ${request.title} — ${evidenceStates(result).map(code => evidenceLabels[code]).join(" · ") || "Por consultar"}`,
           );
         }),
       );
@@ -804,12 +847,72 @@ export function createSources({
             "p",
             {},
             el("strong", {}, "Tú compruebas. "),
-            "Una referencia puede aportar una regla o contexto sin acreditar los hechos del expediente. Los oficios anteriores orientan el estilo.",
+            "Revisa el alcance de cada respaldo. Una comprobación documentada en un oficio anterior puede reutilizarse cuando su aplicación a esta solicitud quede registrada.",
           ),
         ),
       ),
     );
     return panel;
+  }
+
+  function selectRequest(requestId) {
+    state.selected = requestId;
+    render();
+    document.getElementById("source-request-select")?.focus({ preventScroll: true });
+    document.querySelector(".request-evidence")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function checkSourceLinks(item) {
+    return (item.linked_source_ids || []).map(id => {
+      const source = state.sources.find(source => source.id === id);
+      return smallButton(`Abrir ${source?.filename || source?.title || "archivo"} ↗`, () => showSource(id), "quiet");
+    });
+  }
+
+  function verificationSupports(result) {
+    return [...(result.supports || []), ...(result.candidate_documents || [])
+      .flatMap(source => (source.chunks || []).map(chunk => ({ ...source, ...chunk })))];
+  }
+
+  function checkItem(item, result) {
+    const code = evidenceLabels[item.state] ? item.state : "confirmation_pending";
+    const shared = (state.mapping?.shared_checks || []).find(check => check.check_key === item.check_key);
+    return el("li", { className: "evidence-check" },
+      stateBadge(code),
+      el("p", {}, textOf(item)),
+      item.reason_code === "search_incomplete"
+        ? el("p", { className: "small muted" }, "Búsqueda local por completar. Aún no se puede afirmar que falte el documento.") : null,
+      code === "document_missing"
+        ? el("p", { className: "small muted" }, `Alcance: ${result.search_audit?.scope || "catálogo local consultado"}. Este resultado no acredita inexistencia en otros sistemas.`) : null,
+      shared?.request_ids.length > 1
+        ? el("p", { className: "small muted" }, `Comprobación compartida por ${shared.request_ids.length} preguntas; se conserva su aplicación a cada una.`) : null,
+      el("div", { className: "button-group" }, checkSourceLinks(item)),
+      verifications.checkAction(item, [result.request_id], verificationSupports(result)),
+    );
+  }
+
+  function sharedChecksView(checks, requests) {
+    const shared = checks.filter(item => item.request_ids?.length > 1 && item.stage !== "fulfillment");
+    if (!shared.length) return null;
+    const unresolved = item => item.applications?.some(application => application.resolution?.status !== "resolved");
+    return el("details", { className: "shared-checks" },
+      el("summary", {}, `Comprobaciones compartidas · ${shared.filter(unresolved).length} pendientes de ${shared.length}`),
+      el("p", { className: "small muted" }, "Una comprobación sobre el mismo documento se agrupa aquí. Cada pregunta conserva su alcance y su resultado."),
+      shared.map(item => el("article", { className: "shared-check" },
+        el("p", {}, textOf(item)),
+        el("div", { className: "button-group" }, checkSourceLinks(item)),
+        verifications.checkAction(item, item.request_ids,
+          (state.mapping?.results || []).filter(result => item.request_ids.includes(result.request_id))
+            .flatMap(verificationSupports)),
+        el("div", { className: "shared-check-questions", "aria-label": "Preguntas relacionadas" },
+          item.request_ids.map(id => {
+            const request = requests.find(request => request.id === id);
+            const application = item.applications?.find(application => application.request_id === id);
+            const resolved = application?.resolution?.status === "resolved";
+            return smallButton(`${request?.label || id} · ${resolved ? "Aplicación registrada" : "Pendiente"}`,
+              () => selectRequest(id), "quiet", { title: request?.title || id });
+          })))),
+    );
   }
 
   function resultView(result) {
@@ -818,28 +921,35 @@ export function createSources({
     const body = el(
       "div",
       { className: "evidence-result" },
-      el(
-        "span",
-        {
-          className: `source-tag ${missing.length || result.status !== "references_found" ? "pending" : "reviewed"}`,
-        },
-        statusLabels[result.status] || "Por revisar",
-      ),
+      el("div", { className: "evidence-state-badges", "aria-label": "Estados de esta solicitud" },
+        evidenceStates(result).map(code => stateBadge(code))),
     );
     if (missing.length)
       body.append(
         el(
           "div",
           { className: "evidence-missing" },
-          el("h4", {}, "Qué hace falta comprobar o aportar"),
+          el("h4", {}, "Comprobaciones y búsquedas pendientes"),
           el(
             "ul",
             {},
-            missing.map((item) => el("li", {}, textOf(item),
-              (item.linked_source_ids || []).map(id => smallButton("Abrir archivo para cotejo ↗", () => showSource(id), "quiet")))),
+            missing.map(item => checkItem(item, result)),
           ),
         ),
       );
+    const resolved = (result.checks || []).filter(item => item.resolution?.status === "resolved");
+    if (resolved.length)
+      body.append(el("details", { className: "evidence-resolved" },
+        el("summary", {}, `Comprobaciones aplicadas a esta pregunta · ${resolved.length}`),
+        resolved.map(item => el("div", { className: "evidence-check" },
+          el("p", {}, textOf(item)),
+          el("p", { className: "small muted" }, `Aplicación registrada por ${item.resolution.recorded_by || "el responsable registrado"}. ${item.resolution.basis || ""}`),
+          el("div", { className: "button-group" }, checkSourceLinks(item))))));
+    if (result.actions?.length)
+      body.append(el("details", { className: "evidence-actions" },
+        el("summary", {}, `Actuaciones para completar la respuesta · ${result.actions.length}`),
+        el("p", { className: "small muted" }, "Estas tareas corresponden a la preparación o entrega de esta respuesta. Se conservan para su cumplimiento y no se cuentan como evidencia faltante."),
+        el("ul", {}, result.actions.map(item => el("li", {}, textOf(item))))));
     body.append(
       el(
         "p",
@@ -862,7 +972,9 @@ export function createSources({
         el(
           "p",
           { className: "source-empty-small" },
-          "No encontramos fragmentos pertinentes en los documentos consultados. Esto no demuestra que el documento o la información no existan.",
+          result.status === "error" || result.evidence_states?.includes("analysis_error")
+            ? "No se pudo completar la evaluación de los fragmentos. Reintenta la búsqueda para recuperar el avance; este error no indica que falten documentos o información."
+            : "No encontramos fragmentos pertinentes en los documentos consultados. Esto no demuestra que el documento o la información no existan.",
         ),
       );
     const groups = new Map();
@@ -963,6 +1075,7 @@ export function createSources({
   }
 
   function uploadDialog(previous = null) {
+    if (uploadEvidence && previous?.category !== 'previous_response') return uploadEvidence(previous);
     const { modal, close } = dialog(
       previous ? "Agregar una nueva versión" : "Agregar una fuente",
     );
@@ -992,7 +1105,7 @@ export function createSources({
     const file = el("input", {
       type: "file",
       name: "file",
-      accept: ".pdf,.docx,.txt",
+      accept: ".pdf,.docx,.txt,.png,.jpg,.jpeg",
       required: true,
     });
     const scope = el("p", { className: "upload-scope" });
@@ -1029,9 +1142,9 @@ export function createSources({
             "Carga el archivo y registra su procedencia. Después podrás comprobar la lectura y registrar la revisión.",
           ),
       field(
-        "Archivo PDF, DOCX o TXT",
+        "Archivo PDF, DOCX, TXT o imagen PNG/JPG",
         file,
-        "Hasta 20 MB. PDF: hasta 300 páginas. En DOCX se lee el cuerpo del documento; si necesitas encabezados, pies o anotaciones, carga una copia en PDF.",
+        "Hasta 20 MB. PDF: hasta 300 páginas. Las imágenes requieren cotejar la lectura automática. En DOCX se lee el cuerpo del documento; si necesitas encabezados, pies o anotaciones, carga una copia en PDF.",
       ),
       field("Nombre para reconocer la fuente", title),
       field("Función del documento", category),

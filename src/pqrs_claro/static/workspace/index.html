@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gestión de Peticiones · Integración alternativa</title><link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/styles.css"><link rel="stylesheet" href="/static/institutional.css">
+  <link rel="stylesheet" href="/static/workspace/workspace.css"><link rel="stylesheet" href="/static/workspace/split-pane.css">
+  <link rel="stylesheet" href="/static/evidence-upload.css">
+  <script type="module" src="/static/workspace/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Ir al expediente</a>
+  <header class="app-header"><a class="brand" href="/" aria-label="Gestión de Peticiones, inicio"><img class="university-logo" src="/static/assets/udea-ingenieria.png" width="437" height="131" alt="Universidad de Antioquia · Facultad de Ingeniería"><span class="brand-copy"><strong>Gestión de Peticiones</strong><span>Atención y respuesta institucional</span></span></a><div class="header-status"><a class="demo-label" href="http://127.0.0.1:8772/">Volver al recorrido de trabajo ↗</a><span id="connection-state" class="connection-state">Conectando…</span></div></header>
+  <div class="app-layout">
+    <aside class="case-sidebar" aria-label="Espacio de trabajo"><div class="rail-tools"><button id="workspace-toggle" class="workspace-toggle" aria-label="Abrir espacio de trabajo" aria-controls="workspace-menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button></div>
+      <div id="workspace-menu" hidden><p class="sidebar-label">Espacio de trabajo</p><button id="new-case" class="button button-primary new-case">＋ Nueva petición</button><button id="open-library" class="button button-quiet library-nav">Biblioteca de fuentes</button>
+      <details id="sidebar-cases" class="sidebar-cases" open><summary class="sidebar-heading"><span>Mis expedientes</span><span id="case-count" class="count">0</span></summary><div id="case-list" class="case-list"></div></details>
+      <div class="sidebar-foot"><span>Guardado en este equipo</span><a id="previous-interface" href="/anterior">Abrir interfaz anterior ↗</a></div></div>
+    </aside>
+    <main id="workspace" tabindex="-1">
+      <p id="validation-banner" class="warning-box" hidden>Copia de prueba: los cambios se guardan separados del expediente original.</p>
+      <nav class="journey" aria-label="Etapas del expediente"><button data-stage="1"><span>1</span> Entender la petición</button><button data-stage="2"><span>2</span> Preparar las respuestas</button><button data-stage="3"><span>3</span> Revisar el oficio</button></nav>
+      <div class="workspace-heading"><div><p class="eyebrow" id="workspace-kicker">INICIO</p><h1>Gestión de Peticiones</h1><p class="page-intro">Carga una petición o continúa un expediente.</p></div></div>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div><div id="work-content"></div>
+      <footer class="scope-note">Las fuentes y decisiones quedan en el expediente. La firma y el envío siguen el trámite institucional.</footer>
+    </main>
+  </div>
+  <dialog id="drawer" aria-labelledby="drawer-title"><div class="drawer-head"><h2 id="drawer-title">Agregar evidencia</h2><button id="close" aria-label="Cerrar panel">✕</button></div><div id="drawer-body"></div></dialog>
+  <input id="file-picker" type="file" accept=".pdf,application/pdf" aria-label="Documento original en PDF" hidden>
+  <noscript>Activa JavaScript para trabajar con los expedientes.</noscript>
+</body>
+</html>

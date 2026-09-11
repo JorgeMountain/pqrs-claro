@@ -279,7 +279,9 @@ def test_api_keeps_unsupported_original_downloadable_and_uses_collection_summary
     assert detail["pages"] == []
     assert detail["source"]["extraction_status"] == "unsupported"
     result = client.get("/api/source-collections").json()
-    assert result["collections"] == [collection()]
+    assert result["collections"] == [
+        {**collection(), "extraction_counts": {"unsupported": 1}}
+    ]
     assert result["linked_collection_ids"] == []
 
 
@@ -329,6 +331,33 @@ def test_collection_routes_reject_unknown_case_without_linking(history_app):
     )
     assert response.status_code == 404
     assert app.state.library.linked_collections("missing") == []
+
+
+def test_uploaded_case_defaults_to_all_collections_and_keeps_manual_selection(history_app):
+    app, client, _ = history_app
+    library = app.state.library
+    library.save_collection(collection("historia-b"))
+    source, _ = add(HistoryImporter(library, "historia-a"))
+    pdf = client.get("/api/demo.pdf").content
+
+    result = client.post("/api/cases", files={"file": ("nueva.pdf", pdf, "application/pdf")})
+    assert result.status_code == 201
+    case_id = result.json()["id"]
+    groups = client.get("/api/source-collections", params={"case_id": case_id}).json()
+    assert groups["linked_collection_ids"] == ["historia-a", "historia-b"]
+    assert source["id"] in [s["id"] for s in library.eligible(case_id)]
+
+    path = f"/api/cases/{case_id}/source-collections"
+    assert client.put(path, json={"collection_ids": []}).status_code == 200
+    assert client.get("/api/source-collections", params={"case_id": case_id}).json()["linked_collection_ids"] == []
+    assert library.eligible(case_id) == []
+
+    # Newly available collections apply to the next upload, without resetting a saved choice.
+    library.save_collection(collection("historia-c"))
+    newer = client.post("/api/cases", files={"file": ("otra.pdf", pdf, "application/pdf")})
+    assert newer.status_code == 201
+    assert library.linked_collections(newer.json()["id"]) == ["historia-a", "historia-b", "historia-c"]
+    assert library.linked_collections(case_id) == []
 
 
 def test_human_review_documents_its_scope_without_declaring_the_file_issued(library):

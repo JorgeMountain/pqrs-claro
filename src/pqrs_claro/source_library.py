@@ -6,6 +6,7 @@ import sqlite3
 import textwrap
 import threading
 import zipfile
+from collections import Counter
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +14,7 @@ from uuid import uuid4
 
 import pymupdf
 
+from .image_ocr import IMAGE_FORMATS, normalized_image_png
 from .models import DomainError
 from .storage import now, write_original
 
@@ -29,9 +31,28 @@ def digest(value):
 
 
 def read_source(path, pdf_extractor):
-    """PDF conserva páginas; DOCX y TXT conservan secciones, nunca páginas inventadas."""
+    """PDF conserva páginas; DOCX, TXT e imágenes conservan secciones trazables."""
     path = Path(path)
-    if path.suffix == ".pdf":
+    suffix = path.suffix.lower()
+    if suffix in IMAGE_FORMATS:
+        provider = pdf_extractor.ocr_provider
+        if provider is None:
+            raise DomainError("La imagen necesita un motor OCR local disponible en el equipo.")
+        capabilities = provider.probe() if hasattr(provider, "probe") else {}
+        png, _ = normalized_image_png(
+            path.read_bytes(),
+            suffix,
+            max_dimension=min(3200, capabilities.get("max_dimension", 3200)),
+        )
+        text = provider(png)
+        if not isinstance(text, str) or len("".join(text.split())) < 8:
+            raise DomainError("La imagen no pudo transcribirse; adjunta una copia más clara.")
+        text = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+        if len(text) > MAX_SOURCE_TEXT:
+            raise DomainError("La fuente supera dos millones de caracteres.")
+        pages = [dict(number=1, text=text, method="ocr", needs_review=True)]
+        kind = "section"
+    elif suffix == ".pdf":
         try:
             with pymupdf.open(path) as doc:
                 if not doc.is_pdf or doc.needs_pass or not 1 <= len(doc) <= MAX_SOURCE_PAGES:
@@ -50,7 +71,7 @@ def read_source(path, pdf_extractor):
             raise DomainError("No se pudo leer el PDF de la fuente.") from None
         kind = "page"
     else:
-        if path.suffix == ".docx":
+        if suffix == ".docx":
             from docx import Document
 
             try:
@@ -220,25 +241,32 @@ class SourceLibrary:
             raise DomainError("El original cambió fuera de la biblioteca. Carga una nueva versión.")
         return path
 
-    def add(self, filename, data, *, title, category, origin, case_id=None, document_id=None):
+    def add(self, filename, data, *, title, category, origin, case_id=None, document_id=None,
+            retain_unreadable=False, collection_id=None):
         filename = Path(filename.replace("\\", "/")).name[:180]
         extension = Path(filename).suffix.lower()
-        if extension not in {".pdf", ".docx", ".txt"}:
-            raise DomainError("Selecciona una fuente PDF, DOCX o TXT.")
+        if extension not in {".pdf", ".docx", ".txt", *IMAGE_FORMATS}:
+            raise DomainError("Selecciona una fuente PDF, DOCX, TXT, PNG o JPG.")
         if not data or len(data) > MAX_SOURCE_BYTES:
             raise DomainError("Selecciona una fuente de hasta 20 MB.")
-        if category not in CATEGORIES or not title.strip() or not origin.strip():
+        historical = category in {"historical_response", "historical_attachment"}
+        if (category not in CATEGORIES and not historical) or not title.strip() or not origin.strip():
             raise DomainError("Indica título, tipo y procedencia de la fuente.")
+        if historical and not collection_id:
+            raise DomainError("Los antecedentes necesitan una colección de procedencia.")
         if category == "case_evidence" and not case_id:
             raise DomainError("Un soporte del caso debe asociarse a un expediente.")
         sha = hashlib.sha256(data).hexdigest()
         with self.lock:
+            if collection_id and collection_id not in {c['id'] for c in self.collections()}:
+                raise KeyError("Colección no encontrada.")
             previous = [s for s in self.list(case_id) if s["document_id"] == document_id]
             if document_id and not previous:
                 raise KeyError("Documento no encontrado.")
             if previous:
                 last = max(previous, key=lambda s: s["version"])
-                if last["case_id"] != case_id or last["category"] != category:
+                if (last["case_id"] != case_id or last["category"] != category
+                        or last.get("collection_id") != collection_id):
                     raise DomainError(
                         "La nueva versión debe conservar el tipo y expediente del documento."
                     )
@@ -250,7 +278,14 @@ class SourceLibrary:
             path = folder / ("original" + extension)
             write_original(path, data)
             try:
-                pages, kind = read_source(path, self.pdf_extractor)
+                extraction_error = None
+                try:
+                    pages, kind = read_source(path, self.pdf_extractor)
+                except DomainError as exc:
+                    if not retain_unreadable:
+                        raise
+                    pages, kind = [], "page" if extension == ".pdf" else "section"
+                    extraction_error = str(exc)
                 source = dict(
                     id=source_id,
                     document_id=document_id or uuid4().hex,
@@ -270,6 +305,24 @@ class SourceLibrary:
                     page_count=len(pages),
                     location_kind=kind,
                 )
+                if collection_id:
+                    source.update(collection_id=collection_id,
+                                  document_status="unknown", verification_status="pending")
+                if extraction_error:
+                    source.update(extraction_status="error", extraction_error=extraction_error,
+                                  extraction_note=extraction_error)
+                if extension in IMAGE_FORMATS and not extraction_error:
+                    provider = self.pdf_extractor.ocr_provider
+                    source.update(
+                        extraction_status="ready",
+                        extraction_revision=1,
+                        extracted_at=now(),
+                        extraction_engine=provider.probe() if hasattr(provider, "probe") else {},
+                        extraction_note=(
+                            "Imagen leída con OCR en la sección 1; la transcripción requiere "
+                            "cotejo con el original, especialmente nombres, cifras y tablas."
+                        ),
+                    )
                 with self.connect() as conn:
                     conn.execute(
                         "INSERT INTO sources VALUES (?,?,?,?,?)",
@@ -350,7 +403,21 @@ class SourceLibrary:
             rows = conn.execute(
                 "SELECT body FROM source_collections ORDER BY rowid DESC"
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+            sources = [json.loads(row[0]) for row in conn.execute("SELECT body FROM sources")]
+        latest = {}
+        for source in sources:
+            key = source["document_id"]
+            latest[key] = max(latest.get(key, 0), source["version"])
+        counts = {}
+        for source in sources:
+            if source["version"] == latest[source["document_id"]] and source.get("collection_id"):
+                counts.setdefault(source["collection_id"], Counter()).update(
+                    [source.get("extraction_status", "ready")]
+                )
+        collections = [json.loads(row[0]) for row in rows]
+        for collection in collections:
+            collection["extraction_counts"] = dict(counts.get(collection["id"], {}))
+        return collections
 
     def save_collection(self, collection):
         with self.connect() as conn:

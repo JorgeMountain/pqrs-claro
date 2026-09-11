@@ -10,6 +10,7 @@ import pymupdf
 import pytest
 from fastapi.testclient import TestClient
 
+from pqrs_claro import source_service
 from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
 from pqrs_claro.extraction import PDFExtractor
@@ -172,6 +173,59 @@ def start_search(client, case):
     )
     assert response.status_code == 202, response.text
     return response.json()
+
+
+def test_repaired_semantic_channel_retrieves_again_instead_of_reusing_fallback_checkpoint(
+    source_app, pdf_bytes, monkeypatch
+):
+    app, client, assessor, settings = source_app
+    model_path = (settings.data_dir / "semantic" / "models" / source_service.MODEL_REVISION
+                  / source_service.MODEL_FILE)
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"fixture: no real model")
+    instances = []
+
+    class RetrySemantic:
+        def __init__(self, _path):
+            self.warning = "Fallo local simulado" if not instances else None
+            self.diagnostics = {}
+            instances.append(self)
+
+        def prepare(self, chunks, progress=None):
+            return not self.warning
+
+        def rank(self, query, eligible, limit):
+            return []
+
+    monkeypatch.setattr(source_service, "SemanticIndex", RetrySemantic)
+    case = make_case(client, pdf_bytes)
+    assert upload_source(client).status_code == 201
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    assert first["retrieval_warning"]
+    start_search(client, case)
+    second = wait_search(app, client, case["id"])
+    assert second["id"] != first["id"]
+    assert not second["retrieval_warning"]
+    assert assessor.calls == {"P1":2,"P2":2}
+    assert second["retrieval_attempt"]
+
+
+def test_policy_change_does_not_reuse_completed_source_checkpoint(
+    source_app, pdf_bytes, monkeypatch
+):
+    app, client, assessor, _ = source_app
+    case = make_case(client, pdf_bytes)
+    assert upload_source(client).status_code == 201
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    monkeypatch.setattr(source_service, "SOURCE_ANALYSIS_VERSION",
+                        source_service.SOURCE_ANALYSIS_VERSION + 1)
+    assert client.get(f"/api/cases/{case['id']}/sources").json()["stale"]
+    start_search(client, case)
+    second = wait_search(app, client, case["id"])
+    assert first["analysis_fingerprint"] != second["analysis_fingerprint"]
+    assert assessor.calls == {"P1": 2, "P2": 2}
 
 
 def review_source(client, source_id, *, case_id=None, note="Contrastado con el original ficticio"):
@@ -383,3 +437,65 @@ def test_example_sources_are_idempotent_and_do_not_enter_other_cases(source_app,
             client.get(f"/api/sources/{source_id}", params={"case_id": ordinary["id"]}).status_code
             == 404
         )
+
+
+def test_three_parallel_requests_publish_in_order_and_retry_only_failure(source_app, pdf_bytes):
+    from copy import deepcopy
+    app, client, _, _ = source_app
+    case = make_case(client, pdf_bytes)
+    identification = deepcopy(case["identification"])
+    original = identification["requests"][0]
+    identification["requests"] = [{**deepcopy(original), "id": f"P{i}", "label": str(i)} for i in range(1, 6)]
+    case = app.state.store.update(case["id"], identification=identification)
+    assert upload_source(client).status_code == 201
+
+    class ConcurrentAssessor(FakeSourceAssessor):
+        def __init__(self):
+            super().__init__(fail_once="P4")
+            self.guard = threading.Lock()
+            self.gates = {f"P{i}": threading.Event() for i in range(1, 4)}
+            self.three = threading.Event()
+            self.concurrent = self.peak = 0
+        def assess(self, request, candidates):
+            with self.guard:
+                self.concurrent += 1
+                self.peak = max(self.peak, self.concurrent)
+                if self.concurrent == 3:
+                    self.three.set()
+            try:
+                if request["id"] in self.gates:
+                    assert self.gates[request["id"]].wait(8)
+                return super().assess(request, candidates)
+            finally:
+                with self.guard:
+                    self.concurrent -= 1
+
+    assessor = ConcurrentAssessor()
+    app.state.sources.assessor = assessor
+    try:
+        start_search(client, case)
+        assert assessor.three.wait(6), "Three independent assessments should overlap"
+        run = app.state.library.latest_run(case["id"])
+        assert list(run["request_states"].values()).count("searching") == 3
+        assert run["request_states"]["P5"] == "queued"
+        assessor.gates["P2"].set()
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            run = app.state.library.latest_run(case["id"])
+            if run["completed_count"] == 3:
+                break
+            time.sleep(.02)
+        assert [r["request_id"] for r in run["results"]] == ["P2", "P4", "P5"]
+        assert run["request_states"]["P1"] == "searching"
+    finally:
+        for gate in assessor.gates.values():
+            gate.set()
+    result = wait_search(app, client, case["id"])
+    assert assessor.peak == 3
+    assert [r["request_id"] for r in result["results"]] == ["P1", "P2", "P3", "P4", "P5"]
+    assert result["request_states"]["P4"] == "error"
+    assert result["status"] == "error"
+    start_search(client, case)
+    retried = wait_search(app, client, case["id"])
+    assert retried["status"] == "ready"
+    assert assessor.calls == Counter({"P1":1, "P2":1, "P3":1, "P4":2, "P5":1})

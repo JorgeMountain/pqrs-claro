@@ -13,7 +13,7 @@ from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
 from pqrs_claro.models import DomainError
 from pqrs_claro.review_engine import structural_checks, validate_review_input
-from pqrs_claro.review_service import input_hash
+from pqrs_claro.review_service import ReviewService, input_hash
 
 
 class FakeReviewEngine:
@@ -175,6 +175,9 @@ def test_edit_invalidate_check_and_approval_noop_preserves_and_history_immutable
     assert snapshot["status"] == "approved"
     no_op = save(client, case, approved).json()
     assert no_op == approved
+    explicit_default = deepcopy(approved["paragraphs"])
+    explicit_default[0]["office_section"] = "response"
+    assert save(client, case, approved, paragraphs=explicit_default).json() == approved
     paragraphs = deepcopy(approved["paragraphs"])
     paragraphs[0]["text"] += " Texto humano añadido."
     changed = save(client, case, approved, paragraphs=paragraphs).json()
@@ -191,6 +194,25 @@ def test_edit_invalidate_check_and_approval_noop_preserves_and_history_immutable
     assert history[0]["event"] == "edited" and history[0]["actor"] == "Revisora ficticia"
     assert any(h["body"]["approval"] for h in history)
     assert engine.calls == 1
+
+
+def test_office_section_change_invalidates_approval_and_preserves_previous_snapshot(review_app):
+    app, client, _, _ = review_app
+    case, _, row = prepare(app, client)
+    row = approve(client, case, assess(app, client, case, row)).json()
+    snapshot = client.get(url(case, "/approved")).json()
+    paragraphs = deepcopy(row["paragraphs"])
+    paragraphs[0]["office_section"] = "context"
+    changed = save(client, case, row, paragraphs=paragraphs).json()
+    assert changed["status"] == "editing"
+    assert changed["paragraphs"][0]["office_section"] == "context"
+    assert changed["paragraphs"][0]["text"] == row["paragraphs"][0]["text"]
+    assert changed["approval"] is None and changed["assessment"] is None
+    assert client.get(url(case, "/approved")).status_code == 409
+    assert (
+        app.state.reviews.store.approval(row["approval"]["id"])["snapshot_hash"]
+        == (snapshot["requests"][0]["snapshot_hash"])
+    )
 
 
 @pytest.mark.parametrize(
@@ -542,6 +564,32 @@ def test_stale_human_edit_and_fact_remain_saveable_without_allowing_assessment(r
     )
 
 
+def test_pending_decision_requires_current_sources_but_reopen_remains_available(review_app):
+    app, client, _, _ = review_app
+    case, source, row = prepare(
+        app, client, pending=[dict(kind="document", description="Falta el acta.")]
+    )
+    decision = dict(
+        pending_id=row["pending"][0]["id"], action="not_applicable",
+        note="Ya se solicitó en otro numeral.", cited_chunk_ids=[], cited_fact_ids=[],
+    )
+    saved = save(client, case, row, resolutions=[decision]).json()
+    assert saved["paragraphs"] == row["paragraphs"]
+    assert saved["pending"][0]["resolution"]["action"] == "not_applicable"
+    app.state.library.review(
+        source["id"], reviewed_by="Responsable", review_note="Cambio", validity="current"
+    )
+    saved = current(client, case)
+    rejected = save(client, case, saved, resolutions=[decision])
+    assert rejected.status_code == 409
+    assert "Las fuentes cambiaron" in rejected.json()["detail"]
+    decision.update(action="open", note="")
+    reopened = save(client, case, saved, resolutions=[decision])
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["pending"][0]["resolution"] is None
+    assert reopened.json()["paragraphs"] == row["paragraphs"]
+
+
 def test_cut_after_graph_approval_recovers_same_decision_without_provider_recall(
     review_app, monkeypatch
 ):
@@ -658,7 +706,11 @@ def test_candidate_added_during_sync_can_be_explicitly_cited_to_resolve_document
     assert synced["paragraphs"] == paragraphs and synced["facts"] == row["facts"]
     candidate = next(s for s in synced["available_supports"] if s["source_id"] == attachment["id"])
     assert candidate["origin_selection"] == "candidate" and candidate["quote"] == chunk["quote"]
-    assert len(synced["pending"]) == 2 and synced["pending"][0]["id"] == row["pending"][0]["id"]
+    assert len(synced["pending"]) == 1
+    assert synced["pending"][0]["description"] == "Precisar el alcance de la nueva acta."
+    assert synced["pending"][0]["id"] != row["pending"][0]["id"]
+    history = client.get(url(case, "/requests/P1/history")).json()["revisions"]
+    assert any(revision["body"]["pending"] == row["pending"] for revision in history)
     decisions = [
         dict(
             pending_id=item["id"],
@@ -674,3 +726,113 @@ def test_candidate_added_during_sync_can_be_explicitly_cited_to_resolve_document
     assessed = assess(app, client, case, saved)
     assert assessed["status"] == "ready", assessed
     assert approve(client, case, assessed).status_code == 200
+
+
+@pytest.mark.parametrize("changed", [None, "scope_key", "source_versions", "description"])
+def test_sync_reuses_resolution_only_for_same_check_scope_and_version(changed):
+    request = {"id": "P1", "description": "Aclarar el periodo del antecedente."}
+    item = {
+        "kind": "clarification",
+        "description": "Cotejar el periodo del antecedente.",
+        "check_key": "check-one",
+        "id": "check-one",
+        "reason_code": "applicability",
+        "stage": "evidence",
+        "state": "confirmation_pending",
+        "scope_key": "scope-1",
+        "request_ids": ["P1"],
+        "linked_source_ids": ["source-1"],
+        "linked_chunk_ids": ["chunk-1"],
+        "source_versions": [{"source_id": "source-1", "version": 1}],
+        "resolution": {"status": "open"},
+    }
+    finding = {"request_id": "P1", "supports": [], "missing": [item]}
+    first = ReviewService._pending([], finding, request=request)
+    resolution = {
+        "action": "resolved",
+        "note": "Se cotejó el periodo de este pasaje.",
+        "cited_chunk_ids": ["chunk-1"],
+        "cited_fact_ids": [],
+        "by": "Responsable ficticia",
+        "at": "2026-09-09T12:00:00Z",
+    }
+    first[0]["resolution"] = resolution
+    if changed:
+        item[changed] = {
+            "scope_key": "scope-2",
+            "description": "Cotejar otro hecho del antecedente.",
+            "source_versions": [{"source_id": "source-1", "version": 2}],
+        }[changed]
+    second = ReviewService._pending(first, finding, request=request)
+    assert second[0]["resolution"] == (None if changed else resolution)
+    assert second[0]["linked_source_ids"] == ["source-1"]
+    assert second[0]["source_versions"] == item["source_versions"]
+
+
+def test_sync_drops_resolved_source_check_even_if_old_draft_proposes_it_again():
+    item = {
+        "kind": "fact",
+        "description": "Confirmar el periodo.",
+        "check_key": "check-one",
+        "id": "check-one",
+        "stage": "evidence",
+        "scope_key": "scope-1",
+        "resolution": {"status": "resolved"},
+    }
+    finding = {"request_id": "P1", "missing": [], "checks": [item]}
+    old = [{**item, "resolution": None, "origins": ["draft"]}]
+    assert ReviewService._pending(old, finding, {"pending": [item]}) == []
+
+
+def test_future_signature_does_not_block_content_approval_or_claim_completion(review_app):
+    app, client, _, _ = review_app
+    action = dict(
+        kind="clarification",
+        description="Tramitar la firma de la respuesta aprobada.",
+        stage="fulfillment",
+        blocks_approval=False,
+    )
+    case, _, row = prepare(app, client, pending=[action])
+    assessed = assess(app, client, case, row)
+    assert assessed["status"] == "ready"
+    assert assessed["pending"][0]["resolution"] is None
+    result = approve(client, case, assessed)
+    assert result.status_code == 200, result.text
+    approved = result.json()
+    assert approved["pending"][0]["resolution"] is None
+    assert approved["paragraphs"] == row["paragraphs"]
+
+
+def test_parent_context_reaches_draft_engine_and_review_snapshot(review_app):
+    app, client, _, _ = review_app
+    case, _ = prepared_case(app, count=2)
+    identification = deepcopy(case["identification"])
+    identification["requests"][0].update(
+        title="Profesor del programa", description="Informar sobre la profesora Ana en 2015."
+    )
+    identification["requests"][1].update(
+        parent_id="P1", description="Confirmar si figuró como titular ese semestre."
+    )
+    case = app.state.store.update(case["id"], identification=identification)
+    ready_map(app, case)
+    seen = []
+    original_visit = app.state.drafts.engine.visit
+
+    def capture(phase, request):
+        seen.append((phase, deepcopy(request)))
+        original_visit(phase, request)
+
+    app.state.drafts.engine.visit = capture
+    assert generate(client, case).status_code == 202
+    wait_drafts(app, client, case)
+    child_calls = [request for _, request in seen if request["id"] == "P2"]
+    assert len(child_calls) == 3
+    for request in child_calls:
+        assert (
+            request["context"]["ancestors"][0]["description"]
+            == (identification["requests"][0]["description"])
+        )
+    response = client.post(url(case, "/start"), json={"version": case["version"]})
+    assert response.status_code == 200, response.text
+    child = next(row for row in response.json()["requests"] if row["request_id"] == "P2")
+    assert child["request_snapshot"]["context"] == child_calls[0]["context"]

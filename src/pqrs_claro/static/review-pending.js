@@ -1,6 +1,10 @@
 import { el, button, dateLabel } from "./ui.js";
 import { field, detail, references, observedDate } from "./review-fields.js";
 
+export function isFulfillment(item) {
+  return item.stage === "fulfillment" && item.blocks_approval === false;
+}
+
 export function effectiveResolution(item, local) {
   return (
     local.resolutions[item.id] ||
@@ -18,19 +22,20 @@ export function effectiveResolution(item, local) {
 export function pendingView(row, local, state, actions, disabled) {
   const pending = row.pending || [];
   const open = pending.filter(
-    (item) => effectiveResolution(item, local).action === "open",
+    (item) => !isFulfillment(item) && effectiveResolution(item, local).action === "open",
   ).length;
+  const later = pending.filter(isFulfillment).length;
   return el(
     "section",
     { className: "review-pending", "aria-label": "Qué falta resolver" },
     el(
       "div",
       { className: "response-section-heading" },
-      el("h4", {}, "1. Qué falta resolver"),
+      el("h4", {}, "1. Comprobaciones y actuaciones"),
       el(
         "span",
         { className: "source-tag pending" },
-        `${open} pendientes abiertos`,
+        `${open} ${open === 1 ? "comprobación abierta" : "comprobaciones abiertas"}${later ? ` · ${later} ${later === 1 ? "actuación posterior" : "actuaciones posteriores"}` : ""}`,
       ),
     ),
     el(
@@ -66,10 +71,17 @@ export function pendingView(row, local, state, actions, disabled) {
       );
       select.value = resolution.action;
       return detail(
-        `${index + 1}. ${item.description}`,
+        `${index + 1}. ${isFulfillment(item) ? "Actuación posterior: " : ""}${item.description}`,
         el(
           "div",
           { className: "review-pending-body" },
+          isFulfillment(item)
+            ? el(
+                "p",
+                { className: "small" },
+                "Esta actuación se realiza durante el trámite. Puede permanecer pendiente al aprobar el contenido; la aprobación no acredita su ejecución.",
+              )
+            : null,
           el(
             "p",
             { className: "small" },

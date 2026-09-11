@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from io import BytesIO
 
 import pymupdf
@@ -38,6 +39,22 @@ def pdf_bytes(page_count):
                 f"FUENTE FICTICIA. Requisitos y procedimiento de prueba. Pagina {number}.",
             )
         return document.tobytes()
+
+
+def test_collection_reading_counts_reflect_current_extraction_instead_of_import_totals(library):
+    library.save_collection({"id":"archivo", "name":"Archivo ficticio",
+                             "extraction_counts":{"pending":99}})
+    source = add_text(library)
+    source.update(collection_id="archivo", extraction_status="pending")
+    with library.connect() as connection:
+        connection.execute("UPDATE sources SET body=? WHERE id=?",
+                           (json.dumps(source),source["id"]))
+    assert library.collections()[0]["extraction_counts"] == {"pending":1}
+    source["extraction_status"] = "ready"
+    with library.connect() as connection:
+        connection.execute("UPDATE sources SET body=? WHERE id=?",
+                           (json.dumps(source),source["id"]))
+    assert library.collections()[0]["extraction_counts"] == {"ready":1}
 
 
 def test_txt_sections_keep_exact_text_and_all_chunk_references(library):

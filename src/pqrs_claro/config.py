@@ -17,6 +17,8 @@ class Settings:
     port: int = 8770
     max_upload_mb: int = 20
     max_pages: int = 40
+    source_concurrency: int = 3
+    draft_concurrency: int = 3
 
     @classmethod
     def load(cls):

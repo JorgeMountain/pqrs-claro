@@ -4,6 +4,7 @@ import {
   pendingView,
   factsView,
   effectiveResolution,
+  isFulfillment,
 } from "./review-pending.js";
 import {
   assessmentView,
@@ -17,7 +18,7 @@ const statusLabel = (status) =>
     checking: "Comprobando…",
     ready: "Lista para aprobar",
     needs_changes: "Requiere ajustes",
-    needs_evidence: "Falta respaldo",
+    needs_evidence: "Con comprobaciones pendientes",
     approved: "Aprobada",
     error: "Requiere atención",
     stale: "Actualizar fuentes",
@@ -31,12 +32,45 @@ function paragraphEditor(row, local, state, actions, disabled) {
     el(
       "p",
       { className: "small muted" },
-      "Cada párrafo conserva su propio respaldo. Selecciona fragmentos exactos o aportes atribuidos y revisa qué afirman realmente.",
+      "Cada párrafo conserva su propio respaldo. Selecciona fragmentos exactos o aportes atribuidos y revisa qué afirman realmente. Define dónde aparecerá en el oficio; cada numeral debe conservar una respuesta concreta. Cambiar su ubicación requiere guardar, comprobar y aprobar de nuevo.",
     ),
     local.paragraphs.map((paragraph, index) =>
       el(
         "div",
         { className: "review-paragraph" },
+        el(
+          "label",
+          {
+            className: "field",
+            for: `review-section-${row.request_id}-${index}`,
+          },
+          el("span", {}, "Ubicación en el oficio"),
+          el(
+            "select",
+            {
+              id: `review-section-${row.request_id}-${index}`,
+              disabled,
+              onChange: (event) => {
+                paragraph.office_section = event.target.value;
+                actions.changed(row, local, true);
+              },
+            },
+            [
+              ["response", "Respuesta al numeral"],
+              ["context", "Antecedentes compartidos"],
+              ["conclusion", "Conclusión"],
+            ].map(([value, label]) =>
+              el(
+                "option",
+                {
+                  value,
+                  selected: (paragraph.office_section ?? "response") === value,
+                },
+                label,
+              ),
+            ),
+          ),
+        ),
         field(
           `Párrafo ${index + 1}`,
           `review-paragraph-${index}`,
@@ -91,6 +125,7 @@ function paragraphEditor(row, local, state, actions, disabled) {
       () => {
         local.paragraphs.push({
           text: "",
+          office_section: "response",
           cited_chunk_ids: [],
           cited_fact_ids: [],
         });
@@ -386,9 +421,11 @@ export function reviewView({ state, drafts, mapping, actions }) {
             },
             rows.map((row) => {
               const local = actions.localFor(row);
-              const pending = (row.pending || []).filter(
+              const openItems = (row.pending || []).filter(
                 (item) => effectiveResolution(item, local).action === "open",
-              ).length;
+              );
+              const pending = openItems.filter((item) => !isFulfillment(item)).length;
+              const fulfillmentCount = openItems.filter(isFulfillment).length;
               return button(
                 [
                   el(
@@ -406,8 +443,15 @@ export function reviewView({ state, drafts, mapping, actions }) {
                   el(
                     "span",
                     { className: "small" },
-                    `${pending} pendientes abiertos`,
+                    `${pending} ${pending === 1 ? "comprobación abierta" : "comprobaciones abiertas"}`,
                   ),
+                  fulfillmentCount
+                    ? el(
+                        "span",
+                        { className: "small muted" },
+                        `${fulfillmentCount} ${fulfillmentCount === 1 ? "actuación posterior" : "actuaciones posteriores"}`,
+                      )
+                    : null,
                 ],
                 () => actions.select(row.request_id),
                 "quiet",

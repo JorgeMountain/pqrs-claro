@@ -42,7 +42,7 @@ Los documentos nuevos comienzan pendientes de revisión. La condición de revisa
 
 La recuperación inicial usa **BM25**, una búsqueda textual que ordena fragmentos según las palabras de la solicitud y su presencia en la biblioteca. Esa puntuación no es un porcentaje de certeza ni una conclusión sobre suficiencia.
 
-La búsqueda combina dos recorridos dentro de las fuentes permitidas para el expediente: coincidencias generales y pasajes de contestaciones históricas detectados a partir de expresiones explícitas como «damos respuesta a su solicitud». El marcador es un indicio de estructura, no una prueba de que el contenido posterior resuelva la petición. También se consideran indicios del tipo y número del documento solicitado para dar prioridad al archivo sobre correos o preguntas que lo mencionan.
+La búsqueda combina coincidencias textuales, contexto de la pregunta, identificadores, entidades y similitud semántica dentro de las fuentes permitidas para el expediente. Cuando encuentra una pregunta en una contestación histórica, incorpora sus párrafos de respuesta contiguos, conservando cada ubicación original. Los marcadores de respuesta son indicios de estructura, no pruebas de que el contenido resuelva la petición.
 
 Se recuperan hasta **24 fragmentos candidatos**, con control de repeticiones, y la IA puede seleccionar hasta **8 fragmentos de respaldo**. Encontrar el documento correcto y encontrar dentro de él el pasaje pertinente son comprobaciones distintas. El original y su referencia permanecen disponibles para la persona.
 
@@ -52,7 +52,7 @@ El rol `document` admite una respuesta histórica cuando se pide copia de ese mi
 
 La evaluación mantiene el periodo de los hechos consultados. Una petición nueva sobre 2015 debe contrastarse con los registros y antecedentes pertinentes de 2015. Revisar su aplicabilidad no supone exigir datos actuales o repetir comprobaciones ya documentadas sin una razón relacionada con la solicitud.
 
-Esta versión no usa embeddings. Antes de añadir búsqueda por significado se debe medir qué fuentes relevantes omite la búsqueda textual y comparar la mejora en casos con una referencia humana. Si una búsqueda no encuentra un acta, el resultado es “no se encontró en las fuentes disponibles”; no prueba que el acta no exista.
+La [recuperación actual](RECUPERACION.md) añade contexto de padres, hijos y numerales, consultas por identificador y entidad, embeddings multilingües locales y respuestas contiguas a preguntas encontradas en oficios. Se contrasta con una referencia documental independiente y se conservan como regresión los pasajes que ya se encontraban. Si una búsqueda no encuentra un acta, el resultado es “no se encontró en las fuentes disponibles”; no prueba que el acta no exista.
 
 ## Un ejercicio con Aula Abierta
 

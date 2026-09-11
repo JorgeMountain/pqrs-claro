@@ -1,5 +1,6 @@
 """Entrada web local: carga, consulta, corrección y confirmación de solicitudes."""
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,19 +12,26 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import ROOT, Settings
+from .document_view import document_view_router
 from .draft_api import draft_router
 from .draft_service import DraftService
+from .evidence_api import evidence_router
 from .extraction import OpenAIOCR, PDFExtractor
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
+from .preparation import PreparationService, preparation_router
+from .response_proposals import ResponseProposalService, response_proposal_router
 from .review_api import review_router
 from .review_service import ReviewService
 from .service import CaseService
 from .source_api import source_router
 from .source_library import SourceLibrary
 from .source_service import SourceService
+from .source_verification_api import source_verification_router
+from .source_verifications import SourceVerificationStore
 from .storage import CaseStore, Conflict
+from .windows_ocr import WindowsOCR
 
 
 class SaveIdentification(BaseModel):
@@ -58,18 +66,25 @@ def create_app(
     extractor=None,
     identifier=None,
     source_assessor=None,
+    source_extractor=None,
     draft_engine=None,
     review_engine=None,
     office_renderer=None,
+    proposal_engine=None,
 ):
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
-    source_extractor = PDFExtractor(
-        OpenAIOCR(settings.api_key, settings.model) if settings.api_key else None
-    )
+    source_ocr = None
+    if source_extractor is None:
+        source_ocr = WindowsOCR() if os.name == "nt" else (
+            OpenAIOCR(settings.api_key, settings.model) if settings.api_key else None
+        )
+        source_extractor = PDFExtractor(source_ocr)
     library = SourceLibrary(settings.data_dir, source_extractor)
-    sources_service = SourceService(settings, store, library, assessor=source_assessor)
+    verifications = SourceVerificationStore(settings.data_dir, library, store)
+    sources_service = SourceService(settings, store, library, assessor=source_assessor,
+                                    verifications=verifications)
     drafts_service = DraftService(settings, store, library, sources_service, engine=draft_engine)
     reviews_service = ReviewService(
         settings,
@@ -79,9 +94,16 @@ def create_app(
         drafts_service,
         engine=review_engine,
     )
+    drafts_service.reviews = reviews_service
     offices_service = OfficeService(
         settings, store, library, reviews_service, renderer=office_renderer
     )
+    preparation = PreparationService(
+        store, service, sources_service, drafts_service, reviews_service
+    )
+    reviews_service.preparation = preparation
+
+    proposals = ResponseProposalService(settings, reviews_service, engine=proposal_engine)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -90,20 +112,34 @@ def create_app(
         drafts_service.recover()
         reviews_service.recover()
         offices_service.recover()
+        preparation.recover()
+        proposals.recover()
         yield
+        proposals.close()
+        preparation.close()
         service.close()
         sources_service.close()
         drafts_service.close()
         reviews_service.close()
         offices_service.close()
+        if source_ocr is not None and hasattr(source_ocr, "close"):
+            source_ocr.close()
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
     app.state.library, app.state.sources = library, sources_service
+    app.state.verifications = verifications
     app.state.drafts = drafts_service
     app.state.reviews = reviews_service
     app.state.offices = offices_service
+    app.state.proposals = proposals
+    app.include_router(response_proposal_router(proposals))
+    app.state.preparation = preparation
+    app.include_router(preparation_router(preparation))
     app.include_router(source_router(library, sources_service, store))
+    app.include_router(document_view_router(store))
+    app.include_router(evidence_router(library, sources_service, store))
+    app.include_router(source_verification_router(verifications, sources_service))
     app.include_router(draft_router(drafts_service))
     app.include_router(review_router(reviews_service))
     app.include_router(office_router(offices_service))
@@ -150,6 +186,7 @@ def create_app(
     def config():
         return dict(
             ready=bool(settings.api_key),
+            validation_mode=settings.data_dir.resolve().is_relative_to(ROOT / "output" / "qa"),
             model=settings.model,
             max_upload_mb=settings.max_upload_mb,
             max_pages=settings.max_pages,
@@ -159,13 +196,18 @@ def create_app(
     def list_cases():
         return store.list()
 
+    def create_case(filename, data):
+        case = store.create(filename, data)
+        library.link_collections(case["id"], [item["id"] for item in library.collections()])
+        return case
+
     @app.post("/api/cases", status_code=201)
     async def upload(file: UploadFile = File(...)):
         try:
             data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
             check_pdf(data, settings)
             filename = Path((file.filename or "peticion.pdf").replace("\\", "/")).name[:180]
-            return store.create(filename, data)
+            return create_case(filename, data)
         finally:
             await file.close()
 
@@ -179,7 +221,7 @@ def create_app(
     def demo():
         data = (ROOT / "examples" / "peticion_ejemplo.pdf").read_bytes()
         check_pdf(data, settings)
-        case = store.create("Ejemplo ficticio · tres solicitudes.pdf", data)
+        case = create_case("Ejemplo ficticio · tres solicitudes.pdf", data)
         return service.start(case["id"])
 
     @app.get("/api/cases/{case_id}")
@@ -223,6 +265,10 @@ def create_app(
 
     @app.get("/")
     def home():
+        return FileResponse(static / "workspace" / "index.html")
+
+    @app.get("/anterior")
+    def previous_interface():
         return FileResponse(static / "index.html")
 
     @app.get("/favicon.ico", include_in_schema=False)

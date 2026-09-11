@@ -10,7 +10,11 @@ import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from pqrs_claro.models import DomainError
-from pqrs_claro.source_assessment import OpenAISourceAssessor, _SourceSelection
+from pqrs_claro.source_assessment import (
+    OpenAISourceAssessor,
+    _declaration_passage,
+    _SourceSelection,
+)
 from pqrs_claro.source_graph import build_source_graph
 from pqrs_claro.source_retrieval import retrieve
 
@@ -66,6 +70,20 @@ def selection(**changes):
             **changes,
         }
     )
+
+
+def api_document_coverage(alias, original):
+    """Solo los dobles de Responses API deben emitir el contrato remoto actual."""
+    return {
+        "aspect": "Localización de la copia del acta 14 solicitada.",
+        "claim": f"{alias} contiene el encabezado del acta 14 del comité de prácticas.",
+        "use": "document_delivery",
+        "citations": [{"chunk_id": alias, "quote": original["quote"]}],
+        "explanation": (
+            f"{alias} identifica el archivo solicitado mediante su encabezado. "
+            "La localización del archivo no acredita su entrega al peticionario."
+        ),
+    }
 
 
 def test_retrieval_ranks_relevant_original_fragments_and_handles_accents():
@@ -130,7 +148,10 @@ def test_assessment_uses_structured_responses_and_literal_references():
 
     def fake_parse(**kwargs):
         calls.append(kwargs)
-        proposed = selection()
+        proposed = selection(
+            coverage_complete=True,
+            coverage=[api_document_coverage("C1", original)],
+        )
         proposed.supports[0].chunk_id = "C1"
         return SimpleNamespace(status="completed", output_parsed=proposed)
 
@@ -147,6 +168,9 @@ def test_assessment_uses_structured_responses_and_literal_references():
     assert result["supports"][0]["quote"] == original["quote"]
     assert result["supports"][0]["chunk_id"] == original["chunk_id"]
     assert result["supports"][0]["line_start"] == 1
+    assert result["sufficiency"]["coverage"][0]["citations"] == [
+        {"chunk_id": original["chunk_id"], "quote": original["quote"]}
+    ]
     assert result["status"] == "references_found"
     assert result["missing"] == []
     assert "preliminar" in result["summary"]
@@ -163,7 +187,13 @@ def test_assessor_maps_closed_aliases_to_exact_original_chunks_in_selection_orde
         )
         for index in range(count)
     ]
-    proposed = selection()
+    proposed = selection(
+        coverage_complete=True,
+        coverage=[
+            api_document_coverage(f"C{count}", originals[-1]),
+            api_document_coverage("C1", originals[0]),
+        ],
+    )
     proposed.supports[0].chunk_id = f"C{count}"
     proposed.supports.append(proposed.supports[0].model_copy(update={"chunk_id": "C1"}))
     calls = []
@@ -187,6 +217,10 @@ def test_assessor_maps_closed_aliases_to_exact_original_chunks_in_selection_orde
         originals[-1]["quote"], originals[0]["quote"]
     ]
     assert [support.chunk_id for support in proposed.supports] == [f"C{count}", "C1"]
+    assert [
+        item["citations"][0]["chunk_id"] for item in result["sufficiency"]["coverage"]
+    ] == [originals[-1]["chunk_id"], originals[0]["chunk_id"]]
+    assert [item.citations[0].chunk_id for item in proposed.coverage] == [f"C{count}", "C1"]
 
 
 @pytest.mark.parametrize(
@@ -260,8 +294,18 @@ def test_assessor_rejects_repeated_alias_instead_of_silently_deduplicating_selec
 def test_remote_aliases_in_prose_become_readable_file_and_page_references():
     proposed = selection(
         summary="La referencia C1 permite localizar el documento.",
-        missing=[{"kind": "clarification", "description": "Cotejar la identidad en C1."}],
+        missing=[{
+            "kind": "clarification",
+            "description": "Cotejar la identidad en C1.",
+            "reason_code": "source_identity",
+            "basis": "content_gap",
+            "source_chunk_ids": ["C1"],
+            "affected_claim": "Correspondencia entre C1 y la copia concreta solicitada.",
+            "why_unresolved": "Falta cotejar la identidad de C1 con el objeto de la solicitud.",
+        }],
         warnings=["C1 conserva su atribución."],
+        coverage_complete=False,
+        coverage=[api_document_coverage("C1", chunk())],
     )
     proposed.supports[0].chunk_id = "C1"
     proposed.supports[0].reason = "C1 contiene el acta solicitada."
@@ -381,7 +425,10 @@ def test_existing_document_pending_item_is_preserved_without_duplicate_guardrail
     norm = chunk(category="institutional_norm", validity="current", case_id=None)
     result = OpenAISourceAssessor._materialize(proposed, request(), [norm])
     assert result["status"] == "needs_evidence"
-    assert [item for item in result["missing"] if item["kind"] == "document"] == [pending]
+    documents = [item for item in result["missing"] if item["kind"] == "document"]
+    assert [{key: item[key] for key in ("kind", "description")} for item in documents] == [pending]
+    assert documents[0]["state"] == "confirmation_pending"
+    assert documents[0]["check_key"].startswith("check-")
     assert any("no sustituye" in warning for warning in result["warnings"])
 
 
@@ -403,6 +450,56 @@ def test_partial_model_output_is_not_saved_as_a_completed_assessment():
     )
     with pytest.raises(DomainError, match="parcial"):
         assessor.assess(request(), [chunk()])
+
+
+def test_declared_check_accepts_pdf_whitespace_and_keeps_original_passage():
+    source = chunk(category="historical_response", collection_id="history",
+                   document_status="issued", verification_status="reported_by_user",
+                   quote="Se verificó el periodo\n   con el plan docente de 2015.")
+    proposed = selection(
+        supports=[{"chunk_id": "acta-1", "role": "antecedent", "reason": "Relata un cotejo."}],
+        declared_checks=[{"chunk_id": "acta-1", "fact": "Se cotejó el periodo.",
+                          "declaration_quote": (
+                              "Se verificó el periodo con el plan docente de 2015."),
+                          "basis": "El oficio menciona el plan docente."}],
+    )
+    result = OpenAISourceAssessor._materialize(
+        proposed, request(description="Explique el periodo.", allowed_collection_ids=["history"]),
+        [source],
+    )
+    assert result["verifications"][0]["kind"] == "antecedent_declared"
+    assert result["verifications"][0]["passage"]["quote"] == source["quote"]
+    assert "human_review" not in str(result["verifications"])
+
+
+def test_numbered_selection_restores_full_context_but_never_accepts_invented_words():
+    original = ("2. Se cotejó el plan de trabajo de 2015.\n"
+                "3. El resultado no corresponde a periodos posteriores.\n"
+                "4. Las actas de notas son documentos independientes.")
+    selection = ("2. Se cotejó el plan de trabajo de 2015.\n"
+                 "4. Las actas de notas son documentos independientes.")
+    assert _declaration_passage(selection, original) == (True, True)
+    assert _declaration_passage(selection.replace("2015", "2019"), original) == (False, False)
+    reordered = ("4. Las actas de notas son documentos independientes. "
+                 "2. Se cotejó el plan de trabajo de 2015.")
+    assert _declaration_passage(reordered, original) == (False, False)
+
+
+def test_invalid_declared_check_does_not_discard_valid_supports_or_invent_a_fact():
+    source = chunk(category="historical_response", collection_id="history",
+                   document_status="issued", verification_status="reported_by_user")
+    proposed = selection(
+        supports=[{"chunk_id": "acta-1", "role": "antecedent", "reason": "Contenido anterior."}],
+        declared_checks=[{"chunk_id": "acta-1", "fact": "Dato inventado.",
+                          "declaration_quote": "Este texto no existe.", "basis": "No consta."}],
+    )
+    result = OpenAISourceAssessor._materialize(
+        proposed, request(description="Explique el periodo.", allowed_collection_ids=["history"]),
+        [source],
+    )
+    assert result["supports"][0]["quote"] == source["quote"]
+    assert result["verifications"] == []
+    assert set(result["evidence_states"]) == {"support_found", "analysis_error"}
 
 
 def test_source_graph_recovers_after_failure_without_repeating_retrieval(tmp_path):

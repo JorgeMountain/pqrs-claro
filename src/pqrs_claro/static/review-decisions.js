@@ -1,12 +1,13 @@
 import { el, button, dateLabel } from "./ui.js";
 import { field, detail } from "./review-fields.js";
-import { effectiveResolution } from "./review-pending.js";
+import { effectiveResolution, isFulfillment } from "./review-pending.js";
 
 const passedCheckLabels = {
   response_present: "Presencia de texto en la respuesta",
   paragraph_cited: "Citas de respaldo del párrafo",
   current_references: "Referencias vigentes del párrafo",
   pending_closed: "Decisión registrada sobre el pendiente",
+  fulfillment_deferred: "Actuación posterior separada de la aprobación del contenido",
   current_resolution_references: "Referencias vigentes de la decisión",
   document_resolution_has_file: "Respaldo documental de la resolución",
 };
@@ -121,13 +122,13 @@ export function approvalView(row, local, state, actions, disabled) {
     !row.stale &&
     !local.dirty &&
     !(row.pending || []).some(
-      (item) => effectiveResolution(item, local).action === "open",
+      (item) => !isFulfillment(item) && effectiveResolution(item, local).action === "open",
     );
   if (!ready)
     return el(
       "p",
       { className: "review-approval-help" },
-      "La aprobación se habilita cuando la versión guardada supera la comprobación y todos los pendientes tienen una decisión respaldada.",
+      "La aprobación se habilita cuando la versión guardada supera la comprobación y los pendientes de evidencia tienen una decisión respaldada. Las actuaciones posteriores, como firmar o enviar, pueden seguir pendientes.",
     );
   const set = (name) => (value) => {
     local.approval[name] = value;

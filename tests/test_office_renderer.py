@@ -196,7 +196,16 @@ def test_canonical_content_first_use_references_and_private_data_exclusion():
     before = deepcopy(value)
     doc = document(value)
     assert value == before
-    assert list(doc) == ["metadata", "requests", "references", "attachments", "prepared_by"]
+    assert list(doc) == [
+        "office_version",
+        "metadata",
+        "petition_subject",
+        "requests",
+        "references",
+        "attachments",
+        "prepared_by",
+        "blocks",
+    ]
     assert len(doc["references"]) == 1
     assert [r["request_id"] for r in doc["requests"]] == ["P1", "P2"]
     assert all(r["paragraphs"][0]["reference_numbers"] == [1] for r in doc["requests"])
@@ -350,7 +359,9 @@ def test_render_preserves_word_paragraphs_and_builds_real_pdf_with_same_text(tmp
     )
     texts = [p.text for p in Document(tmp_path / "oficio.docx").paragraphs]
     assert canonical["requests"][0]["paragraphs"][0]["text"] in texts
-    assert "Referencias: [1]." in texts
+    assert "[1]" not in texts
+    assert "Referencias" not in texts
+    assert canonical["references"]
     assert "Firmante ficticio" in texts
     assert all("Persona que revisó" not in p for p in texts)
     assert result["page_count"] >= 1

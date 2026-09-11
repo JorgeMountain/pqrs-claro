@@ -19,6 +19,8 @@ class ReviewParagraph(StrictModel):
     text: str = Field(min_length=1, max_length=6000)
     cited_chunk_ids: list[Reference] = Field(default_factory=list, max_length=8)
     cited_fact_ids: list[Reference] = Field(default_factory=list, max_length=8)
+    # Se revisa y aprueba junto al texto; el exportador no decide su función con IA.
+    office_section: Literal["response", "context", "conclusion"] = "response"
 
     @field_validator("text")
     @classmethod

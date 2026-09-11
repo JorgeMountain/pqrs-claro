@@ -68,11 +68,120 @@ export function letterheadView(letterhead, active = true) {
   );
 }
 
+function blockView(block) {
+  const kind = block.kind;
+  const attrs = {};
+  if (block.request_ids?.length)
+    attrs["data-request-ids"] = block.request_ids.join(" ");
+  if (kind === "heading") return el("h4", attrs, block.text);
+  if (kind === "institution") attrs.className = "office-institution";
+  else if (["response", "context", "conclusion"].includes(kind))
+    attrs.className = "office-exact-text";
+  else if (kind === "request") attrs.className = "office-request-description";
+  else if (["scope", "citation", "reference"].includes(kind))
+    attrs.className = "small muted";
+  const text = ["subject", "response_label", "signer"].includes(kind)
+    ? el("strong", {}, block.text)
+    : kind === "request"
+      ? el("em", {}, block.text)
+      : block.text;
+  return el("p", attrs, text);
+}
+
+function previewContent(document) {
+  if (Array.isArray(document.blocks)) return document.blocks.map(blockView);
+  // Las versiones anteriores a la secuencia canónica conservan su lectura.
+  const meta = document.metadata;
+  return [
+    el("p", { className: "office-institution" }, meta.institution),
+    meta.department ? el("p", {}, meta.department) : null,
+    el("p", {}, `${meta.city}, ${observedDate(meta.issue_date)}`),
+    meta.office_number
+      ? el("p", {}, `Oficio: ${meta.office_number}`)
+      : null,
+    el("p", {}, meta.recipient),
+    meta.recipient_contact ? el("p", {}, meta.recipient_contact) : null,
+    meta.petition_number
+      ? el("p", {}, `Petición: ${meta.petition_number}`)
+      : null,
+    el("p", {}, el("strong", {}, `Asunto: ${meta.subject}`)),
+    (document.requests || []).map((request) =>
+      el(
+        "section",
+        { className: "office-preview-request" },
+        el("h4", {}, `${request.label}. ${request.title}`),
+        el(
+          "p",
+          { className: "office-request-description" },
+          request.description,
+        ),
+        (request.paragraphs || []).map((paragraph) =>
+          el(
+            "div",
+            {},
+            el("p", { className: "office-exact-text" }, paragraph.text),
+            paragraph.reference_numbers?.length
+              ? el(
+                  "p",
+                  { className: "small muted" },
+                  `Referencias: ${paragraph.reference_numbers.map((number) => `[${number}]`).join(", ")}`,
+                )
+              : null,
+          ),
+        ),
+      ),
+    ),
+    el("p", {}, "Atentamente,"),
+    el(
+      "p",
+      {},
+      el("strong", {}, meta.signer_name),
+      el("br"),
+      meta.signer_role,
+    ),
+    document.references?.length
+      ? el(
+          "section",
+          {},
+          el("h4", {}, "Referencias"),
+          el(
+            "ol",
+            { className: "office-reference-list" },
+            document.references.map((ref) =>
+              el("li", { value: ref.number }, ref.text),
+            ),
+          ),
+        )
+      : null,
+    el(
+      "section",
+      {},
+      el("h4", {}, "Archivos que incluirá el paquete"),
+      document.attachments?.length
+        ? el(
+            "ul",
+            {},
+            document.attachments.map((item) =>
+              el(
+                "li",
+                {},
+                `${item.filename} · ${sizeLabel(item.size)}`,
+              ),
+            ),
+          )
+        : el(
+            "p",
+            {},
+            "El paquete incluirá el oficio en Word y PDF, sin anexos seleccionados.",
+          ),
+    ),
+  ];
+}
+
 export function textPreview(state, actions) {
   const preview = state.preview;
   const changed = actions.changedPreview();
   const document = preview?.document;
-  const meta = document?.metadata;
   return el(
     "section",
     {
@@ -84,100 +193,19 @@ export function textPreview(state, actions) {
       "p",
       { id: "office-preview-state", role: "status", className: "small muted" },
       !preview
-        ? "Completa los datos y prepara la vista previa. Aquí aparecerán el texto aprobado, sus referencias y los anexos elegidos."
+        ? "Completa los datos y prepara la vista previa. Aquí aparecerá el oficio tal como se entregará, con el texto aprobado y los anexos elegidos."
         : changed
           ? "Los datos, el membrete o las aprobaciones cambiaron. Prepara de nuevo la vista previa para generar esta versión."
-          : "Vista de lectura de los datos y del contenido aprobado; aquí no se editan las respuestas. La presentación final se podrá comprobar en el PDF generado.",
+          : "Esta vista conserva el texto aprobado. Los soportes permanecen en la revisión y no se imprimen como citas numeradas o bibliografía. Para cambiar una respuesta, vuelve a la revisión.",
     ),
     document?.letterhead ? letterheadView(document.letterhead, false) : null,
     document
       ? detail(
-          "Leer el oficio y sus referencias",
+          "Leer el oficio",
           el(
             "article",
             { className: "office-paper" },
-            el("p", { className: "office-institution" }, meta.institution),
-            meta.department ? el("p", {}, meta.department) : null,
-            el("p", {}, `${meta.city}, ${observedDate(meta.issue_date)}`),
-            meta.office_number
-              ? el("p", {}, `Oficio: ${meta.office_number}`)
-              : null,
-            el("p", {}, meta.recipient),
-            meta.recipient_contact ? el("p", {}, meta.recipient_contact) : null,
-            meta.petition_number
-              ? el("p", {}, `Petición: ${meta.petition_number}`)
-              : null,
-            el("p", {}, el("strong", {}, `Asunto: ${meta.subject}`)),
-            (document.requests || []).map((request) =>
-              el(
-                "section",
-                { className: "office-preview-request" },
-                el("h4", {}, `${request.label}. ${request.title}`),
-                el(
-                  "p",
-                  { className: "office-request-description" },
-                  request.description,
-                ),
-                (request.paragraphs || []).map((paragraph) =>
-                  el(
-                    "div",
-                    {},
-                    el("p", { className: "office-exact-text" }, paragraph.text),
-                    paragraph.reference_numbers?.length
-                      ? el(
-                          "p",
-                          { className: "small muted" },
-                          `Referencias: ${paragraph.reference_numbers.map((number) => `[${number}]`).join(", ")}`,
-                        )
-                      : null,
-                  ),
-                ),
-              ),
-            ),
-            el("p", {}, "Atentamente,"),
-            el(
-              "p",
-              {},
-              el("strong", {}, meta.signer_name),
-              el("br"),
-              meta.signer_role,
-            ),
-            document.references?.length
-              ? el(
-                  "section",
-                  {},
-                  el("h4", {}, "Referencias"),
-                  el(
-                    "ol",
-                    { className: "office-reference-list" },
-                    document.references.map((ref) =>
-                      el("li", { value: ref.number }, ref.text),
-                    ),
-                  ),
-                )
-              : null,
-            el(
-              "section",
-              {},
-              el("h4", {}, "Archivos que incluirá el paquete"),
-              document.attachments?.length
-                ? el(
-                    "ul",
-                    {},
-                    document.attachments.map((item) =>
-                      el(
-                        "li",
-                        {},
-                        `${item.filename} · ${sizeLabel(item.size)}`,
-                      ),
-                    ),
-                  )
-                : el(
-                    "p",
-                    {},
-                    "El paquete incluirá el oficio en Word y PDF, sin anexos seleccionados.",
-                  ),
-            ),
+            previewContent(document),
           ),
           "office-text-preview",
           state,
@@ -352,6 +380,7 @@ export function generatedView(state, actions) {
                       department: "Dependencia",
                       city: "Ciudad",
                       issue_date: "Fecha",
+                      received_date: "Fecha de recepción confirmada",
                       office_number: "Número de oficio",
                       petition_number: "Radicado de la petición",
                       recipient: "Destinatario",
@@ -364,7 +393,9 @@ export function generatedView(state, actions) {
                   el(
                     "dd",
                     {},
-                    key === "issue_date" ? observedDate(value) : value,
+                    ["issue_date", "received_date"].includes(key)
+                      ? observedDate(value)
+                      : value,
                   ),
                 )
               : null,

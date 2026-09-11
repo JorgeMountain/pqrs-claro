@@ -673,12 +673,12 @@ def test_active_letterhead_defaults_preview_and_manifest_keep_only_public_identi
     )
     ready = wait_office(app, client, case, generate(client, case, body))
     assert ready["status"] == "ready" and ready["letterhead"] == public
-    assert ready["office_version"] == 2
+    assert ready["office_version"] == 5
     assert renderer.template_paths == [template_path.resolve()]
     folder = settings.data_dir / "oficios" / case["id"] / ready["id"]
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["letterhead"] == public and manifest["document"]["letterhead"] == public
-    assert manifest["office_version"] == 2
+    assert manifest["office_version"] == 5
     assert_no_local_path([available, shown, ready, manifest["letterhead"]], settings.data_dir)
     assert generate(client, case, body)["id"] == ready["id"] and renderer.calls == 1
     assert app.state.reviews.approved(case["id"]) == before

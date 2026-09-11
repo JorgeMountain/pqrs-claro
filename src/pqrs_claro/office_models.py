@@ -39,6 +39,7 @@ class OfficeMetadata(StrictModel):
     department: str = Field(default="", max_length=200)
     city: str = Field(min_length=1, max_length=120)
     issue_date: date
+    received_date: date | None = None
     office_number: str = Field(default="", max_length=100)
     petition_number: str = Field(default="", max_length=100)
     recipient: str = Field(min_length=1, max_length=300)
@@ -53,6 +54,11 @@ class OfficeMetadata(StrictModel):
         if isinstance(value, str):
             return xml_text(value).strip()
         return value
+
+    @field_validator("received_date", mode="before")
+    @classmethod
+    def optional_received_date(cls, value):
+        return None if value == "" else value
 
 
 class OfficeInput(StrictModel):

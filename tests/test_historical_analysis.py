@@ -77,6 +77,10 @@ def materialize(source=None, request=None, proposed=None):
     )
 
 
+def missing_content(result):
+    return [{key: item[key] for key in ("kind", "description")} for item in result["missing"]]
+
+
 def test_retrieval_accepts_linked_history_but_keeps_legacy_style_excluded():
     sources = [
         historical(),
@@ -119,8 +123,9 @@ def test_response_reuses_exact_attributed_content_without_becoming_current_fact(
     for key in ("quote", "source_id", "historical_group", "radicados", "related_source_ids"):
         assert support[key] == original[key]
     assert support["role"] == "antecedent"
-    assert result["status"] == "needs_evidence"
-    assert any("persona y periodo" in item["description"] for item in result["missing"])
+    assert result["status"] == "references_found"
+    assert result["evidence_states"] == ["support_found"]
+    assert result["missing"] == []
     assert not any("quién verificó" in item["description"] for item in result["missing"])
     assert any("anexos mencionados" in warning for warning in result["warnings"])
 
@@ -156,12 +161,14 @@ def test_reported_verification_is_recorded_as_reported_and_does_not_count_as_rev
     )
     result = materialize(source)
     missing = " ".join(item["description"] for item in result["missing"])
-    assert "persona y periodo" in missing
+    assert "persona y periodo" not in missing
     assert "Revisar la procedencia y el contenido" not in missing
     assert "Documentar quién verificó" not in missing
     assert any("fue informada por el usuario" in warning for warning in result["warnings"])
     assert any("sin exigir repetir" in warning for warning in result["warnings"])
     assert result["supports"][0]["verification_status"] == "reported_by_user"
+    assert result["supports"][0]["review_status"] == "pending"
+    assert result["verifications"] == []
 
 
 def test_unselected_named_file_is_located_for_review_without_becoming_support():
@@ -219,7 +226,11 @@ def test_reference_or_different_year_does_not_cancel_a_missing_original(name, ca
     source = historical(filename=name, category=category)
     role = "historical_evidence" if category == "historical_attachment" else "antecedent"
     result = materialize(source, proposed=choice(role=role, missing=[pending]))
-    assert pending in result["missing"]
+    assert pending in missing_content(result)
+    item = next(item for item in result["missing"] if item["description"] == pending["description"])
+    assert item["linked_source_ids"] == []
+    assert item["state"] == "confirmation_pending"
+    assert item["reason_code"] == "search_incomplete"
 
 
 def test_copy_request_with_known_unselected_file_needs_identity_check_not_another_upload():
@@ -238,8 +249,14 @@ def test_draft_candidate_does_not_cancel_request_for_the_issued_version():
     pending = {"kind": "document", "description": "Aportar la versión expedida del oficio 765."}
     source = historical(filename="Oficio_765.pdf", document_status="draft")
     result = materialize(source, proposed=choice(missing=[pending]))
-    assert pending in result["missing"]
-    assert any("es un borrador" in item["description"] for item in result["missing"])
+    assert pending in missing_content(result)
+    issued = [item for item in result["missing"] if item["reason_code"] == "issued_version"]
+    assert len(issued) == 1
+    assert issued[0]["linked_source_ids"] == [source["source_id"]]
+    assert issued[0]["resolution"]["status"] == "open"
+    assert issued[0]["blocks_approval"] is True
+    assert result["supports"][0]["document_status"] == "draft"
+    assert any("es un borrador" in warning for warning in result["warnings"])
 
 
 def test_reconciliation_preserves_another_missing_numbered_document_in_same_item():
@@ -259,15 +276,63 @@ def test_reconciliation_preserves_another_missing_numbered_document_in_same_item
         ({"document_status": "draft"}, "es un borrador"),
         ({"document_status": "unknown"}, "versión expedida o a un documento de trabajo"),
         ({"filename": "Oficio_XXXX-2026.pdf", "document_status": "issued"}, "es un borrador"),
-        ({"verification_status": "pending"}, "Documentar quién verificó"),
-        ({"verification_note": ""}, "Completar el registro de verificación"),
-        ({"extraction_status": "partial"}, "extracción es parcial"),
+        ({"verification_status": "pending", "review_status": "pending"},
+         "Revisar la procedencia y el contenido"),
     ],
 )
-def test_drafts_unknown_verification_and_partial_extraction_stay_visible(changes, expected):
+def test_drafts_and_unreviewed_provenance_stay_visible(changes, expected):
     result = materialize(historical(**changes))
     assert result["status"] == "needs_evidence"
     assert any(expected in item["description"] for item in result["missing"])
+
+
+def test_partial_extraction_blocks_requested_complete_copy_but_not_a_readable_passage():
+    source = historical(extraction_status="partial")
+    partial = materialize(source)
+    assert partial["supports"][0]["extraction_status"] == "partial"
+    assert partial["missing"] == []
+    request = inquiry(description="Solicito copia íntegra del oficio 0123.")
+    complete_copy = materialize(source, request)
+    checks = [
+        item for item in complete_copy["missing"] if item["reason_code"] == "extraction_error"
+    ]
+    assert len(checks) == 1 and checks[0]["state"] == "analysis_error"
+    assert checks[0]["linked_source_ids"] == [source["source_id"]]
+    assert "extracción es parcial" in checks[0]["description"]
+
+
+@pytest.mark.parametrize("changes", [
+    {"verification_status": "pending"}, {"verification_note": ""},
+])
+def test_generic_review_metadata_never_invents_fact_verification_or_an_extra_gap(changes):
+    source = historical(**changes)
+    result = materialize(source)
+    assert result["supports"][0]["review_status"] == "reviewed"
+    assert result["missing"] == []
+    assert result["verifications"] == []
+    for key, value in changes.items():
+        assert result["supports"][0][key] == value
+
+
+def test_concrete_different_period_requires_check_even_when_antecedent_is_verified():
+    pending = {
+        "kind": "clarification",
+        "description": (
+            "Confirmar si la conclusión del Oficio 0123 del comité de prácticas, "
+            "documentada para 2015-1, aplica a la designación diferente de 2019-2."
+        ),
+    }
+    source = historical(quote="En el semestre 2015-1 el comité aprobó la plaza.")
+    request = inquiry(description="Explique la designación del semestre 2019-2.")
+    result = materialize(source, request, choice(missing=[pending]))
+    assert pending in missing_content(result)
+    assert result["evidence_states"] == ["support_found", "confirmation_pending"]
+    item = next(item for item in result["missing"] if item["description"] == pending["description"])
+    assert item["linked_source_ids"] == [source["source_id"]]
+    assert item["scope_key"] != "document"
+    assert item["request_ids"] == ["P1"]
+    assert item["resolution"]["status"] == "open"
+    assert result["supports"][0]["role"] == "antecedent"
 
 
 def test_response_mentioning_an_acta_and_relation_to_file_does_not_supply_the_file():
@@ -278,7 +343,7 @@ def test_response_mentioning_an_acta_and_relation_to_file_does_not_supply_the_fi
     assert any("no sustituye" in warning for warning in result["warnings"])
 
 
-def test_actual_historical_attachment_can_locate_copy_but_needs_correspondence_check():
+def test_actual_historical_attachment_locates_copy_and_keeps_future_delivery_visible():
     request = inquiry(title="Copia del acta", description="Solicito copia del acta de prácticas.")
     source = historical(
         category="historical_attachment",
@@ -288,7 +353,9 @@ def test_actual_historical_attachment_can_locate_copy_but_needs_correspondence_c
     )
     result = materialize(source, request, choice(role="document"))
     assert not any(item["kind"] == "document" for item in result["missing"])
-    assert any("persona y periodo" in item["description"] for item in result["missing"])
+    assert result["missing"] == []
+    assert result["evidence_states"] == ["support_found"]
+    assert any(item["reason_code"] == "document_delivery" for item in result["actions"])
     assert any("ni entrega de documentos" in warning for warning in result["warnings"])
 
 
@@ -370,7 +437,8 @@ def test_copy_of_the_requested_historical_office_is_located_without_certifying_i
     assert result["supports"][0]["quote"] == source["quote"]
     assert not any(item["kind"] == "document" for item in result["missing"])
     assert any("versión expedida" in item["description"] for item in result["missing"])
-    assert any("Documentar quién verificó" in item["description"] for item in result["missing"])
+    assert any(item["reason_code"] == "provenance" for item in result["missing"])
+    assert len([item for item in result["missing"] if item["reason_code"] == "provenance"]) == 1
     assert any("ni entrega de documentos" in warning for warning in result["warnings"])
     assert result["status"] == "needs_evidence"
 
@@ -416,7 +484,9 @@ def test_email_itself_can_be_located_when_it_is_the_requested_object():
     assert result["supports"][0]["role"] == "document"
     assert not any(item["kind"] == "document" for item in result["missing"])
     assert any("ni entrega de documentos" in warning for warning in result["warnings"])
-    assert result["status"] == "needs_evidence"
+    assert result["status"] == "references_found"
+    assert result["missing"] == []
+    assert any(item["reason_code"] == "document_delivery" for item in result["actions"])
 
 
 def test_the_same_email_does_not_locate_the_office_attached_to_it():
@@ -438,18 +508,22 @@ def test_the_same_email_does_not_locate_the_office_attached_to_it():
         "Solicito emitir una certificación sobre la titularidad docente durante 2015.",
     ],
 )
-def test_request_to_certify_keeps_certificate_pending_beyond_the_historical_finding(description):
+def test_request_to_certify_keeps_future_issuance_separate_from_evidence(description):
     source = historical(quote="El oficio afirma que existía soporte de titularidad en 2015-1.")
     result = materialize(source, inquiry(title="Titularidad docente", description=description))
     certificates = [
-        item for item in result["missing"]
-        if item["kind"] == "document" and "certificación" in item["description"]
+        item for item in result["actions"]
+        if item["reason_code"] == "certification_preparation"
     ]
     assert len(certificates) == 1
-    assert description in certificates[0]["description"]
-    assert "confirmar institucionalmente quién puede expedirla" in certificates[0]["description"]
+    assert certificates[0]["request_ids"] == ["P1"]
+    assert "autoridad competente" in certificates[0]["description"]
+    assert certificates[0]["stage"] == "fulfillment"
+    assert certificates[0]["blocks_approval"] is False
+    assert certificates[0]["resolution"]["status"] == "open"
     assert result["supports"][0]["role"] == "antecedent"
-    assert result["status"] == "needs_evidence"
+    assert result["missing"] == []
+    assert result["status"] == "references_found"
 
 
 def test_request_only_to_explain_the_historical_fact_does_not_demand_a_new_certificate():
@@ -462,7 +536,7 @@ def test_request_only_to_explain_the_historical_fact_does_not_demand_a_new_certi
     assert result["supports"][0]["role"] == "antecedent"
 
 
-def test_located_certificate_remains_subject_to_review_without_requesting_it_again():
+def test_located_prior_certificate_does_not_claim_a_new_certification_was_issued():
     source = historical(
         category="historical_attachment",
         title="Certificación de titularidad docente",
@@ -476,8 +550,11 @@ def test_located_certificate_remains_subject_to_review_without_requesting_it_aga
     )
     assert result["supports"][0]["role"] == "document"
     assert not any(item["kind"] == "document" for item in result["missing"])
-    assert any("persona y periodo" in item["description"] for item in result["missing"])
-    assert result["status"] == "needs_evidence"
+    assert result["missing"] == []
+    assert len(result["actions"]) == 1
+    assert result["actions"][0]["reason_code"] == "certification_preparation"
+    assert result["actions"][0]["resolution"]["status"] == "open"
+    assert result["status"] == "references_found"
 
 
 def test_assessor_checks_scope_before_transmitting_any_content_to_provider():

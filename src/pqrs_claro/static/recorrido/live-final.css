@@ -1,0 +1,31 @@
+/* El oficio comparte los servicios existentes y el estilo del recorrido. */
+.live-final{max-width:1150px;margin:auto}
+.live-final h1{font-size:clamp(1.6rem,3vw,2.25rem)}
+.live-final h2{font-size:1.35rem}.live-final h3{font-size:1.1rem}
+.live-final .final-review{margin:24px 0}
+.live-final .final-row{background:#fff;border:1px solid var(--line,#d9e1db);border-radius:10px;padding:16px 20px;margin:12px 0}
+.live-final .final-row>div:first-child{display:flex;gap:16px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.live-final .final-row details{margin:12px 0}
+.live-final .office-workspace{border-top:1px solid #d9e1db;padding-top:24px}
+.live-final .office-workspace section{margin:24px 0}
+.live-final .office-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
+.live-final .field{display:flex;flex-direction:column;gap:6px;margin:12px 0;min-width:0}
+.live-final .field input,.live-final .field textarea{width:100%;box-sizing:border-box;padding:10px 12px;font:inherit;border:1px solid #cbd6cd;border-radius:6px;background:#fff;color:inherit}
+.live-final .field input[readonly]{background:#eef3ee}
+.live-final .field-hint,.live-final .small{font-size:.875rem;line-height:1.5}
+.live-final .button-primary{background:#3c6741;color:#fff}
+.live-final .sources-heading,.live-final .response-section-heading,.live-final .office-page-controls,.live-final .office-downloads{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap}
+.live-final .office-letterhead,.live-final .warning-box{background:#eef3ee;border:1px solid #d9e1db;border-radius:8px;padding:16px;margin:16px 0}
+.live-final .office-letterhead p{margin:6px 0}
+.live-final .office-signer{border:1px solid #d9e1db;border-radius:8px;padding:12px 16px;margin:20px 0}
+.live-final .review-choice{display:flex;align-items:start;gap:12px;padding:12px 0}
+.live-final .review-choice small{display:block}
+.live-final .office-paper{background:#fff;border:1px solid #d9e1db;padding:clamp(16px,4vw,48px);max-width:850px;margin:16px auto;line-height:1.65}
+.live-final .office-exact-text{white-space:pre-wrap}
+.live-final .office-pdf-preview img{width:100%;height:auto;max-width:850px;display:block;margin:16px auto;border:1px solid #d9e1db}
+.live-final .office-downloads{justify-content:flex-start}
+.live-final .response-list-item{display:block;width:100%;text-align:left;margin:8px 0}
+.live-final .response-list-item span{display:block}
+@media(max-width:640px){.live-final .office-fields{grid-template-columns:1fr}.live-final .final-row{padding:14px}.live-final .card-footer{flex-wrap:wrap}}
+
+#final-approve input[name="actor"]{width:100%;padding:12px;border:1px solid var(--line);font:inherit}#final-approve .check{display:flex;gap:12px;align-items:start;margin:16px 0}#final-approve .check input{flex:0 0 auto;margin-top:5px}

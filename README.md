@@ -1,8 +1,12 @@
-# PQRS Claro
+# Gestión de Peticiones
 
 Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes y preparar, revisar, aprobar y documentar respuestas trazables por solicitud**.
 
 ## Empezar
+
+**Recorrido elegido para continuar el trabajo: http://127.0.0.1:8772.** Conservamos su diseño e interacción. Para iniciarlo o comprobar que sigue disponible, ejecuta `scripts/start-recorrido.ps1`. La biblioteca consulta documentos reales. «Cargar petición» y «Mis expedientes» permiten identificar solicitudes y, al confirmarlas, buscar fuentes y preparar respuestas automáticamente. Las respuestas reales ya se pueden editar y guardar desde sus tarjetas. «Actualizar con IA» propone ajustes basados en las decisiones registradas y permite comparar antes de aplicar o descartar. La demo original se conserva aparte; la revisión, aprobación por respuesta y generación de Word/PDF de expedientes reales están conectadas en «Revisar el oficio». [Preparación automática](docs/PREPARACION_AUTOMATICA.md). [Alcance de la biblioteca integrada](docs/BIBLIOTECA_RECORRIDO.md). La integración de 8770 se conserva como alternativa, no como sustituto aceptado.
+
+Para ejecutar la integración alternativa con los expedientes reales:
 
 ```powershell
 cd C:\Users\jorge\Desktop\AgenteO\pqrs-claro
@@ -10,6 +14,8 @@ cd C:\Users\jorge\Desktop\AgenteO\pqrs-claro
 ```
 
 Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza un PDF ficticio y llama a OpenAI de verdad. También puedes cargar tu propio PDF y pulsar Analizar. Selecciona una solicitud para contrastarla con la página original; corrige lo necesario, guarda y confirma la identificación.
+
+La integración de 8770 tiene tres etapas: **Entender la petición → Preparar las respuestas → Revisar el oficio**. Integra los expedientes y la biblioteca reales. La interfaz anterior se conserva en **http://127.0.0.1:8770/anterior**. Ambas utilizan los mismos datos; la anterior no es una copia aislada. Consulta [el alcance de esta integración y la decisión vigente de continuar en 8772](docs/INTERFAZ_PRINCIPAL.md).
 
 ## Qué incluye esta entrega
 
@@ -21,7 +27,7 @@ Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza
 - Parte 6: [revisión humana y aprobación](docs/FASE6.md), con edición, aportes escritos atribuidos, resolución de pendientes, reevaluación y aprobación de una versión concreta.
 - Parte 7: [oficio en Word y PDF](docs/FASE7.md), con datos de salida, vista previa, anexos seleccionados, comprobación de fidelidad e historial de generaciones.
 
-**Confirmar identificación** cierra el primer hito y permite buscar fuentes. Con un mapa actualizado, **5. Borradores** prepara las propuestas y **6. Revisar y aprobar** permite trabajar sobre ellas. **7. Generar oficio** prepara el Word, PDF y paquete de anexos desde las respuestas aprobadas. La aprobación local conserva el contenido revisado; esta entrega no calcula términos legales ni registra entregas documentales.
+**Confirmar identificación** cierra el primer hito. **Preparar las respuestas** busca las fuentes disponibles, prepara los borradores iniciales y abre su revisión. Si ya existen respuestas revisadas, actualiza el respaldo conservando esos textos. **Revisar respuesta** permite editar, resolver pendientes, comprobar y aprobar. **Revisar el oficio** prepara Word, PDF y anexos desde las versiones aprobadas. La aprobación local conserva el contenido revisado; esta entrega no calcula términos legales ni registra entregas documentales.
 
 Para practicar la fase 4, incorpora las fuentes ficticias del ejemplo después de confirmar sus solicitudes y ejecuta la búsqueda. Deben aparecer reglas para el procedimiento, un registro para recepción y estado, y un pendiente para la copia del acta. [FASE4.md](docs/FASE4.md) explica qué comprobar.
 
@@ -46,7 +52,7 @@ Los scripts usan el Python administrado por uv y las dependencias propias de `.r
 
 La clave existente se reutiliza con autorización, leyendo `../langgraph-pqrs/.env.local`. No se copia ni se registra. Se puede indicar otro archivo mediante `PQRS_CLARO_KEY_FILE`. La configuración propia opcional vive en `.env.local` (ignorada por Git); `.env.example` muestra las opciones sin secretos. Si no existe archivo, se admite `OPENAI_API_KEY` del entorno. El modelo se puede cambiar con `PQRS_CLARO_MODEL`.
 
-La identificación, el OCR, la evaluación de pertinencia, la redacción y las comprobaciones de respuestas usan OpenAI con `store=False`; el texto o la imagen necesarios se transmiten al proveedor. La generación del oficio aprobado es local y no llama a la IA. La recuperación inicial de fuentes usa BM25 local y todavía no incorpora embeddings. La aplicación escucha únicamente en `127.0.0.1`. No contiene un modo simulado de operación: si falta configuración o falla la IA, muestra el problema.
+La identificación, el OCR de peticiones, la evaluación de pertinencia, la redacción y las comprobaciones de respuestas usan OpenAI con `store=False`; el texto o la imagen necesarios se transmiten al proveedor. La biblioteca de fuentes usa OCR local en Windows. La generación del oficio aprobado también es local. La [recuperación de fuentes](docs/RECUPERACION.md) combina búsqueda textual, contexto, identificadores, entidades y embeddings multilingües locales, y recupera respuestas contiguas de los oficios. El modelo semántico se instala explícitamente según [su guía](docs/busqueda-semantica-local.md); si no está disponible, continúa la búsqueda textual con una advertencia. La aplicación escucha únicamente en `127.0.0.1`. No contiene un modo simulado de operación: si falta configuración o falla la IA, muestra el problema.
 
 ## Datos y límites
 

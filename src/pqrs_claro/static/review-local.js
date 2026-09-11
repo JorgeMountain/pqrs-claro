@@ -2,18 +2,23 @@ import { el } from "./ui.js";
 
 const prefix = "pqrs-claro-review-v1:";
 const blankFact = () => ({ text: "", author: "", basis: "", observed_at: "" });
+const withOfficeSections = (paragraphs) =>
+  paragraphs.map((paragraph) => ({
+    ...paragraph,
+    office_section: paragraph.office_section ?? "response",
+  }));
 export function makeLocal(row, previous = null) {
   return {
     request_id: row.request_id,
     label: row.label,
     title: row.title,
     revision: row.revision,
-    paragraphs: structuredClone(row.paragraphs || []),
+    paragraphs: withOfficeSections(structuredClone(row.paragraphs || [])),
     resolutions: {},
     edited_by: previous?.edited_by || "",
     fact: previous?.fact || blankFact(),
     approval:
-      previous?.revision === row.revision
+      !row.approval && previous?.revision === row.revision
         ? previous.approval || { approved_by: "", note: "", confirmed: false }
         : { approved_by: "", note: "", confirmed: false },
     dirty: false,
@@ -26,8 +31,10 @@ export function loadCaseLocals(caseId) {
     for (const key of Object.keys(sessionStorage)) {
       if (!key.startsWith(keyPrefix)) continue;
       const local = JSON.parse(sessionStorage.getItem(key));
-      if (local && Array.isArray(local.paragraphs) && isUnsent(local))
+      if (local && Array.isArray(local.paragraphs) && isUnsent(local)) {
+        local.paragraphs = withOfficeSections(local.paragraphs);
         saved.set(key.slice(keyPrefix.length), local);
+      }
     }
   } catch {
     /* Keep any entries already recovered. */
@@ -47,7 +54,10 @@ export function loadLocal(caseId, row) {
       sessionStorage.getItem(prefix + caseId + ":" + row.request_id),
     );
     if (saved && Array.isArray(saved.paragraphs)) {
-      if (saved.dirty) return saved;
+      if (saved.dirty) {
+        saved.paragraphs = withOfficeSections(saved.paragraphs);
+        return saved;
+      }
       return makeLocal(row, saved);
     }
   } catch {

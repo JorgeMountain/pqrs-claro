@@ -622,6 +622,7 @@ function render() {
   const identityOpen = $("identity-details")?.open;
   renderSidebar();
   renderNotice();
+  $("validation-banner").hidden = !state.config?.validation_mode;
   const status = state.current?.status;
   const stage =
     status === "confirmed"

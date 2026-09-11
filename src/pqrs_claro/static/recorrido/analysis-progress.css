@@ -1,0 +1,65 @@
+.analysis-progress{max-width:740px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:24px 28px}
+.analysis-progress h1{font-size:24px;line-height:1.25;margin:0 0 8px}
+.analysis-progress .analysis-filename{font-size:13px;color:var(--muted);overflow-wrap:anywhere;margin:0 0 16px}
+.analysis-progress .analysis-description{font-size:14px;line-height:1.5;margin:0}
+.analysis-track{list-style:none;padding:0;margin:24px 0;display:grid;gap:18px}
+.analysis-stage{display:flex;align-items:center;gap:16px;color:var(--muted);font-size:16px;line-height:1.4}
+.analysis-mark{display:flex;align-items:center;justify-content:center;flex:0 0 30px;height:30px;box-sizing:border-box;border:1px solid var(--line);border-radius:50%;font-size:14px;background:white}
+.analysis-stage.complete .analysis-mark{color:var(--green);background:var(--tint);border-color:#c8d8c9}
+.analysis-stage.current{color:var(--green);font-weight:600}
+.analysis-stage.current .analysis-mark{border-color:var(--green);box-shadow:0 0 0 5px var(--tint)}
+.analysis-progress .analysis-hint{font-size:12px;color:var(--muted);margin:16px 0 0;line-height:1.5}
+.analysis-progress>button{font-size:13px;padding:10px 16px}
+.analysis-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+@media(max-width:600px){.analysis-progress{padding:20px}.analysis-progress h1{font-size:21px}}
+
+/* Compact progress beside the original, available before text extraction finishes. */
+.analysis-layout{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);gap:22px;align-items:start;max-width:1160px}
+.analysis-layout .analysis-progress{min-width:0;padding:18px;border-top:3px solid #386840;box-shadow:0 4px 18px #254c3510}
+.analysis-badge{display:inline-block;background:var(--tint);color:var(--green);border-radius:20px;padding:4px 9px;font-size:10px;font-weight:650;letter-spacing:.3px;margin-bottom:10px}
+.analysis-layout .analysis-progress h1{font-size:19px;margin:0 0 6px;line-height:1.25}
+.analysis-layout .analysis-filename{font-size:11px;margin-bottom:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.analysis-layout .analysis-description{font-size:12px;line-height:1.45}
+.analysis-layout .analysis-track{gap:6px;margin:16px 0}
+.analysis-layout .analysis-stage{gap:10px;font-size:13px;padding:7px 8px;border-radius:7px}
+.analysis-layout .analysis-mark{flex-basis:26px;height:26px;font-size:12px}
+.analysis-layout .analysis-stage.current{background:var(--tint)}
+.analysis-layout .analysis-stage.current .analysis-mark{box-shadow:none;background:var(--green);color:#fff}
+.analysis-layout .analysis-hint{font-size:11px;margin-top:12px}
+.analysis-document{min-width:0;padding:14px;background:#f2f5ef;border:1px solid var(--line);border-radius:10px}
+.analysis-document-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.analysis-document-head h2{font-size:16px;margin:0 0 2px;line-height:1.3}
+.analysis-document-head span{font-size:11px;color:var(--muted)}
+.analysis-document-head a{font-size:12px;white-space:nowrap}
+.analysis-document-scroll{height:clamp(280px,60dvh,680px);overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;background:#fff;border:1px solid var(--line)}
+.analysis-document-scroll img{display:block;width:100%;height:auto}
+.analysis-document-scroll img[hidden]{display:none}
+.analysis-document-scroll:focus-visible{outline:2px solid var(--green);outline-offset:2px}
+.analysis-preview-error{padding:16px;font-size:13px}
+@container(max-width:650px){.analysis-layout{grid-template-columns:minmax(0,1fr);gap:14px}.analysis-layout .analysis-progress{padding:14px}.analysis-layout .analysis-track{margin:10px 0;gap:3px}.analysis-layout .analysis-stage{padding:5px 8px}}
+
+.responses-heading.is-preparing{margin-bottom:18px}
+.responses-heading.is-preparing h1{font-size:26px;line-height:1.25;margin-bottom:8px}
+.responses-heading.is-preparing .muted{font-size:14px;line-height:1.5}
+.preparation-progress{max-width:690px;padding:18px 20px;margin:0 0 22px;border:1px solid var(--line);border-top:3px solid #386840;border-radius:10px;background:#fff;box-shadow:0 4px 18px #254c3510}
+.preparation-progress h2{font-size:18px;line-height:1.3;margin:0 0 6px}
+.preparation-description{font-size:13px;line-height:1.5;margin:0;color:var(--muted)}
+.preparation-track{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;list-style:none;padding:0;margin:16px 0}
+.preparation-stage{display:flex;gap:9px;align-items:center;padding:9px 7px;border-radius:7px;color:var(--muted);font-size:12px;line-height:1.4}
+.preparation-mark{display:flex;align-items:center;justify-content:center;flex:0 0 26px;height:26px;border:1px solid var(--line);border-radius:50%;background:#fff;font-size:12px}
+.preparation-stage.current{background:var(--tint);color:var(--green);font-weight:600}
+.preparation-stage.current .preparation-mark{background:var(--green);border-color:var(--green);color:#fff}
+.preparation-stage.complete .preparation-mark{background:var(--tint);border-color:#c8d8c9;color:var(--green)}
+.preparation-hint{font-size:11px;line-height:1.5;color:var(--muted);margin:0}
+@container(max-width:540px){.preparation-track{grid-template-columns:minmax(0,1fr);gap:4px;margin:12px 0}.preparation-progress{padding:16px}.responses-heading.is-preparing h1{font-size:23px}}
+
+/* Only the active stage spins; completed and pending stages keep their marks. */
+.analysis-layout .analysis-stage.current .analysis-mark,
+.preparation-stage.current .preparation-mark{font-size:0}
+.analysis-stage.current .analysis-mark::after,
+.preparation-stage.current .preparation-mark::after{content:'';display:block;width:14px;height:14px;box-sizing:border-box;border:2px solid #ffffff55;border-top-color:#fff;border-right-color:#fff;border-radius:50%;animation:stage-loading .85s linear infinite}
+@keyframes stage-loading{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.analysis-stage.current .analysis-mark::after,.preparation-stage.current .preparation-mark::after{animation:none}}
+.source-loading{display:inline-flex;align-items:center;gap:9px;color:var(--green);font-size:13px}
+.source-spinner{display:inline-block;box-sizing:border-box;width:14px;height:14px;flex:0 0 14px;border:2px solid #cad9cf;border-top-color:var(--green);border-right-color:var(--green);border-radius:50%;animation:stage-loading .85s linear infinite}
+@media(prefers-reduced-motion:reduce){.source-spinner{animation:none}}

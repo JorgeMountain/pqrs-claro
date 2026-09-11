@@ -1,0 +1,20 @@
+/* Inicio compacto; la explicación se despliega sin ocultar la carga. */
+.steps[hidden],.prototype[hidden]{display:none!important}
+.shell>main:has(.petition-home){padding:16px 24px 20px}
+.petition-home{max-width:1040px;margin:0 auto}
+.petition-home>h1{font-size:clamp(23px,2.5vw,30px);line-height:1.2;margin:0 0 6px}
+.petition-home .home-subtitle{font-size:14px;color:var(--muted);margin:0 0 16px;line-height:1.5}
+.petition-home-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 20px}
+.petition-home-card>h2{font-size:18px;line-height:1.3;margin:0 0 12px}
+.petition-dropzone{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:8px 14px;padding:14px 16px;border:1px dashed #bdcdbf;border-radius:8px;background:var(--tint)}
+.petition-dropzone.dragover{border-color:var(--green);background:#dfebdf}
+.petition-dropzone h3{margin:0 0 4px;font-size:15px}.petition-dropzone p{margin:0;font-size:13px;color:var(--muted);line-height:1.4}
+.petition-document-icon{position:relative;display:flex;align-items:flex-end;justify-content:center;width:40px;height:50px;box-sizing:border-box;padding:0 0 6px;background:white;border:1px solid #a8b8a9;border-radius:4px;color:var(--green);font-size:11px;font-weight:400;letter-spacing:.6px;line-height:1}.petition-document-icon::before{content:"";position:absolute;left:9px;right:9px;top:13px;height:1px;background:#a8b8a9;box-shadow:0 5px 0 #a8b8a9}
+.petition-file-label{position:relative;display:inline-block;padding:10px 14px;background:var(--green);color:white;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}.petition-file-label input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}.petition-file-label:focus-within{outline:3px solid #7caa7f;outline-offset:3px}
+.petition-dropzone .upload-limit{grid-column:2 / -1;font-size:11px}
+.petition-selected{display:flex;justify-content:space-between;align-items:center;gap:12px;border-top:1px solid var(--line);padding:10px 0;margin-top:10px}.petition-selected strong{display:block;overflow-wrap:anywhere;font-size:13px}.petition-selected span{font-size:12px;color:var(--muted)}.petition-selected button{flex-shrink:0;font-size:12px;padding:6px 10px}
+.petition-upload-actions{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-top:12px}.petition-upload-actions>button{font-size:13px;padding:10px 16px;flex-shrink:0}
+.petition-next{font-size:12px;min-width:0;max-width:600px;padding-top:8px}.petition-next summary{cursor:pointer;color:var(--muted)}.petition-next p{color:var(--muted);margin:8px 0;font-size:13px;line-height:1.5}
+#petition-upload-error{color:#963d34;font-size:13px;margin:8px 0}#petition-upload-error:empty{display:none}
+.petition-home-continue{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0 0}.petition-home-continue p{font-size:13px;color:var(--muted);margin:0}.home-links{display:flex;gap:8px;flex-wrap:wrap}.home-links button{font-size:12px;padding:8px 12px}
+@media(max-width:600px){.shell>main:has(.petition-home){padding:12px}.petition-home-card{padding:14px}.petition-dropzone{grid-template-columns:40px minmax(0,1fr);padding:12px;gap:8px}.petition-file-label{grid-column:1/-1;text-align:center}.petition-dropzone .upload-limit{grid-column:1/-1}.petition-home-continue{align-items:start;flex-direction:column}.petition-upload-actions{gap:8px}.petition-selected{align-items:start;flex-direction:column}}

@@ -24,6 +24,9 @@ def build_source_graph(
 ):
     """El servicio fija un thread_id por solicitud y versión de sus entradas.
 
+    request conserva la pregunta atómica y el contexto del mismo escrito. Ambos
+    nodos reciben ese mismo objeto, sin sustituir la pregunta por sus apartados.
+
     Un error al evaluar permite reanudar con invoke(None, config), conservando la
     recuperación previa. Los efectos sobre la biblioteca viven fuera de este grafo.
     """

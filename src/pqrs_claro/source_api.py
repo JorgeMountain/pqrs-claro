@@ -104,6 +104,9 @@ def source_router(library, service, cases):
         extension = Path(source["filename"]).suffix.lower()
         media = {
             ".pdf": "application/pdf",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
             ".txt": "text/plain; charset=utf-8",
             ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }
@@ -111,7 +114,9 @@ def source_router(library, service, cases):
             library.original(source_id, case_id),
             media_type=media.get(extension, "application/octet-stream"),
             filename=source["filename"],
-            content_disposition_type="inline" if extension == ".pdf" else "attachment",
+            content_disposition_type=(
+                "inline" if extension in {".pdf", ".png", ".jpg", ".jpeg"} else "attachment"
+            ),
         )
 
     @router.get("/api/sources/{source_id}/pages/{number}.png")

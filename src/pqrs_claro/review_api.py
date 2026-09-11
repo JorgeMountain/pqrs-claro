@@ -40,7 +40,10 @@ def review_router(service):
 
     @router.put("/requests/{request_id}")
     def edit(case_id: str, request_id: str, body: ReviewEdit):
-        return service.edit(case_id, request_id, body)
+        row = service.edit(case_id, request_id, body)
+        if row.get("pre_draft") and body.pending_resolutions and hasattr(service, "preparation"):
+            service.preparation.decision_saved(case_id)
+        return row
 
     @router.post("/requests/{request_id}/facts", status_code=201)
     def add_fact(case_id: str, request_id: str, body: FactInput):

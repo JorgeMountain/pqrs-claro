@@ -12,6 +12,10 @@ from pqrs_claro.draft_graph import build_draft_graph
 from pqrs_claro.models import DomainError
 
 
+def pending_content(items):
+    return [{key: item[key] for key in ("kind", "description")} for item in items]
+
+
 def inquiry(**changes):
     return {
         "id": "P1",
@@ -150,7 +154,7 @@ def test_three_structured_calls_keep_literal_sources_and_never_approve():
     assert len(calls) == 3
     assert source_finding == before
     assert draft["status"] == "needs_evidence"
-    assert draft["pending"] == source_finding["missing"]
+    assert pending_content(draft["pending"]) == source_finding["missing"]
     assert checks["status"] == "passed"
     assert plan["points"][0]["cited_chunk_ids"] == [support()["chunk_id"]]
     assert draft["paragraphs"][0]["cited_chunk_ids"] == [support()["chunk_id"]]
@@ -171,6 +175,41 @@ def test_sources_without_pending_still_require_human_review():
     assert draft["status"] == "needs_review"
     assert checks["status"] == "passed"
     assert "approved" not in draft
+
+
+def test_natural_historical_prose_keeps_internal_citations_without_display_labels():
+    texts = [
+        "El comité informó la aprobación de la plaza en el Oficio 0123 de 2024.",
+        "Esa respuesta histórica describe la aprobación informada por el comité; "
+        "no acredita por sí sola una decisión actual.",
+    ]
+    proposal = proposed_draft()
+    proposal["paragraphs"] = [{"text": text, "cited_chunk_ids": ["S1"]} for text in texts]
+    worker, calls = engine(proposed_plan(), proposal, proposed_check())
+    selected = finding()
+    plan = worker.plan(inquiry(), selected)
+    draft = worker.write(inquiry(), selected, plan)
+    checks = worker.check(inquiry(), selected, plan, draft)
+    assert checks["status"] == "passed"
+    assert [paragraph["text"] for paragraph in draft["paragraphs"]] == texts
+    assert [paragraph["cited_chunk_ids"] for paragraph in draft["paragraphs"]] == [
+        [support()["chunk_id"]], [support()["chunk_id"]],
+    ]
+    assert pending_content(draft["pending"]) == selected["missing"]
+    payload = json.loads(calls[-1]["input"])
+    assert [paragraph["text"] for paragraph in payload["draft"]["paragraphs"]] == texts
+    assert all(paragraph["cited_chunk_ids"] == ["S1"]
+               for paragraph in payload["draft"]["paragraphs"])
+    assert payload["local_reference_labels"]  # La ubicación sigue disponible internamente.
+
+
+def test_natural_attribution_does_not_authorize_an_unverified_current_claim():
+    text = "El comité informó la aprobación de la plaza en el Oficio 0123 de 2024. "
+    text += "Actualmente la plaza está aprobada."
+    _, draft, checks, _ = run(text=text)
+    assert draft["paragraphs"][0]["text"] == text
+    assert checks["status"] == "needs_changes"
+    assert any(issue["code"] == "historical_current_fact" for issue in checks["issues"])
 
 
 @pytest.mark.parametrize("ids", [["S2"], ["S1", "S1"], ["oficio-v1"], ["s1"], [" S1"]])
@@ -229,7 +268,7 @@ def test_candidate_inventory_is_visible_for_comparison_but_has_no_citable_alias(
             candidate_document()["chunks"][0]["quote"]
         )
         assert [item["chunk_id"] for item in context["supports"]] == ["S1"]
-    assert draft["pending"] == source_finding["missing"]
+    assert pending_content(draft["pending"]) == source_finding["missing"]
     assert checks["status"] == "passed"
 
 
@@ -259,7 +298,10 @@ def test_localized_candidate_missing_retains_action_without_becoming_support():
         "linked_chunk_ids": ["candidate:1"],
     }
     _, draft, checks, _ = run(source_finding=finding(missing=[missing]))
-    assert draft["pending"] == [{"kind": missing["kind"], "description": missing["description"]}]
+    assert pending_content(draft["pending"]) == pending_content([missing])
+    assert draft["pending"][0]["linked_source_ids"] == ["candidate"]
+    assert draft["pending"][0]["linked_chunk_ids"] == ["candidate:1"]
+    assert draft["pending"][0]["request_ids"] == ["P1"]
     assert checks["status"] == "passed"
     assert draft["paragraphs"][0]["cited_chunk_ids"] == [support()["chunk_id"]]
 
@@ -295,14 +337,101 @@ def test_local_controls_override_model_pass_when_context_or_evidence_is_wrong(te
     assert code in {issue["code"] for issue in checks["issues"]}
 
 
-def test_certification_request_keeps_document_pending_even_if_model_omits_it():
+def test_new_certification_remains_future_action_even_if_model_omits_it():
     request = inquiry(description="Certifique que se aprobó la plaza de prácticas en 2024.")
     _, draft, _, _ = run(request=request, source_finding=finding(missing=[]))
     assert any(
-        item["kind"] == "document" and "certificación solicitada" in item["description"]
+        item["stage"] == "fulfillment" and "certificación solicitada" in item["description"]
         for item in draft["pending"]
     )
-    assert draft["status"] == "needs_evidence"
+    assert draft["status"] == "needs_review"
+    assert all(item["state"] != "document_missing" for item in draft["pending"])
+
+
+def test_question_about_who_issued_certificate_adds_no_issuance_action():
+    request = inquiry(description="Solicito aclarar quién expidió la certificación en 2024.")
+    _, draft, _, _ = run(request=request, source_finding=finding(missing=[]))
+    assert draft["pending"] == []
+    assert draft["status"] == "needs_review"
+
+
+def test_structured_check_is_preserved_through_write_and_check_calls():
+    item = {
+        "kind": "clarification", "description": "Cotejar el periodo del antecedente.",
+        "check_key": "check-period", "id": "check-period", "reason_code": "applicability",
+        "state": "confirmation_pending", "stage": "evidence", "scope_key": "person-period",
+        "request_ids": ["P1"], "linked_source_ids": ["oficio-v1"],
+        "linked_chunk_ids": [support()["chunk_id"]],
+        "source_versions": [{"source_id": "oficio-v1", "version": 1}],
+        "resolution": {"status": "open"},
+    }
+    _, draft, checks, calls = run(source_finding=finding(missing=[item], checks=[item]))
+    assert draft["pending"] == [item]
+    assert json.loads(calls[2]["input"])["draft"]["pending"] == [item]
+    assert checks["status"] == "passed"
+
+
+def test_resolved_structured_check_is_not_reintroduced_by_redaction():
+    from pqrs_claro.evidence_contract import normalize_pending
+
+    source_finding = finding()
+    resolved = normalize_pending(inquiry(), source_finding, [])[0]
+    resolved["resolution"] = {"status": "resolved", "verification_id": "verification-1"}
+    source_finding.update(missing=[], checks=[resolved], status="references_found")
+    selected = proposed_draft()
+    selected["pending"] = pending_content([resolved])
+    worker, calls = engine(proposed_plan(), selected, proposed_check())
+    plan = worker.plan(inquiry(), source_finding)
+    draft = worker.write(inquiry(), source_finding, plan)
+    worker.check(inquiry(), source_finding, plan, draft)
+    assert draft["pending"] == []
+    assert draft["status"] == "needs_review"
+    assert json.loads(calls[2]["input"])["finding"]["checks"][0]["resolution"] == (
+        resolved["resolution"]
+    )
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_paraphrase_reuses_existing_check_without_changing_scope_or_resolution(resolved):
+    from pqrs_claro.evidence_contract import normalize_pending
+
+    request = inquiry(description="Solicito que se tramite la supervisión de esta respuesta.")
+    source_finding = finding()
+    existing = normalize_pending(request, source_finding, [])[0]
+    existing["resolution"] = {"status": "resolved" if resolved else "open"}
+    source_finding.update(checks=[existing], missing=[] if resolved else [existing])
+    selected = proposed_draft()
+    selected["pending"] = [{
+        "kind": "document", "description": "Otra redacción del mismo control.",
+        "existing_check_keys": [existing["check_key"]], "stage": "fulfillment",
+    }]
+    worker, calls = engine(proposed_plan(), selected, proposed_check())
+    plan = worker.plan(request, source_finding)
+    draft = worker.write(request, source_finding, plan)
+    assert all(item["description"] != "Otra redacción del mismo control."
+               for item in draft["pending"])
+    matches = [item for item in draft["pending"] if item["check_key"] == existing["check_key"]]
+    assert matches == ([] if resolved else [existing])
+    assert existing in json.loads(calls[1]["input"])["existing_pending"]
+
+
+def test_redactor_cannot_reference_a_check_from_another_question():
+    selected = proposed_draft()
+    selected["pending"] = [{"kind": "fact", "description": "Cotejar el periodo.",
+                            "existing_check_keys": ["check-other-question"]}]
+    worker, _ = engine(proposed_plan(), selected)
+    plan = worker.plan(inquiry(), finding())
+    with pytest.raises(DomainError, match="no corresponde a la pregunta"):
+        worker.write(inquiry(), finding(), plan)
+
+
+def test_new_pending_requires_a_concrete_uncovered_difference():
+    selected = proposed_draft()
+    selected["pending"] = [{"kind": "fact", "description": "Revisar todo de nuevo."}]
+    worker, _ = engine(proposed_plan(), selected)
+    plan = worker.plan(inquiry(), finding())
+    with pytest.raises(DomainError, match="diferencia concreta"):
+        worker.write(inquiry(), finding(), plan)
 
 
 def test_reported_verification_does_not_turn_a_draft_office_into_issued():
@@ -393,7 +522,8 @@ def test_inherited_pending_can_exceed_remote_selection_limit_without_truncation(
         for number in range(78)
     ]
     proposed = [
-        {"kind": "fact", "description": f"Confirmar dato propuesto {number}."}
+        {"kind": "fact", "description": f"Confirmar dato propuesto {number}.",
+         "difference": f"Dato adicional {number} no incluido en los componentes heredados."}
         for number in range(60)
     ]
     selected = proposed_draft()
@@ -403,7 +533,7 @@ def test_inherited_pending_can_exceed_remote_selection_limit_without_truncation(
     plan = worker.plan(inquiry(), source_finding)
     draft = worker.write(inquiry(), source_finding, plan)
     checks = worker.check(inquiry(), source_finding, plan, draft)
-    assert draft["pending"] == inherited + proposed
+    assert pending_content(draft["pending"]) == inherited + pending_content(proposed)
     assert len(draft["pending"]) == 138
     assert len(json.loads(calls[2]["input"])["draft"]["pending"]) == 138
     assert checks["status"] == "passed"
@@ -415,7 +545,8 @@ def test_prose_aliases_are_materialized_with_original_title_and_location_in_ever
     selected_plan["points"][0]["description"] = "Atribuir a S1 el contenido de la respuesta."
     selected_draft = proposed_draft(text="Según S1, el comité informó la aprobación en 2024.")
     selected_draft["pending"] = [
-        {"kind": "clarification", "description": "Cotejar la aplicabilidad de S1."}
+        {"kind": "clarification", "description": "Cotejar la aplicabilidad de S1.",
+         "difference": "Diferencia concreta en las condiciones del soporte individual."}
     ]
     selected_check = proposed_check(
         issues=[

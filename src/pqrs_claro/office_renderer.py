@@ -27,6 +27,7 @@ from .office_models import (
     OfficeMetadata,
     xml_text,
 )
+from .office_structure import request_fragments
 from .office_templates import (
     image_pixels,
     template_profile,
@@ -36,11 +37,11 @@ from .office_templates import (
 )
 from .office_word import convert_word, pdf_capabilities
 from .review_models import ReviewParagraph
-from .review_service import input_hash
+from .review_service import blocks_approval, input_hash
 from .source_library import digest
 from .source_retrieval import source_in_scope
 
-OFFICE_VERSION = 2
+OFFICE_VERSION = 5
 __all__ = ["OFFICE_VERSION", "build_document", "render_office", "pdf_capabilities"]
 _MONTHS = (
     "enero",
@@ -149,7 +150,10 @@ def _approved_snapshots(approved: dict) -> list[dict]:
             )
         _text(approval.get("approved_by"))
         _text(approval.get("approved_at"))
-        if any(item.get("resolution") is None for item in review.get("pending", [])):
+        if any(
+            item.get("resolution") is None and blocks_approval(item)
+            for item in review.get("pending", [])
+        ):
             raise DomainError("Una respuesta conserva pendientes sin resolver.")
         request = next(
             item for item in identification["requests"] if item["id"] == snapshot["request_id"]
@@ -187,7 +191,7 @@ def build_document(
             references.append({"number": number, "kind": kind, "text": _text(text)})
         return reference_index[key]
 
-    for snapshot in snapshots:
+    for request_index, snapshot in enumerate(snapshots):
         review = snapshot["review"]
         available = review.get("available_supports", [])
         facts = review.get("facts", [])
@@ -208,6 +212,11 @@ def build_document(
             ) from None
         if not 1 <= len(paragraphs) <= 30:
             raise DomainError("Cada respuesta aprobada necesita entre 1 y 30 párrafos.")
+        if not any(p["office_section"] == "response" for p in paragraphs):
+            raise DomainError(
+                "Cada numeral necesita una respuesta concreta; los antecedentes y la "
+                "conclusión no la sustituyen. Revisa la ubicación de sus párrafos."
+            )
         rendered = []
         for paragraph in paragraphs:
             numbers = []
@@ -260,13 +269,26 @@ def build_document(
                         f"Declaración de {author}. Fecha de conocimiento: {observed}.",
                     )
                 )
-            rendered.append({"text": _text(paragraph["text"]), "reference_numbers": numbers})
+            rendered.append(
+                {
+                    "text": _text(paragraph["text"]),
+                    "reference_numbers": numbers,
+                    "office_section": paragraph["office_section"],
+                    "bookmark": f"response_{request_index}_{len(rendered)}",
+                }
+            )
+        identified = review["request_snapshot"]
+        fragments = request_fragments(identified)
         requests.append(
             {
                 "request_id": review["request_id"],
                 "label": _text(review["label"]),
                 "title": _text(review["title"]),
                 "description": _text(review["description"]),
+                "original_text": "\n\n".join(item["text"] for item in fragments)
+                or _text(review["description"]),
+                "original_fragments": fragments,
+                "parent_id": identified.get("parent_id"),
                 "paragraphs": rendered,
             }
         )
@@ -300,7 +322,11 @@ def build_document(
     if total_size > MAX_ATTACHMENT_BYTES:
         raise DomainError("Los anexos superan el máximo conjunto de 200 MiB.")
     document = {
+        "office_version": OFFICE_VERSION,
         "metadata": metadata,
+        "petition_subject": _text(
+            snapshots[0]["identification"].get("subject") or metadata["subject"]
+        ),
         "requests": requests,
         "references": references,
         "attachments": attachments,
@@ -308,7 +334,7 @@ def build_document(
     }
     if letterhead is not None:
         document["letterhead"] = validate_letterhead(letterhead)
-    _blocks(document)
+    document["blocks"] = _blocks(document)
     return document
 
 
@@ -339,38 +365,108 @@ def _blocks(document: dict) -> list[dict]:
     add("recipient", metadata["recipient"])
     if metadata["recipient_contact"]:
         add("metadata", metadata["recipient_contact"])
-    add("subject", "Asunto: " + metadata["subject"])
+    subject = metadata["subject"]
+    if metadata["petition_number"] and metadata["petition_number"] not in subject:
+        subject += " · Radicado " + metadata["petition_number"]
+    add("subject", "Asunto: " + subject)
+    add("salutation", "Cordial saludo.")
+    intro = "En atención a su petición"
     if metadata["petition_number"]:
-        add("metadata", "Petición: " + metadata["petition_number"])
-    add("intro", "En atención a su petición, se presentan las respuestas a cada solicitud.")
+        intro += ", identificada con el radicado " + metadata["petition_number"]
+    if metadata.get("received_date"):
+        received = date.fromisoformat(metadata["received_date"])
+        intro += f", recibida el {received.day} de {_MONTHS[received.month - 1]} de {received.year}"
+    if document.get("petition_subject"):
+        intro += ", relacionada con «" + document["petition_subject"] + "»"
+    add("intro", intro + ", se da respuesta a los numerales que se presentan a continuación.")
     known = {item["number"] for item in document["references"]}
+
+    def numbered_label(request):
+        # El label proviene de la identificación aprobada, no de P1/P2 internos.
+        label = request["label"]
+        return label if label.endswith((".", ")", ":")) else label + "."
+
+    def paragraph_block(kind, paragraph, origins):
+        numbers = paragraph["reference_numbers"]
+        if not numbers or not set(numbers) <= known:
+            raise DomainError("La vista previa contiene referencias inválidas.")
+        bookmarks = [f"response_{i}_{j}" for i, j in origins]
+        request_ids = list(dict.fromkeys(document["requests"][i]["request_id"] for i, _ in origins))
+        add(
+            kind,
+            paragraph["text"],
+            bookmark=bookmarks[0],
+            bookmarks=bookmarks,
+            request_ids=request_ids,
+            reference_numbers=list(numbers),
+        )
+
+    # Solo se reúne el contexto clasificado antes de aprobar, con idéntico texto
+    # y referencias. Las respuestas nunca se resumen ni se deduplican.
+    contexts = {}
+    conclusions = []
+    for i, request in enumerate(document["requests"]):
+        for j, paragraph in enumerate(request["paragraphs"]):
+            section = paragraph.get("office_section", "response")
+            if section == "context":
+                key = (paragraph["text"], tuple(paragraph["reference_numbers"]))
+                entry = contexts.setdefault(key, {"paragraph": paragraph, "origins": []})
+                entry["origins"].append((i, j))
+            elif section == "conclusion":
+                conclusions.append((paragraph, [(i, j)]))
+            elif section != "response":
+                raise DomainError("Un párrafo tiene una ubicación desconocida en el oficio.")
+        if not any(
+            p.get("office_section", "response") == "response" for p in request["paragraphs"]
+        ):
+            raise DomainError("Cada numeral necesita una respuesta concreta.")
+
+    if contexts:
+        add("heading", "Antecedentes")
+        for entry in contexts.values():
+            paragraph_block("context", entry["paragraph"], entry["origins"])
+
     for request_index, request in enumerate(document["requests"]):
-        add("heading", f"Solicitud {request['label']}. {request['title']}")
-        add("request", request["description"])
+        add(
+            "heading",
+            f"{numbered_label(request)} {request['title']}",
+            request_ids=[request["request_id"]],
+            parent_id=request.get("parent_id"),
+        )
+        fragments = request.get("original_fragments") or []
+        if len(fragments) > 1:
+            for fragment_index, fragment in enumerate(fragments):
+                if fragment_index:
+                    add("omission", "[…]", request_ids=[request["request_id"]])
+                add(
+                    "request",
+                    fragment["text"],
+                    request_ids=[request["request_id"]],
+                    original_location={
+                        key: fragment[key] for key in ("page", "line_start", "line_end")
+                    },
+                )
+        else:
+            add(
+                "request",
+                request.get("original_text") or request["description"],
+                request_ids=[request["request_id"]],
+            )
+        add("response_label", "Respuesta", request_ids=[request["request_id"]])
         for paragraph_index, paragraph in enumerate(request["paragraphs"]):
-            add(
-                "response",
-                paragraph["text"],
-                bookmark=f"response_{request_index}_{paragraph_index}",
-            )
-            if (
-                not paragraph["reference_numbers"]
-                or not set(paragraph["reference_numbers"]) <= known
-            ):
-                raise DomainError("La vista previa contiene referencias inválidas.")
-            add(
-                "citation",
-                "Referencias: " + ", ".join(f"[{n}]" for n in paragraph["reference_numbers"]) + ".",
-            )
+            if paragraph.get("office_section", "response") == "response":
+                paragraph_block("response", paragraph, [(request_index, paragraph_index)])
+    if conclusions:
+        add("heading", "Conclusión")
+        for paragraph, origins in conclusions:
+            paragraph_block("conclusion", paragraph, origins)
     add("closing", "Atentamente,")
     add("signer", metadata["signer_name"])
     add("signer_role", metadata["signer_role"])
-    if document["references"]:
-        add("heading", "Fuentes y declaraciones citadas")
-        for reference in document["references"]:
-            add("reference", f"[{reference['number']}] {reference['text']}")
+    # Las referencias y el alcance quedan en los datos canónicos y la revisión.
+    # El oficio institucional no imprime el aparato de citas de la aplicación.
     if document["attachments"]:
-        add("heading", "Documentos incluidos en el paquete")
+        add("heading", "Anexos")
         for index, attachment in enumerate(document["attachments"], 1):
             add("attachment", f"{index}. {attachment['title']} ({attachment['filename']})")
     if sum(len(block["text"]) for block in blocks) > MAX_OFFICE_CHARS:
@@ -378,6 +474,22 @@ def _blocks(document: dict) -> list[dict]:
             "El oficio supera el máximo de 600.000 caracteres. No se recortará su contenido."
         )
     return blocks
+
+
+def _bookmark_names(block: dict) -> list[str]:
+    return block.get("bookmarks") or ([block["bookmark"]] if "bookmark" in block else [])
+
+
+def _add_bookmarks(paragraph, block, block_index):
+    # Un antecedente compartido conserva un marcador por cada párrafo aprobado.
+    for offset, name in enumerate(_bookmark_names(block)):
+        identifier = str(block_index * 10000 + offset)
+        start, end = OxmlElement("w:bookmarkStart"), OxmlElement("w:bookmarkEnd")
+        start.set(qn("w:id"), identifier)
+        start.set(qn("w:name"), name)
+        end.set(qn("w:id"), identifier)
+        paragraph._p.insert(1 if paragraph._p.pPr is not None else 0, start)
+        paragraph._p.append(end)
 
 
 def _make_docx(blocks: list[dict], path: Path) -> None:
@@ -441,25 +553,39 @@ def _make_docx(blocks: list[dict], path: Path) -> None:
         kind = block["kind"]
         style = "Title" if kind == "institution" else "Heading 1" if kind == "heading" else "Normal"
         paragraph = document.add_paragraph(style=style)
-        if "bookmark" in block:
-            start = OxmlElement("w:bookmarkStart")
-            start.set(qn("w:id"), str(index))
-            start.set(qn("w:name"), block["bookmark"])
-            paragraph._p.append(start)
         run = paragraph.add_run(block["text"])
-        if "bookmark" in block:
-            end = OxmlElement("w:bookmarkEnd")
-            end.set(qn("w:id"), str(index))
-            paragraph._p.append(end)
-        if kind in {"subject", "signer"}:
+        _add_bookmarks(paragraph, block, index)
+        if kind in {"subject", "signer", "response_label"}:
             run.bold = True
-        if kind in {"citation", "reference", "attachment"}:
+        if kind == "attachment":
             run.font.size = Pt(10)
-            paragraph.paragraph_format.space_after = Pt(8)
+            paragraph.paragraph_format.space_after = Pt(6)
         if kind == "request":
             run.italic = True
-        if kind in {"institution", "department", "subject", "closing", "signer"}:
+            paragraph.paragraph_format.keep_together = True
+        if kind in {
+            "institution",
+            "department",
+            "subject",
+            "closing",
+            "signer",
+            "request",
+            "response_label",
+            "omission",
+        }:
             paragraph.paragraph_format.keep_with_next = True
+        if kind == "response_label":
+            paragraph.paragraph_format.space_after = Pt(2)
+        if (
+            kind == "response" and index + 1 < len(blocks)
+            and blocks[index + 1].get("kind") == "heading"
+            and blocks[index + 1].get("text") == "Conclusión"
+        ):
+            # Evita una página final con solo la conclusión y la despedida.
+            paragraph.paragraph_format.keep_with_next = True
+            paragraph.paragraph_format.keep_together = True
+        if kind in {"response", "context", "conclusion", "intro"}:
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if kind == "closing":
             paragraph.paragraph_format.space_before = Pt(14)
         # Una sola palabra larga puede partirse, sin introducir guiones automáticos.
@@ -495,25 +621,39 @@ def _make_template_docx(blocks: list[dict], path: Path, template_path: Path, pro
         fonts = run._r.get_or_add_rPr().find(qn("w:rFonts"))
         for name in ("ascii", "hAnsi", "eastAsia", "cs"):
             fonts.set(qn(f"w:{name}"), "Times New Roman")
-        if kind in {"heading", "subject", "signer"}:
+        if kind in {"heading", "subject", "signer", "response_label"}:
             run.bold = True
         if kind == "request":
             run.italic = True
+            paragraph.paragraph_format.keep_together = True
         paragraph.paragraph_format.space_after = Pt(6)
         paragraph.paragraph_format.widow_control = True
-        if kind in {"heading", "subject", "closing", "signer"}:
+        if kind == "attachment":
+            run.font.size = Pt(10)
+        if kind in {
+            "heading",
+            "subject",
+            "closing",
+            "signer",
+            "request",
+            "omission",
+            "response_label",
+        }:
             paragraph.paragraph_format.keep_with_next = True
-        if kind not in {"response", "request"}:
+        if kind == "response_label":
+            paragraph.paragraph_format.space_after = Pt(2)
+        if (
+            kind == "response" and index + 1 < len(blocks)
+            and blocks[index + 1].get("kind") == "heading"
+            and blocks[index + 1].get("text") == "Conclusión"
+        ):
+            paragraph.paragraph_format.keep_with_next = True
+            paragraph.paragraph_format.keep_together = True
+        if kind not in {"response", "request", "context", "conclusion", "intro"}:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
         if kind == "closing":
             paragraph.paragraph_format.space_before = Pt(12)
-        if "bookmark" in block:
-            start, end = OxmlElement("w:bookmarkStart"), OxmlElement("w:bookmarkEnd")
-            start.set(qn("w:id"), str(index))
-            start.set(qn("w:name"), block["bookmark"])
-            end.set(qn("w:id"), str(index))
-            paragraph._p.insert(1 if paragraph._p.pPr is not None else 0, start)
-            paragraph._p.append(end)
+        _add_bookmarks(paragraph, block, index)
         paragraph._p.get_or_add_pPr().append(OxmlElement("w:suppressAutoHyphens"))
     properties = document.core_properties
     properties.author = properties.last_modified_by = properties.subject = properties.comments = ""
@@ -537,7 +677,7 @@ def _verify_docx(blocks: list[dict], path: Path) -> bool:
     docx = Document(path)
     if [paragraph.text for paragraph in docx.paragraphs] != [block["text"] for block in blocks]:
         raise DomainError("El Word generado no conserva exactamente todos los bloques aprobados.")
-    expected = {block["bookmark"]: block["text"] for block in blocks if "bookmark" in block}
+    expected = {name: block["text"] for block in blocks for name in _bookmark_names(block)}
     found = {}
     for paragraph in docx.paragraphs:
         for marker in paragraph._p.findall(qn("w:bookmarkStart")):
@@ -709,6 +849,8 @@ def render_office(document, output_dir, *, converter=None, template_path=None) -
         template_path = validate_template_file(template_path, letterhead["sha256"])
         profile = template_profile(template_path)
     blocks = _blocks(document)
+    if "blocks" in document and document["blocks"] != blocks:
+        raise DomainError("El contenido del oficio cambió respecto de la vista previa.")
     if profile:
         _make_template_docx(blocks, docx, template_path, profile)
     else:

@@ -1,19 +1,21 @@
 """Borradores por solicitud con fuentes vigentes, avance durable y revisión humana."""
 
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
 from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from .draft_repair import repair_targets
 from .draft_store import DraftStore
 from .models import DomainError
 from .service import user_error
+from .source_context import build_source_requests
 from .source_library import digest
 from .storage import Conflict, now
 
-DRAFT_VERSION = 2
+DRAFT_VERSION = 11
 
 
 class _InputsChanged(Exception):
@@ -36,6 +38,14 @@ class _GuardedEngine:
         self.check_inputs()
         return self.engine.check(*args)
 
+    @property
+    def can_repair(self):
+        return callable(getattr(self.engine, "repair", None))
+
+    def repair(self, *args):
+        self.check_inputs()
+        return self.engine.repair(*args)
+
 
 class DraftService:
     def __init__(self, settings, cases, library, sources_service, engine=None):
@@ -45,6 +55,7 @@ class DraftService:
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="drafts")
         self.lock = threading.RLock()
         self.active = set()
+        self.reviews = None
 
     def _fingerprint(self, case, source_run):
         return digest(
@@ -66,7 +77,7 @@ class DraftService:
             source_run = self.sources_service.get(case_id)
             current = (
                 case["status"] == "confirmed"
-                and source_run["status"] == "ready"
+                and source_run["status"] in {"ready", "error"}
                 and not source_run.get("stale")
             )
             return case, source_run, self._fingerprint(case, source_run), current
@@ -123,11 +134,12 @@ class DraftService:
             if (
                 len(findings) != len(request_ids)
                 or {finding.get("request_id") for finding in findings} != set(request_ids)
-                or any(finding.get("status") == "error" for finding in findings)
             ):
                 raise Conflict("El mapa no contiene una evaluación completa de cada solicitud.")
             reconciled = {}
             for finding in findings:
+                if finding.get("status") == "error":
+                    continue
                 supports, seen = [], set()
                 for support in finding.get("supports", []):
                     chunk_id = support.get("chunk_id")
@@ -226,16 +238,27 @@ class DraftService:
             case["allowed_collection_ids"] = self.library.linked_collections(case_id)
             return case, source_run, reconciled, fingerprint
 
-    def start(self, case_id, version):
+    def start(self, case_id, version, *, ready_only=False):
         with self.lock:
             if case_id in self.active:
                 raise Conflict("Los borradores de este expediente ya se están preparando.")
             case, source_run, findings, fingerprint = self._inputs(case_id, version)
+            if not findings and not ready_only:
+                raise Conflict("No hay solicitudes con un análisis de fuentes válido para redactar.")
+            review_snapshots = {}
+            if ready_only:
+                rows = {r["request_id"]: r for r in self.reviews.get(case_id)["requests"]}
+                findings = {rid: self._reviewed_finding(finding, rows[rid])
+                            for rid, finding in findings.items()
+                            if rid in rows and self._ready_for_draft(rows[rid], finding)}
+                review_snapshots = {rid: self._review_input(rows[rid]) for rid in findings}
+                if not findings:
+                    return self.get(case_id)
             if not self.settings.api_key and self.engine is None:
                 raise ValueError("Falta configurar OpenAI para preparar los borradores.")
             previous = self.store.latest(case_id)
             if (
-                previous
+                not ready_only and previous
                 and previous["fingerprint"] == fingerprint
                 and previous["status"] in {"ready", "partial"}
                 and not previous.get("stale")
@@ -253,9 +276,13 @@ class DraftService:
                 case_version=case["version"],
                 model=self.settings.model,
                 draft_version=DRAFT_VERSION,
-                results=[],
+                results=[r for r in (previous or {}).get("results", [])
+                         if ready_only and previous["fingerprint"] == fingerprint
+                         and r["request_id"] not in findings],
                 completed_count=0,
-                total_count=len(findings),
+                total_count=case["request_count"],
+                selected_request_ids=list(findings),
+                review_snapshots=review_snapshots,
                 current_request_id=None,
                 current_step=None,
                 error=None,
@@ -263,10 +290,47 @@ class DraftService:
                 finished_at=None,
                 requires_human_review=True,
             )
+            run["completed_count"] = len(run["results"])
             self.store.save(run)
             self.active.add(case_id)
             self.pool.submit(self.run, case, findings, run)
             return self.get(case_id)
+
+    @staticmethod
+    def _review_input(row):
+        return digest({key: row.get(key) for key in ("pending", "facts", "paragraphs", "base_fingerprint")})
+
+    @staticmethod
+    def _ready_for_draft(row, finding):
+        return (not row.get("stale") and not row.get("paragraphs")
+                and finding.get("status") != "error"
+                and "analysis_error" not in finding.get("evidence_states", [])
+                and not any(p.get("blocks_approval", True)
+                            and (not p.get("resolution") or p["resolution"].get("action") == "open")
+                            for p in row.get("pending", [])))
+
+    @staticmethod
+    def _reviewed_finding(finding, row):
+        value = deepcopy(finding)
+        opened, decisions = [], []
+        for pending in row.get("pending", []):
+            resolution = pending.get("resolution")
+            if resolution and resolution.get("action") != "open":
+                decisions.append(deepcopy(pending))
+            else:
+                opened.append(deepcopy(pending))
+        # Keep decisions and their attribution as inputs, never as final approval.
+        closed_checks = [{**p, "resolution": {"status": "resolved", "kind": "human_decision",
+                                               "decision": deepcopy(p["resolution"])}}
+                         for p in decisions]
+        value.update(missing=opened, actions=[], checks=closed_checks, human_decisions=decisions)
+        selected = {s["chunk_id"]: s for s in value["supports"]}
+        cited = {cid for p in decisions for cid in p["resolution"].get("cited_chunk_ids", [])}
+        for source in row["available_supports"]:
+            if source["chunk_id"] in cited:
+                selected[source["chunk_id"]] = deepcopy(source)
+        value["supports"] = list(selected.values())
+        return value
 
     def _ensure_current(self, case_id, fingerprint, finding=None, *, full=False):
         _, source_run, current_fingerprint, current = self._current(case_id)
@@ -306,7 +370,13 @@ class DraftService:
             plan=state.get("plan"),
             draft={**draft, "status": status},
             checks=checks,
+            repair=deepcopy(state.get("repair")),
             supports=finding["supports"],
+            request_intent=finding.get("request_intent"),
+            evidence_states=deepcopy(finding.get("evidence_states", [])),
+            source_checks=deepcopy(finding.get("checks", [])),
+            verifications=deepcopy(finding.get("verifications", [])),
+            sufficiency=deepcopy(finding.get("sufficiency", {})),
             error=None,
         )
 
@@ -316,70 +386,89 @@ class DraftService:
             from .draft_graph import build_draft_graph
 
             engine = self.engine or OpenAIDraftEngine(self.settings.api_key, self.settings.model)
-            with SqliteSaver.from_conn_string(
-                str(self.settings.data_dir / "draft_checkpoints.sqlite")
-            ) as saver:
-                for raw_request in case["identification"]["requests"]:
-                    request = {
-                        **raw_request,
-                        "case_id": case["id"],
-                        "allowed_collection_ids": case["allowed_collection_ids"],
-                    }
-                    finding = findings[request["id"]]
-                    self._ensure_current(case["id"], run["fingerprint"], finding)
-                    guarded = _GuardedEngine(
-                        engine,
-                        lambda f=finding: self._ensure_current(case["id"], run["fingerprint"], f),
-                    )
-                    graph = build_draft_graph(guarded, saver)
-                    config = {
-                        "configurable": {
-                            "thread_id": f"{case['id']}:{request['id']}:{run['fingerprint']}"
-                        }
-                    }
-                    run.update(current_request_id=request["id"], current_step="planificar")
+            with SqliteSaver.from_conn_string(str(self.settings.data_dir / "draft_checkpoints.sqlite")) as warmup:
+                warmup.get_tuple({"configurable": {"thread_id": "__schema_initialization__"}})
+            requests = [r for r in build_source_requests(case, allowed_collection_ids=case["allowed_collection_ids"])
+                        if r["id"] in findings]
+            order = {r["id"]: i for i, r in enumerate(case["identification"]["requests"])}
+            concurrency = min(3, max(1, self.settings.draft_concurrency))
+            run.update(concurrency=concurrency, request_states={r["id"]: "queued" for r in requests})
+            progress_lock = threading.RLock()
+
+            def progress(request_id, step):
+                with progress_lock:
+                    run["request_states"][request_id] = step or "completed"
+                    run.update(current_request_id=request_id, current_step=step)
                     self.store.save(run)
-                    state = {}
-                    try:
+
+            def evaluate(request):
+                finding = findings[request["id"]]
+                state = {}
+                def check_inputs():
+                    self._ensure_current(case["id"], run["fingerprint"], finding)
+                    expected = run.get("review_snapshots", {}).get(request["id"])
+                    if expected and self._review_input(self.reviews.store.get(case["id"], request["id"])) != expected:
+                        raise DomainError("Los puntos de esta solicitud cambiaron durante la redacción. Se conserva el avance; vuelve a prepararla.")
+                try:
+                    check_inputs()
+                    guarded = _GuardedEngine(engine, check_inputs)
+                    with SqliteSaver.from_conn_string(str(self.settings.data_dir / "draft_checkpoints.sqlite")) as saver:
+                        graph = build_draft_graph(guarded, saver)
+                        key = digest({"request": request, "finding": finding, "model": self.settings.model,
+                                      "version": DRAFT_VERSION, "case_version": case["version"]})
+                        config = {"configurable": {"thread_id": f"{case['id']}:{request['id']}:{key}"}}
+                        progress(request["id"], "planificar")
                         checkpoint = graph.get_state(config)
                         state = deepcopy(checkpoint.values)
                         if not state.get("checks") or checkpoint.next:
                             initial = None if state else {"request": request, "finding": finding}
-                            if checkpoint.next:
-                                run["current_step"] = checkpoint.next[0]
-                                self.store.save(run)
                             for update in graph.stream(initial, config, stream_mode="updates"):
                                 for node, values in update.items():
                                     state.update(values)
-                                    run["current_step"] = {
-                                        "planificar": "redactar",
-                                        "redactar": "comprobar",
-                                        "comprobar": None,
-                                    }.get(node)
-                                    self.store.save(run)
-                                self._ensure_current(case["id"], run["fingerprint"], finding)
-                        run["results"].append(self._result(request, finding, state))
-                    except _InputsChanged:
-                        if state.get("plan") or state.get("draft"):
-                            run["results"].append(self._result(request, finding, state))
-                        raise
-                    except Exception as exc:
-                        # Un proveedor no puede filtrar su respuesta cruda ni su clave al API.
-                        error = (
-                            user_error(exc)
-                            if isinstance(exc, DomainError)
-                            else user_error(
-                                exc if not isinstance(exc, ValueError) else RuntimeError()
-                            )
-                        )
-                        result = self._result(request, finding, state)
-                        result.update(status="error", error=error)
-                        run["results"].append(result)
-                    run["completed_count"] = len(run["results"])
-                    self.store.save(run)
-                self._ensure_current(case["id"], run["fingerprint"], full=True)
+                                    step = {"planificar": "redactar", "redactar": "comprobar",
+                                            "comprobar": None, "ajustar_citas": "recomprobar",
+                                            "recomprobar": None}.get(node)
+                                    if node == "comprobar" and guarded.can_repair and repair_targets(state["checks"], state["draft"]):
+                                        step = "ajustar_citas"
+                                    progress(request["id"], step)
+                                check_inputs()
+                        check_inputs()
+                        return self._result(request, finding, state)
+                except _InputsChanged:
+                    # Retain any text already produced; the run is marked stale below.
+                    return self._result(request, finding, state)
+                except Exception as exc:
+                    error = user_error(exc if not isinstance(exc, ValueError) or isinstance(exc, DomainError) else RuntimeError())
+                    result = self._result(request, finding, state)
+                    result.update(status="error", error=error)
+                    return result
+
+            with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="draft-request") as workers:
+                pending = {}
+                remaining = iter(requests)
+                def fill_slots():
+                    while len(pending) < concurrency:
+                        request = next(remaining, None)
+                        if request is None:
+                            break
+                        pending[workers.submit(evaluate, request)] = request
+                fill_slots()
+                while pending:
+                    finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in finished:
+                        request = pending.pop(future)
+                        result = future.result()
+                        with progress_lock:
+                            run["results"].append(result)
+                            run["results"].sort(key=lambda item: order[item["request_id"]])
+                            run["request_states"][request["id"]] = "error" if result["status"] == "error" else "completed"
+                            run["completed_count"] = len(run["results"])
+                            self.store.save(run)
+                    fill_slots()
+            self._ensure_current(case["id"], run["fingerprint"], full=True)
             errors = sum(result["status"] == "error" for result in run["results"])
-            pending = any(result["status"] != "needs_review" for result in run["results"])
+            pending = (len(run["results"]) < run["total_count"]
+                       or any(result["status"] != "needs_review" for result in run["results"]))
             run.update(
                 status="failed"
                 if errors == run["total_count"]

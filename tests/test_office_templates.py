@@ -196,10 +196,13 @@ def test_template_preserves_all_protected_parts_geometry_and_uses_only_explicit_
     assert "Firmante ficticio" in text
     assert not text.startswith("Institución ficticia")
     assert doc.styles["Normal"].font.name == "Arial"
-    for paragraph in doc.paragraphs:
+    blocks = canonical(template)["blocks"]
+    for paragraph, block in zip(doc.paragraphs, blocks, strict=True):
         for run in paragraph.runs:
             assert run.font.name == "Times New Roman"
-            assert run.font.size.pt == 12
+            assert run.font.size.pt == (
+                10 if block["kind"] in {"citation", "reference", "attachment", "scope"} else 12
+            )
     assert doc.sections[0].top_margin.inches == 1.5
     assert doc.sections[0].left_margin.inches == 0.75
 

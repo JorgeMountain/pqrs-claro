@@ -31,6 +31,7 @@ function blankForm(defaults) {
       department: defaults.department || "",
       city: "",
       issue_date: localDate(),
+      received_date: "",
       office_number: "",
       petition_number: "",
       recipient: defaults.recipient || "",

@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from typing import Any
 
+from .request_intent import classify_request_intent
 
+
+@lru_cache(maxsize=4096)
 def _plain(text: str) -> str:
     return "".join(
         character
@@ -17,6 +21,17 @@ def _plain(text: str) -> str:
 
 def requested_document(request: dict[str, Any]) -> str | None:
     """Resguardo acotado para peticiones explícitas de entrega de documentos."""
+    if not classify_request_intent(request)["document_delivery_requested"]:
+        return None
+    return referenced_document(request)
+
+
+def referenced_document(request: dict[str, Any]) -> str | None:
+    """Indicio para recuperación: mencionar un envío pasado no pide entregar hoy.
+
+    Conserva el criterio previo de búsqueda, separado de los guardas que generan
+    pendientes documentales. No clasifica actuaciones ni certificaciones futuras.
+    """
     text = _plain(f"{request.get('title', '')} {request.get('description', '')}")
     delivery = re.search(r"\b(copias?|adjunt\w*|remit\w*|entreg\w*|envi\w*|facilit\w*)\b", text)
     if not delivery:
@@ -44,13 +59,7 @@ def requested_document_number(request: dict[str, Any], kind: str) -> str | None:
 
 def requested_certification(request: dict[str, Any]) -> bool:
     """Distingue pedir una certificación de solicitar una explicación de hechos."""
-    text = _plain(str(request.get("description") or request.get("title") or ""))
-    if re.search(r"\bcertifi(?:car|que|quen)\b", text):
-        return True
-    return bool(
-        re.search(r"\bcertifica(?:cion(?:es)?|dos?|das?)\b", text)
-        and re.search(r"\b(?:solicit\w*|obtener|expedir|expidan?|emitir|emitan?)\b", text)
-    )
+    return classify_request_intent(request)["certification_requested"]
 
 
 def document_matches(request: dict[str, Any], source: dict[str, Any], kind: str) -> bool:

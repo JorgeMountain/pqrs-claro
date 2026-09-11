@@ -8,26 +8,44 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
+from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError
 from .review_store import ReviewStore
 from .service import user_error
 from .source_assessment import _allowed_roles
+from .source_context import build_source_requests
 from .source_documents import document_matches, requested_document
 from .source_library import digest
 from .storage import Conflict, now
 
-REVIEW_VERSION = 1
+REVIEW_VERSION = 7
 
 
 def pending_id(item):
-    return (
-        "M"
-        + digest(
-            {
-                "kind": item["kind"],
-                "description": " ".join(item["description"].split()).casefold(),
-            }
-        )[:24]
+    return pending_identity(item)
+
+
+def blocks_approval(item):
+    return item.get("blocks_approval", True) is not False
+
+
+def _pending_basis(item):
+    return digest(
+        {
+            **{
+                key: item.get(key)
+                for key in (
+                    "kind",
+                    "stage",
+                    "scope_key",
+                    "source_versions",
+                    "linked_source_ids",
+                    "linked_chunk_ids",
+                    "blocks_approval",
+                )
+            },
+            "description": " ".join(item["description"].split()).casefold(),
+        }
     )
 
 
@@ -39,11 +57,16 @@ def input_hash(row):
                 "case_id",
                 "request_id",
                 "base_fingerprint",
+                "sufficiency",
                 "paragraphs",
                 "facts",
                 "pending",
                 "available_supports",
                 "request_snapshot",
+                "source_checks",
+                "evidence_states",
+                "verifications",
+                "request_intent",
             )
         }
     )
@@ -198,32 +221,42 @@ class ReviewService:
         return list(available.values())
 
     @staticmethod
-    def _pending(old, finding, draft=None):
-        entries = {item["id"]: deepcopy(item) for item in old}
-        for origin, items in (
-            ("source", finding.get("missing", [])),
-            ("draft", (draft or {}).get("pending", [])),
-        ):
-            for item in items:
-                identifier = pending_id(item)
-                if identifier in entries:
-                    if origin not in entries[identifier]["origins"]:
-                        entries[identifier]["origins"].append(origin)
-                else:
-                    entries[identifier] = dict(
-                        id=identifier,
-                        kind=item["kind"],
-                        description=item["description"],
-                        resolution=None,
-                        origins=[origin],
-                    )
+    def _pending(old, finding, draft=None, request=None):
+        request = request or {"id": finding.get("request_id", "unknown")}
+        previous = {pending_id(item): item for item in old}
+        source_items = normalize_pending(request, finding, [])
+        source_ids = {pending_id(item) for item in source_items}
+        items = normalize_pending(request, finding, (draft or {}).get("pending", []))
+        entries = {}
+        for item in items:
+            identifier = pending_id(item)
+            prior = previous.get(identifier)
+            # Ni un nombre de check ni una resolución antigua bastan si cambió
+            # su hecho, alcance o versión. El historial conserva el cierre previo.
+            resolution = (
+                deepcopy(prior.get("resolution"))
+                if prior and _pending_basis(prior) == _pending_basis(item)
+                else None
+            )
+            origins = ["source"] if identifier in source_ids else ["draft"]
+            if identifier in source_ids and any(
+                pending_id(candidate) == identifier
+                for candidate in (draft or {}).get("pending", [])
+            ):
+                origins.append("draft")
+            entries[identifier] = {
+                **deepcopy(item),
+                "id": identifier,
+                "resolution": resolution,
+                "origins": origins,
+            }
         if len(entries) > 300:
             raise Conflict(
                 "Hay más de 300 pendientes en esta solicitud. Ajusta el mapa de fuentes."
             )
         return list(entries.values())
 
-    def start(self, case_id, version):
+    def start(self, case_id, version, *, before_draft=False):
         with self.lock, self.library.lock:
             if any(key[0] == case_id for key in self.active):
                 raise Conflict("Espera a que termine la comprobación antes de sincronizar fuentes.")
@@ -232,23 +265,30 @@ class ReviewService:
             draft_run = self.drafts_service.get(case_id)
             draft_current = draft_run["status"] in {"ready", "partial"} and not draft_run["stale"]
             results = {r["request_id"]: r for r in draft_run.get("results", [])}
-            if not previous and (
+            if not before_draft and not previous and (
                 not draft_current
                 or len(results) != len(findings)
                 or any(r["status"] == "error" for r in results.values())
             ):
                 raise Conflict("Prepara primero los borradores actuales de todas las solicitudes.")
-            for request in case["identification"]["requests"]:
-                request = {
-                    **request,
-                    "case_id": case_id,
-                    "allowed_collection_ids": case["allowed_collection_ids"],
-                }
+            for request in build_source_requests(
+                case, allowed_collection_ids=case["allowed_collection_ids"]
+            ):
+                if request["id"] not in findings:
+                    continue
                 finding, old = findings[request["id"]], previous.get(request["id"])
                 draft = (results.get(request["id"], {}).get("draft") or {}) if draft_current else {}
+                if results.get(request["id"], {}).get("status") == "error":
+                    draft = {}
+                expected_review = draft_run.get("review_snapshots", {}).get(request["id"])
+                if old and not old["paragraphs"] and expected_review and (
+                    self.drafts_service._review_input(old) != expected_review
+                ):
+                    draft = {}
                 supports = self._supports(request, finding, chunks)
-                pending = self._pending((old or {}).get("pending", []), finding, draft)
-                if old and old["base_fingerprint"] == fingerprint and not old["stale"]:
+                pending = self._pending((old or {}).get("pending", []), finding, draft, request)
+                adopting = bool(old and not old["paragraphs"] and draft.get("paragraphs"))
+                if old and old["base_fingerprint"] == fingerprint and not old["stale"] and not adopting:
                     continue
                 if old:
                     row = deepcopy(old)
@@ -263,6 +303,11 @@ class ReviewService:
                         label=request["label"],
                         title=request["title"],
                         description=request["description"],
+                        source_checks=deepcopy(finding.get("checks", [])),
+                        evidence_states=deepcopy(finding.get("evidence_states", [])),
+                        verifications=deepcopy(finding.get("verifications", [])),
+                        request_intent=deepcopy(finding.get("request_intent")),
+                        sufficiency=deepcopy(finding.get("sufficiency", {})),
                     )
                 else:
                     row = dict(
@@ -289,7 +334,16 @@ class ReviewService:
                         updated_at=now(),
                         edited_by=None,
                         check_thread_id=None,
+                        pre_draft=not bool(draft.get("paragraphs")),
+                        source_checks=deepcopy(finding.get("checks", [])),
+                        evidence_states=deepcopy(finding.get("evidence_states", [])),
+                        verifications=deepcopy(finding.get("verifications", [])),
+                        request_intent=deepcopy(finding.get("request_intent")),
+                        sufficiency=deepcopy(finding.get("sufficiency", {})),
                     )
+                if adopting:
+                    row.update(paragraphs=[{**p, "cited_fact_ids": []} for p in draft["paragraphs"]],
+                               draft_run_id=draft_run["id"], pre_draft=False)
                 self.store.save(
                     row,
                     expected=(old or {}).get("revision", 0),
@@ -338,8 +392,27 @@ class ReviewService:
 
     def edit(self, case_id, request_id, edit):
         body = edit.model_dump(mode="json") if hasattr(edit, "model_dump") else edit
+        body = deepcopy(body)
+
+        def canonical_paragraphs(paragraphs):
+            # La ausencia del campo ya significaba respuesta. Guardar esa misma
+            # opción no debe retirar una aprobación histórica ni cambiar texto.
+            result = deepcopy(paragraphs)
+            for paragraph in result:
+                if paragraph.get("office_section") == "response":
+                    paragraph.pop("office_section")
+            return result
+
+        body["paragraphs"] = canonical_paragraphs(body["paragraphs"])
         with self.lock:
             row = self._row(case_id, request_id, body["revision"], fresh=False)
+            if row["stale"] and any(
+                item["action"] != "open" for item in body["pending_resolutions"]
+            ):
+                raise Conflict(
+                    "Las fuentes cambiaron. Actualiza la preparación antes de confirmar "
+                    "o descartar un pendiente. El texto puede seguir editándose."
+                )
             self._check_references(row, body["paragraphs"], body["pending_resolutions"])
             pending = deepcopy(row["pending"])
             by_id = {item["id"]: item for item in pending}
@@ -353,6 +426,13 @@ class ReviewService:
                 if resolution["action"] == "open":
                     item["resolution"] = None
                     continue
+                if row.get("pre_draft") and resolution["action"] == "resolved":
+                    selected = [s for s in row["available_supports"]
+                                if s["chunk_id"] in resolution["cited_chunk_ids"]]
+                    if not selected or resolution["cited_fact_ids"]:
+                        raise ValueError("Antes de redactar, confirma con un pasaje documental o agrega la evidencia al expediente.")
+                    if item["kind"] == "document" and not any(s.get("role") == "document" for s in selected):
+                        raise ValueError("Localiza el documento solicitado; una norma o una mención no sustituye su archivo.")
                 if (
                     resolution["action"] == "resolved"
                     and item["kind"] == "document"
@@ -369,7 +449,10 @@ class ReviewService:
                 if old and all(old.get(key) == value[key] for key in value):
                     continue
                 item["resolution"] = {**value, "by": body["edited_by"], "at": now()}
-            if row["paragraphs"] == body["paragraphs"] and row["pending"] == pending:
+            if (
+                canonical_paragraphs(row["paragraphs"]) == body["paragraphs"]
+                and row["pending"] == pending
+            ):
                 return row
             row.update(paragraphs=body["paragraphs"], pending=pending, edited_by=body["edited_by"])
             invalidate(row)
@@ -465,7 +548,12 @@ class ReviewService:
                     "assessed_at": now(),
                     "model": self.settings.model,
                 }
-                pending = any(item["resolution"] is None for item in row["pending"])
+                pending = any(
+                    item["resolution"] is None
+                    and blocks_approval(item)
+                    and item.get("stage", "evidence") == "evidence"
+                    for item in row["pending"]
+                )
                 row.update(
                     assessment=assessment,
                     error=None,
@@ -504,7 +592,9 @@ class ReviewService:
                 or body["assessment_hash"] != fingerprint
                 or assessment["input_hash"] != fingerprint
                 or not row["paragraphs"]
-                or any(item["resolution"] is None for item in row["pending"])
+                or any(
+                    item["resolution"] is None and blocks_approval(item) for item in row["pending"]
+                )
             ):
                 raise Conflict(
                     "Comprueba y resuelve los pendientes de esta versión antes de aprobar."

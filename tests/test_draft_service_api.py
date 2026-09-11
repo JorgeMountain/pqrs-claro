@@ -399,8 +399,8 @@ def test_midflight_change_stales_keeps_draft_and_stops_next_calls(draft_app, cha
     try:
         assert engine.entered.wait(5)
         running = client.get(f"/api/cases/{case['id']}/drafts").json()
-        assert running["status"] == "running" and running["current_step"] == "redactar"
-        assert running["current_request_id"] == "P1"
+        assert running["status"] == "running"
+        assert running["request_states"]["P1"] == "redactar"
         assert generate(client, case).status_code == 409
         if change == "review":
             app.state.library.review(
@@ -416,7 +416,9 @@ def test_midflight_change_stales_keeps_draft_and_stops_next_calls(draft_app, cha
     run = wait_drafts(app, client, case)
     assert run["status"] == "stale" and run["stale"] is True, run
     assert run["results"][0]["draft"]["paragraphs"]
-    assert engine.calls == {("P1", "plan"): 1, ("P1", "write"): 1}
+    assert engine.calls[("P1", "plan")] == 1
+    assert engine.calls[("P1", "write")] == 1
+    assert engine.calls[("P1", "check")] == 0
 
 
 def test_restart_recovers_interrupted_run_and_checkpoint_without_repeating_steps(tmp_path):

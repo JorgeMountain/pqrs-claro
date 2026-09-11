@@ -48,6 +48,9 @@ function citations(ids, supports, showSource) {
 
 function pendingView(items, key, state) {
   if (!items.length) return null;
+  const isLater = (item) => item.stage === "fulfillment" && item.blocks_approval === false;
+  const evidence = items.filter((item) => !isLater(item));
+  const later = items.filter(isLater);
   const list = (rows) =>
     el(
       "ul",
@@ -60,13 +63,24 @@ function pendingView(items, key, state) {
       className: "response-pending",
       "aria-label": "Pendientes de esta respuesta",
     },
-    el("h4", {}, "Qué falta resolver"),
-    list(items.slice(0, 3)),
-    items.length > 3
+    evidence.length ? el("h4", {}, "Comprobaciones pendientes") : null,
+    evidence.length ? list(evidence.slice(0, 3)) : null,
+    evidence.length > 3
       ? detail(
-          `Ver los ${items.length - 3} pendientes restantes`,
-          list(items.slice(3)),
+          `Ver las ${evidence.length - 3} comprobaciones restantes`,
+          list(evidence.slice(3)),
           `${key}-pending`,
+          state,
+        )
+      : null,
+    later.length
+      ? detail(
+          `Actuaciones posteriores · ${later.length}`,
+          el("div", {},
+            el("p", { className: "small muted" },
+              "Se realizan durante el trámite. No son evidencias exigibles para aprobar el contenido de esta respuesta."),
+            list(later)),
+          `${key}-actions`,
           state,
         )
       : null,
@@ -261,6 +275,8 @@ export function draftsView({
     planificar: "Preparando el plan",
     redactar: "Redactando el borrador",
     comprobar: "Comprobando sus soportes",
+    ajustar_citas: "Ajustando las citas y la atribución",
+    recomprobar: "Comprobando el borrador ajustado",
   };
   const active = requests.find((item) => item.id === run?.current_request_id);
   const view = el(
