@@ -47,6 +47,9 @@ class OfficeMetadata(StrictModel):
     subject: str = Field(min_length=1, max_length=500)
     signer_name: str = Field(min_length=1, max_length=200)
     signer_role: str = Field(min_length=1, max_length=200)
+    introduction: str = Field(default="", max_length=6000)
+    salutation: str = Field(default="Cordial saludo.", min_length=1, max_length=300)
+    closing: str = Field(default="Atentamente,", min_length=1, max_length=300)
 
     @field_validator("*", mode="before")
     @classmethod

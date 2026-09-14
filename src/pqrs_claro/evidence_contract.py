@@ -98,7 +98,17 @@ def _reason(item):
 
 
 def _linked(item, sources):
+    # Una referencia explícita a un pasaje identifica SU archivo, no todos los
+    # registros con el mismo número de oficio (pueden ser versiones diferentes).
+    if _reason(item) in DOCUMENT_CHECKS and item.get("linked_chunk_ids"):
+        chunks = set(item["linked_chunk_ids"])
+        exact = sorted({s.get("source_id") or s.get("id") for s in sources
+                        if s.get("chunk_id") in chunks} - {None})
+        if exact:
+            return exact
     ids = set(item.get("linked_source_ids", []))
+    if ids:
+        return sorted(identifier for identifier in ids if identifier)
     description = _plain(item.get("description", ""))
     for source in sources:
         title = _plain(source.get("title") or source.get("filename") or "")

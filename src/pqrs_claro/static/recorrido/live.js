@@ -1,10 +1,10 @@
-import {createFinal} from './live-final.js';
+import {createFinal} from './live-document.js?v=20260911-document-tools';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
-import {createProposalPanel} from './live-proposal.js';
-import {createPendingActions} from './live-pending.js?v=20260911-predraft';
-import {createResponseEditor} from './live-edit.js';
-import {identification,responses,supports} from './live-views.js?v=20260911-predraft';
+import {createProposalPanel} from './live-proposal.js?v=20260911-document-tools';
+import {createPendingActions} from './live-pending.js?v=20260911-document-tools';
+import {createResponseEditor} from './live-edit.js?v=20260911-document-tools';
+import {identification,responses,supports} from './live-views.js?v=20260911-document-decisions';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
@@ -49,7 +49,7 @@ export function createLive({open,close,notice,releaseDemo}){
     if(!current.identification)renderAnalysis(view,current);
     else if(step===1)view.innerHTML=identification(data,state);
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
-    else view.replaceChildren(final.view());
+    else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
     if(current.error&&current.identification)view.insertAdjacentHTML('afterbegin',`<p role="alert" class="alert">${esc(current.error)}</p><button data-action="live-analyze">Reintentar identificación</button>`);
     if(step===1&&data){bindOriginal(state,number=>run(()=>loadPage(number)));release=bindSplitPane();}
     view.querySelectorAll("[data-pending-group]").forEach(e=>e.open=expanded.includes(e.dataset.pendingGroup));
@@ -132,7 +132,7 @@ export function createLive({open,close,notice,releaseDemo}){
   view.addEventListener('click',e=>{if(!current||busy)return;const b=e.target.closest('[data-action]');if(!b)return;const index=Number(b.dataset.index);
     run(async()=>{switch(b.dataset.action){
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=2;await refresh();break;}
-      case 'live-resume':await api(path('/preparation'),{version:current.version});step=2;await refresh();break;
+      case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
       case 'live-analyze':await api(path('/analyze'),{});await refresh();break;
       case 'live-responses':step=2;await refresh();break;
       case 'live-final':step=3;await refresh();await final.load();break;

@@ -43,9 +43,19 @@ class PendingResolutionInput(StrictModel):
     note: str = Field(default="", max_length=8000)
     cited_chunk_ids: list[Reference] = Field(default_factory=list, max_length=8)
     cited_fact_ids: list[Reference] = Field(default_factory=list, max_length=8)
+    document_decision: Literal["issued", "draft", "provenance_reviewed"] | None = None
+    document_source_id: Reference | None = None
 
     @model_validator(mode="after")
     def justified(self):
+        if self.document_decision:
+            if self.action != "resolved" or not self.document_source_id:
+                raise ValueError("La decisión documental requiere confirmar una fuente concreta.")
+            if self.cited_fact_ids or self.cited_chunk_ids or self.note.strip():
+                raise ValueError("La confirmación rápida utiliza la fuente y el texto fijados por el servidor.")
+            return self
+        if self.document_source_id:
+            raise ValueError("Indica la decisión sobre ese documento.")
         if self.action != "open" and not self.note.strip():
             raise ValueError("Explica cómo se resolvió el pendiente o por qué no aplica.")
         if self.action == "resolved" and not (self.cited_chunk_ids or self.cited_fact_ids):

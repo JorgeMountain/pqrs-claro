@@ -4,6 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 
 from .office_models import OfficeGenerate, OfficeInput
+from .office_workspace import WorkingInput, get_workspace, save_workspace
 
 
 def office_router(service):
@@ -16,6 +17,14 @@ def office_router(service):
     @router.post("/preview")
     def preview(case_id: str, body: OfficeInput):
         return service.preview(case_id, body)
+
+    @router.get("/workspace")
+    def workspace(case_id: str):
+        return get_workspace(service, case_id)
+
+    @router.put("/workspace")
+    def save_working(case_id: str, body: WorkingInput):
+        return save_workspace(service, case_id, body)
 
     @router.post("/generate", status_code=202)
     def generate(case_id: str, body: OfficeGenerate):

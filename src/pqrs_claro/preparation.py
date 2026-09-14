@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from .service import user_error
 from .storage import Conflict, now
@@ -13,6 +13,7 @@ from .storage import Conflict, now
 
 class PreparationVersion(BaseModel):
     version: int = Field(ge=1)
+    retry_analysis: StrictBool = False
 
 
 class PreparationService:
@@ -61,7 +62,7 @@ class PreparationService:
             job = self.start(case_id, case["version"], confirmed_from=version)
             return {"case": case, "preparation": job}
 
-    def start(self, case_id, version, confirmed_from=None):
+    def start(self, case_id, version, confirmed_from=None, *, retry_analysis=False):
         with self.lock:
             case = self.cases.get(case_id)
             if case["version"] != version or case["status"] != "confirmed":
@@ -69,7 +70,7 @@ class PreparationService:
             previous = self.get(case_id)
             if case_id in self.active:
                 return previous
-            if previous["status"] == "ready" and not previous["stale"]:
+            if previous["status"] == "ready" and not previous["stale"] and not retry_analysis:
                 mapping = self.sources.get(case_id)
                 if mapping["status"] == "ready" and not mapping["stale"]:
                     return previous
@@ -80,6 +81,7 @@ class PreparationService:
                 stage="sources",
                 confirmed_from=confirmed_from or previous.get("confirmed_from"),
                 error=None,
+                retry_analysis=retry_analysis,
             )
             self.save(job)
             self.active.add(case_id)
@@ -114,7 +116,7 @@ class PreparationService:
             self.check(job)
             mapping = self.sources.get(case_id)
             if mapping["status"] != "running":
-                self.sources.start(case_id, version)
+                self.sources.start(case_id, version, retry_analysis=job.get("retry_analysis", False))
             mapping = self.wait(self.sources, job)
             if mapping.get("stale") or mapping["status"] not in {"ready", "error"}:
                 raise ValueError(mapping.get("error") or "Actualiza la búsqueda de fuentes.")
@@ -191,6 +193,6 @@ def preparation_router(service):
 
     @router.post("/api/cases/{case_id}/preparation", status_code=202)
     def resume(case_id: str, body: PreparationVersion):
-        return service.start(case_id, body.version)
+        return service.start(case_id, body.version, retry_analysis=body.retry_analysis)
 
     return router

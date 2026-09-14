@@ -267,7 +267,8 @@ def _declaration_passage(proposed: str, original: str) -> tuple[bool, bool]:
     No publica una cita ensamblada. Sólo permite completar contexto omitido si
     cada bloque numerado coincide, en orden, dentro del mismo fragmento original.
     """
-    wanted, actual = " ".join(proposed.split()), " ".join(original.split())
+    wanted, actual = (" ".join(unicodedata.normalize("NFC", value).split())
+                      for value in (proposed, original))
     if wanted and wanted in actual:
         return True, False
     parts = re.split(r"(?<!\S)(?=\d{1,2}[.)]\s)", wanted)
@@ -289,6 +290,24 @@ def _historical_document_status(source: dict[str, Any]) -> str:
     if re.search(r"(?<![a-z0-9])x{3,}(?![a-z0-9])", name):
         return "draft"
     return str(source.get("document_status") or "unknown")
+
+
+def declaration_citation_errors(selection, candidates):
+    """Comprueba declaraciones opcionales sin confundirlas con lectura del archivo."""
+    index = {s["chunk_id"]: s for s in candidates}
+    selected = {s.chunk_id for s in selection.supports}
+    errors = []
+    for i, check in enumerate(selection.declared_checks):
+        source = index.get(check.chunk_id)
+        if (source and check.chunk_id in selected
+                and source.get("category") == "historical_response"
+                and _declaration_passage(check.declaration_quote, source["quote"])[0]):
+            continue
+        errors.append({"declaration_index": i, "chunk_id": check.chunk_id,
+                       "reason": "declaration_quote_not_literal_in_selected_response",
+                       "submitted_quote": check.declaration_quote,
+                       "candidate_quote": source.get("quote", "") if source else ""})
+    return errors
 
 
 def _allowed_roles(category: str | None, document_kind: str | None) -> tuple[str, ...]:
@@ -370,6 +389,8 @@ class OpenAISourceAssessor:
                 )
             parsed = response.output_parsed
             errors = coverage_citation_errors(parsed, api_candidates)
+            declaration_errors = declaration_citation_errors(parsed, api_candidates)
+            errors.extend(declaration_errors)
             selected = {item.chunk_id: item for item in parsed.supports}
             for aspect_index, coverage in enumerate(parsed.coverage):
                 for citation in coverage.citations:
@@ -389,6 +410,8 @@ class OpenAISourceAssessor:
                                        "selected_role": chosen.role, "effective_role": role,
                                        "allowed_uses": COVERAGE_USES_BY_ROLE.get(role, [])})
             try:
+                if declaration_errors and not attempt:
+                    raise DomainError("La declaración propuesta requiere corregir su cita literal.")
                 result = self._materialize_response(parsed, request, candidates, candidates_by_alias)
             except DomainError as exc:
                 if attempt:
@@ -401,6 +424,10 @@ class OpenAISourceAssessor:
                     "y los usos de cobertura. Conserva literalmente las citas que ya son válidas. "
                     "Para quote_not_literal_in_candidate, sustituye submitted_quote por un pasaje breve "
                     "y continuo copiado exactamente de candidate_quote, sin añadir conectores. "
+                    "Para declaration_quote_not_literal_in_selected_response, corrige declaration_quote "
+                    "del oficio seleccionado o retira esa declaración opcional si el pasaje no la acredita. "
+                    "No conviertas un fallo de cita generado por ti en un documento faltante o una "
+                    "comprobación humana; conserva las brechas de contenido que sí existan. "
                     "Si una afirmación no puede "
                     "respaldarse, conserva la brecha concreta en missing, fuera de coverage; "
                     "no inventes evidencia ni cambies su alcance. Un diagnóstico de documento no "
@@ -409,7 +436,8 @@ class OpenAISourceAssessor:
                 continue
             if repair_errors:
                 result["citation_validation"] = {"repair_attempts": 1,
-                    "initial_errors": repair_errors, "status": "validated_after_repair"}
+                    "initial_errors": repair_errors, "status": (
+                        "optional_declaration_omitted" if declaration_errors else "validated_after_repair")}
             return result
 
     def _materialize_response(self, parsed, request, candidates, candidates_by_alias):
@@ -823,6 +851,7 @@ class OpenAISourceAssessor:
         if "preliminar" not in summary.casefold():
             summary = f"Evaluación preliminar: {summary}"
         declared_checks = []
+        analysis_notices = []
         for check in selection.declared_checks:
             source = index.get(check.chunk_id)
             if not source or check.chunk_id not in selected_ids:
@@ -836,10 +865,13 @@ class OpenAISourceAssessor:
                 add_warning("No se registró una comprobación propuesta: su cita o su "
                             "atribución no coincidió con el oficio. Los otros respaldos "
                             "se conservan para revisión.")
-                add_missing("clarification", "Revisar la extracción de la comprobación "
-                            f"propuesta en «{source.get('title') or source['source_id']}»; "
-                            "no se pudo vincular literalmente al oficio.",
-                            reason_code="extraction_error")
+                analysis_notices.append({
+                    "code": "optional_declaration_citation_rejected",
+                    "source_id": source["source_id"], "chunk_id": source["chunk_id"],
+                    "message": "No se pudo asociar una comprobación propuesta por la IA con "
+                    "el pasaje exacto del oficio. Esa comprobación no se registró; los pasajes "
+                    "válidos y las dudas de contenido se conservan.",
+                })
                 continue
             if expanded:
                 add_warning("La comprobación se vinculó al pasaje completo del oficio, "
@@ -871,6 +903,7 @@ class OpenAISourceAssessor:
             "request_id": request["id"],
             "status": status,
             "verifications": declared_checks,
+            "analysis_notices": analysis_notices,
             "summary": summary,
             "missing": missing,
             "supports": supports,

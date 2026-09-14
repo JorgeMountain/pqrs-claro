@@ -1,3 +1,4 @@
+import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
 
 // Los cambios locales se conservan al cerrar el panel; solo Guardar escribe en el expediente.
@@ -29,7 +30,7 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
         <button type="button" id="response-reload" ${changedElsewhere?'':'hidden'}>Descartar cambios locales y cargar versión guardada</button>
         <div class="actionbar"><button class="primary" type="submit" ${changedElsewhere?'disabled':''}>Guardar cambios</button><button type="button" id="response-cancel">Cancelar</button></div>
         <p class="library-note">Cerrar el panel conserva el texto local mientras esta página siga abierta. Cancelar descarta los cambios sin guardar.</p></form>`;
-      const form=drawer.querySelector('form');
+      const form=drawer.querySelector('form');bindActor(form);draft.actor=form.querySelector('#response-actor').value;
       const error=form.querySelector('#response-edit-error');
       const saveButton=form.querySelector('[type="submit"]');
       const reload=form.querySelector('#response-reload');
@@ -51,7 +52,7 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
       reload.onclick=()=>{drafts.delete(key);void edit(requestId);};
       let saving=false;
       form.onsubmit=async event=>{
-        event.preventDefault();if(saving)return;error.textContent='';
+        event.preventDefault();if(saving)return;error.textContent='';draft.actor=form.querySelector('#response-actor').value;
         if(!draft.actor.trim()||draft.paragraphs.some(p=>!p.text.trim())){error.textContent='Escribe tu nombre y completa los párrafos, o quita los que estén vacíos.';return;}
         saving=true;form.querySelectorAll('button,input,textarea').forEach(el=>el.disabled=true);
         saveButton.textContent='Guardando…';

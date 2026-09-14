@@ -380,7 +380,7 @@ def test_coverage_without_citations_is_rejected_by_the_input_contract():
 @pytest.mark.parametrize(
     "changes",
     [
-        {"coverage_complete": False},
+        {"coverage_complete": False, "coverage": []},
         {"coverage_complete": True, "coverage": []},
     ],
 )

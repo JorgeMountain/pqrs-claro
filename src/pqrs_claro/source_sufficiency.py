@@ -115,13 +115,11 @@ def metadata_check_required(source, coverage, reason):
     """No necesita expedición oficial para explicar contenido atribuido y localizado."""
     if reason not in {"provenance", "issued_version"}:
         return True
-    if not coverage.get("coverage_complete"):
-        return True
     uses = coverage.get("source_uses", {}).get(source["source_id"], [])
     # Una fuente contextual no usada por ninguna afirmación no impone condiciones
     # a las afirmaciones que están cubiertas por otros archivos seleccionados.
     if not uses:
-        return False
+        return not coverage.get("coverage_complete")
     return not coverage.get("attribution_only_allowed") or set(uses) != {"attributed_content"}
 
 

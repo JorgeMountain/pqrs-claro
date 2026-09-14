@@ -10,6 +10,7 @@ from langgraph.types import Command
 
 from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError
+from .document_decisions import canonical_document_decision
 from .review_store import ReviewStore
 from .service import user_error
 from .source_assessment import _allowed_roles
@@ -390,7 +391,7 @@ class ReviewService:
             ):
                 raise ValueError("La resolución contiene referencias que ya no están disponibles.")
 
-    def edit(self, case_id, request_id, edit):
+    def edit(self, case_id, request_id, edit, *, prepare_only=False):
         body = edit.model_dump(mode="json") if hasattr(edit, "model_dump") else edit
         body = deepcopy(body)
 
@@ -426,6 +427,10 @@ class ReviewService:
                 if resolution["action"] == "open":
                     item["resolution"] = None
                     continue
+                if item.get("state") == "analysis_error":
+                    raise ValueError("Un error de análisis debe corregirse al actualizar las fuentes; no se resuelve con una confirmación.")
+                if resolution.get("document_decision"):
+                    resolution = canonical_document_decision(row, item, resolution)
                 if row.get("pre_draft") and resolution["action"] == "resolved":
                     selected = [s for s in row["available_supports"]
                                 if s["chunk_id"] in resolution["cited_chunk_ids"]]
@@ -445,6 +450,9 @@ class ReviewService:
                     k: resolution[k]
                     for k in ("action", "note", "cited_chunk_ids", "cited_fact_ids")
                 }
+                if resolution.get("document_decision"):
+                    value.update({k: resolution[k] for k in (
+                        "document_decision", "document_source_id", "document_version")})
                 old = item["resolution"]
                 if old and all(old.get(key) == value[key] for key in value):
                     continue
@@ -456,6 +464,8 @@ class ReviewService:
                 return row
             row.update(paragraphs=body["paragraphs"], pending=pending, edited_by=body["edited_by"])
             invalidate(row)
+            if prepare_only:
+                return row
             return self.store.save(
                 row, expected=body["revision"], event="edited", actor=body["edited_by"]
             )

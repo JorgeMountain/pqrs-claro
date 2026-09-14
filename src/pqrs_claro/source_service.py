@@ -18,7 +18,7 @@ from .source_retrieval import RetrievalIndex, retrieve
 from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 14
+SOURCE_ANALYSIS_VERSION = 15
 
 
 def retrieval_signature(data_dir):
@@ -73,18 +73,17 @@ class SourceService:
         case = self.cases.get(case_id)
         run = self.library.latest_run(case_id)
         sources = self.library.eligible(case_id)
-        fingerprint = digest(
-            {
-                "identification": case["identification"],
-                "catalog": self.catalog(case_id),
-                "verifications": self.verification_fingerprint(case_id, sources),
-                "sources": sources,
-                "model": self.settings.model,
-                "analysis_version": SOURCE_ANALYSIS_VERSION,
-                "retrieval": retrieval_signature(self.settings.data_dir),
-                "collections": self.library.linked_collections(case_id),
-            }
-        )
+        fingerprint_inputs = {
+            "identification": case["identification"],
+            "catalog": self.catalog(case_id),
+            "verifications": self.verification_fingerprint(case_id, sources),
+            "sources": sources,
+            "model": self.settings.model,
+            "analysis_version": SOURCE_ANALYSIS_VERSION,
+            "retrieval": retrieval_signature(self.settings.data_dir),
+            "collections": self.library.linked_collections(case_id),
+        }
+        fingerprint = digest(fingerprint_inputs)
         if not run:
             return dict(
                 status="idle",
@@ -97,6 +96,24 @@ class SourceService:
                 stale=False,
             )
         stale = run["fingerprint"] != fingerprint
+        # v15 repara declaraciones opcionales inválidas y simplifica pendientes.
+        # Un resultado v14 ya satisfactorio sigue siendo utilizable si TODAS sus
+        # entradas actuales coinciden. No se promueven errores ni se reescribe el run.
+        if (stale and SOURCE_ANALYSIS_VERSION == 15
+                and run.get("status") == "ready" and not run.get("error")):
+            results = run.get("results", [])
+            compatible = len(results) == case["request_count"] and all(
+                r.get("status") == "references_found"
+                and not r.get("error")
+                and not any(v.get("extraction_error") for v in r.get("verifications", []))
+                and "analysis_error" not in r.get("evidence_states", [])
+                and not any(m.get("state") == "analysis_error" for m in r.get("missing", []))
+                for r in results
+            )
+            if compatible:
+                previous = {**fingerprint_inputs, "analysis_version": 14,
+                            "retrieval": {**fingerprint_inputs["retrieval"], "version": 14}}
+                stale = run["fingerprint"] != digest(previous)
         return {
             **run,
             "status": "stale" if stale and run["status"] != "running" else run["status"],
@@ -104,7 +121,7 @@ class SourceService:
             "source_count": len(sources),
         }
 
-    def start(self, case_id, version):
+    def start(self, case_id, version, *, retry_analysis=False):
         with self.lock:
             case, sources, chunks, fingerprint = self.inputs(case_id)
             if case["status"] != "confirmed":
@@ -124,6 +141,7 @@ class SourceService:
             previous = self.library.latest_run(case_id)
             if (
                 previous
+                and not retry_analysis
                 and previous["fingerprint"] == fingerprint
                 and previous["status"] == "ready"
                 and not (
@@ -140,6 +158,8 @@ class SourceService:
                 and previous.get("retrieval_warning")
                 and retrieval_signature(self.settings.data_dir)["semantic_installed"]
             ):
+                retrieval_attempt = uuid4().hex
+            if retry_analysis:
                 retrieval_attempt = uuid4().hex
             # La aplicación de una comprobación humana cambia el resultado, pero
             # no exige repetir recuperación/IA de fuentes idénticas.

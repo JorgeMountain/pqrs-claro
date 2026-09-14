@@ -43,6 +43,16 @@ Registrar una decisión conserva el texto que ya exista. Si la solicitud todaví
 
 ## Revisión previa y redacción en paralelo
 
+### Confirmaciones documentales y fallos de cita
+
+Los pendientes de estado documental muestran «Es la versión expedida» y «Es un documento de trabajo». El panel identifica el archivo y su versión, permite abrir el original y pide el nombre de quien confirma. El servidor fija la explicación y el vínculo al archivo; no exige otro adjunto ni una explicación libre. «No lo sé / Volver» no registra una decisión. Un archivo identificado como borrador no puede declararse expedido mediante este atajo: debe incorporarse la versión correspondiente.
+
+La procedencia puede confirmarse con «Ya revisé este archivo», con el mismo registro de atribución. Estas decisiones pertenecen a la revisión del expediente; no cambian silenciosamente el catálogo global ni se trasladan a archivos distintos por compartir número de oficio. No certifican todos los hechos o anexos ni aprueban el oficio final. Si ya había texto, se conserva y queda pendiente de revisión.
+
+La IA tiene un reintento para corregir la cita de una comprobación declarada por un antecedente. Si esa declaración opcional sigue sin poder vincularse literalmente, se omite y aparece un detalle del análisis, conservando los pasajes válidos y las brechas de contenido. Los errores de lectura reales continúan siendo errores: no se pueden cerrar con «Confirmar» o «No aplica». «Reintentar análisis» inicia una nueva evaluación explícita, sin reutilizar el resultado fallido.
+
+Una brecha de contenido no vuelve a exigir el estado documental de afirmaciones ya cubiertas como contenido atribuido. Las fuentes sin cobertura y los usos que exigen autenticidad, expedición o entrega conservan sus controles. Los pasajes explícitos fijan el archivo de una comprobación; el número de oficio por sí solo no fusiona las versiones.
+
 Al terminar la búsqueda se crean los puntos de revisión antes de redactar. Cada solicitud sin borrador avanza cuando sus pendientes necesarios están resueltos; las actuaciones posteriores que no bloquean no impiden redactar. Las solicitudes listas se procesan con hasta tres trabajadores simultáneos, cada uno con su recorrido LangGraph de planificación, redacción y comprobación.
 
 Las decisiones incorporan su nota, atribución y pasajes disponibles al contexto de IA. Una decisión de no aplicabilidad no acredita por sí misma un hecho. En esta revisión previa, confirmar un pendiente requiere un pasaje disponible; un pendiente documental requiere soporte documental. Las decisiones no equivalen a aprobar la respuesta final.

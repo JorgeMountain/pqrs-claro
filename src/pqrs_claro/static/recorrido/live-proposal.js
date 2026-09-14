@@ -1,3 +1,4 @@
+import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
 
 export function createProposalPanel({open,close,notice,getCase,onSaved}) {
@@ -28,6 +29,7 @@ export function createProposalPanel({open,close,notice,getCase,onSaved}) {
           ${job.stale?'<button id="proposal-retry" class="primary">Solicitar una propuesta actualizada</button>':`<form id="proposal-apply"><label class="field">Tu nombre<input id="proposal-actor" required maxlength="240" value="${esc(actor)}"></label><button type="submit" class="primary">Aplicar propuesta</button></form>`}
           <button id="proposal-dismiss">Mantener mi texto y descartar propuesta</button><p id="proposal-error" role="alert"></p>`;
       }else panel.innerHTML=`<p>${esc(job.error||({idle:'Solicita una propuesta basada en la respuesta, los soportes y las decisiones guardadas.',dismissed:'Conservaste tu texto. La propuesta anterior quedó descartada.',applied:'La propuesta ya se aplicó a la respuesta.',interrupted:'La generación se interrumpió. Puedes solicitarla otra vez.'}[job.status]||'La propuesta no está disponible.'))}</p><button class="primary" id="proposal-retry">${job.status==='idle'?'Generar propuesta con IA':'Solicitar otra propuesta'}</button><p id="proposal-error" role="alert"></p>`;
+      bindActor(panel.querySelector('#proposal-apply'));
       panel.querySelector('#proposal-retry')?.addEventListener('click',()=>act(generate));
       panel.querySelector('#proposal-dismiss')?.addEventListener('click',()=>act(async()=>{job=await api(url+`/${job.id}/dismiss`,{});notice('Se conserva tu respuesta.');}));
       panel.querySelector('#proposal-apply')?.addEventListener('submit',event=>{

@@ -1,4 +1,4 @@
-import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260911-predraft';
+import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260911-document-decisions';
 import {esc,understanding,sourcesView} from './views.js';
 export function identification(data,state){
   let html=understanding(data,state);
@@ -48,6 +48,7 @@ export function responses(current,job,mapping,drafts,review){
       <div class="response-content">
         ${paragraphs.length?`<div class="response-copy">${paragraphs.map(p=>`<p>${esc(p.text)}</p>`).join('')}</div>`:`<p class="response-empty">${drafting?'<span class="source-spinner" aria-hidden="true"></span>':responseIcon('document')}<span>${emptyMessage}</span></p>`}
         ${draft?.error?`<p class="alert" role="alert">${esc(draft.error)}</p>`:''}
+        ${finding?.analysis_notices?.length?`<details class="pending-disclosure"><summary>Detalle del análisis de citas</summary>${finding.analysis_notices.map(n=>`<p class="library-note">${esc(n.message)}</p>`).join('')}</details>`:''}
         ${row?pendingCards(row,i):pending.length?`<details class="pending-disclosure" data-pending-group="${esc(r.id)}"><summary>${pending.length} puntos detectados</summary><p class="library-note">Puedes consultarlos ahora. Las decisiones se habilitan al terminar la búsqueda.</p>${pending.map(p=>`<section class="live-pending-item"><p>${esc(p.description)}</p>${p.why_unresolved?`<p>${esc(p.why_unresolved)}</p>`:""}</section>`).join("")}</details>`:''}
       </div>
       <div class="response-toolbar">

@@ -499,7 +499,9 @@ def test_invalid_declared_check_does_not_discard_valid_supports_or_invent_a_fact
     )
     assert result["supports"][0]["quote"] == source["quote"]
     assert result["verifications"] == []
-    assert set(result["evidence_states"]) == {"support_found", "analysis_error"}
+    assert set(result["evidence_states"]) == {"support_found"}
+    assert result["analysis_notices"][0]["code"] == "optional_declaration_citation_rejected"
+    assert not result["missing"]
 
 
 def test_source_graph_recovers_after_failure_without_repeating_retrieval(tmp_path):

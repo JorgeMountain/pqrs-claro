@@ -708,6 +708,8 @@ def _api_context(request: dict, finding: dict, index: dict[str, dict]) -> tuple[
             "human_decisions": [
                 {"description": p["description"], "affected_claim": p.get("affected_claim"),
                  "action": p["resolution"]["action"], "note": p["resolution"]["note"],
+                 "document_decision": p["resolution"].get("document_decision"),
+                 "document_version": p["resolution"].get("document_version"),
                  "by": p["resolution"].get("by"), "at": p["resolution"].get("at"),
                  "cited_chunk_ids": [aliases[c] for c in p["resolution"].get("cited_chunk_ids", []) if c in aliases]}
                 for p in finding.get("human_decisions", [])

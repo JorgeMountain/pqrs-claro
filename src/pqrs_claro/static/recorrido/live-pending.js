@@ -1,5 +1,7 @@
+import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
-import {decisionForm,factForm,when} from './live-pending-view.js?v=20260911-predraft';
+import {decisionForm,factForm,when} from './live-pending-view.js?v=20260911-document-decisions';
+import {documentDecisionForm} from './document-decision.js';
 
 export function createPendingActions({open,close,notice,getCase,onSaved,upload}) {
   let actor='';
@@ -17,6 +19,7 @@ export function createPendingActions({open,close,notice,getCase,onSaved,upload})
     return row;
   }
   function bind(form,work) {
+    bindActor(form);
     let saving=false;
     form.querySelector('#pending-cancel').onclick=close;
     form.onsubmit=async event=>{
@@ -28,7 +31,8 @@ export function createPendingActions({open,close,notice,getCase,onSaved,upload})
     };
   }
   async function decide(requestId,pendingId,action) {
-    if(!['resolved','not_applicable','open','detail'].includes(action))return;
+    const quick=['issued','draft','provenance_reviewed'].includes(action);
+    if(!quick&&!['resolved','not_applicable','open','detail'].includes(action))return;
     const id=getCase()?.id;if(!id)return;
     open('Decisión sobre este punto','<p id="pending-loading" role="status">Cargando el punto y sus soportes…</p>');
     const marker=document.querySelector('#pending-loading'),body=document.querySelector('#drawer-body');
@@ -42,6 +46,21 @@ export function createPendingActions({open,close,notice,getCase,onSaved,upload})
         return;
       }
       if(row.stale&&action!=='open')throw new Error('Actualiza las fuentes de esta respuesta antes de registrar una decisión.');
+      if(quick){
+        const view=documentDecisionForm(row,p,action,actor);body.innerHTML=view.html;
+        const form=document.querySelector('#pending-decision-form');
+        bind(form,async()=>{
+          if(getCase()?.id!==id)throw new Error('Cambió el expediente abierto.');
+          const name=form.querySelector('#pending-actor').value.trim();
+          if(!name)throw new Error('Indica tu nombre para registrar la decisión.');
+          const saved=await api(prefix(id)+`/requests/${encodeURIComponent(requestId)}`,{
+            revision:row.revision,edited_by:name,paragraphs:row.paragraphs,
+            pending_resolutions:[{pending_id:pendingId,action:'resolved',document_decision:action,document_source_id:view.source.source_id}]
+          },'PUT');
+          actor=name;if(form.isConnected)close();await onSaved(saved);notice('Decisión documental guardada. Se conserva el alcance de esta versión.');
+        });
+        form.querySelector(actor?'button[type="submit"]':'input')?.focus();return;
+      }
       const view=decisionForm(row,p,action,actor);body.innerHTML=view.html;
       const form=document.querySelector('#pending-decision-form');
       const select=form.querySelector('#pending-support');

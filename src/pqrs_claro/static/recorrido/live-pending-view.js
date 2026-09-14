@@ -1,4 +1,5 @@
 import {esc} from './views.js';
+import {documentTarget} from './document-decision.js';
 export const isLater=p=>p.stage==='fulfillment'&&p.blocks_approval===false;
 export const isOpen=p=>!p.resolution||p.resolution.action==='open';
 export const when=value=>value?new Intl.DateTimeFormat('es-CO',{dateStyle:'short',timeStyle:'short'}).format(new Date(value)):'';
@@ -6,10 +7,18 @@ export const when=value=>value?new Intl.DateTimeFormat('es-CO',{dateStyle:'short
 export function pendingCards(row,index) {
   if(!row?.pending?.length)return '';
   const button=(action,p,label)=>`<button data-action="live-pending" data-index="${index}" data-pending="${esc(p.id)}" data-decision="${action}">${label}</button>`;
+  const actions=p=>{
+    if(p.state==='analysis_error')return '<p class="library-note">Este problema debe corregirse en el análisis. No necesitas confirmarlo ni inventar un respaldo.</p><button data-action="live-resume" data-retry-analysis="true">Reintentar análisis</button>';
+    if(row.stale)return '';
+    const target=documentTarget(row,p);
+    if(target&&p.reason_code==='issued_version')return `${target.document_status!=='draft'&&!/\bXXX+/i.test(target.title)?button('issued',p,'Es la versión expedida'):''}${button('draft',p,'Es un documento de trabajo')}<small>No lo sé: puedes dejarlo pendiente y consultar el original.</small>`;
+    if(target&&p.reason_code==='provenance')return button('provenance_reviewed',p,'Ya revisé este archivo');
+    return button('resolved',p,isLater(p)?'Registrar realización':'Confirmar con respaldo')+button('not_applicable',p,'No aplica este pendiente');
+  };
   const render=p=>`<section class="live-pending-item"><strong>${isOpen(p)?isLater(p)?'Actuación posterior':'Por resolver':p.resolution.action==='not_applicable'?'Pendiente marcado como no aplicable':'Decisión confirmada'}</strong><p>${esc(p.description)}</p>${p.why_unresolved?`<p class="library-note"><strong>Por qué:</strong> ${esc(p.why_unresolved)}</p>`:""}
     ${isLater(p)?'<p class="library-note">Puede realizarse después de revisar el contenido. Confirmarla registra su ejecución, no solo la intención de realizarla.</p>':''}
     ${row.stale?'<p class="library-note">Las fuentes cambiaron. Actualiza la preparación para decidir sobre el respaldo vigente.</p>':''}
-    ${isOpen(p)?`<div class="scope-actions">${!row.stale?button('resolved',p,isLater(p)?'Registrar realización':'Confirmar con respaldo')+button('not_applicable',p,'No aplica este pendiente'):''}<button data-action="live-evidence" data-index="${index}">Agregar evidencia</button></div>`:`<p>${esc(p.resolution.note)}</p><small>${esc(p.resolution.by)} · ${esc(when(p.resolution.at))}</small><div class="scope-actions">${button('detail',p,'Ver decisión y respaldo')}${button('open',p,'Reabrir')}</div>`}
+    ${isOpen(p)?`<div class="scope-actions">${actions(p)}${p.state!=='analysis_error'?`<button data-action="live-evidence" data-index="${index}">Agregar evidencia</button>`:''}</div>`:`<p>${esc(p.resolution.note)}</p><small>${esc(p.resolution.by)} · ${esc(when(p.resolution.at))}</small><div class="scope-actions">${button('detail',p,'Ver decisión y respaldo')}${button('open',p,'Reabrir')}</div>`}
   </section>`;
   const pending=row.pending.filter(isOpen),done=row.pending.filter(p=>!isOpen(p));
   return `<details class="pending-disclosure" data-pending-group="${esc(row.request_id)}"><summary>${pending.length?`${pending.length} ${pending.length===1?"punto por revisar":"puntos por revisar"}`:"Decisiones registradas"}${row.pre_draft?" · antes de redactar":""}</summary><section class="live-pending-list" aria-label="Decisiones de esta respuesta">${pending.map(render).join('')}${done.length?`<details><summary>${done.length} ${done.length===1?'decisión registrada':'decisiones registradas'}</summary>${done.map(render).join('')}</details>`:''}<button class="text-button" data-action="live-pending-history" data-index="${index}">Historial de decisiones</button></section></details>`;

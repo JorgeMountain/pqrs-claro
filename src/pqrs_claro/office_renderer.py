@@ -338,7 +338,7 @@ def build_document(
     return document
 
 
-def _blocks(document: dict) -> list[dict]:
+def _blocks(document: dict, *, working=False) -> list[dict]:
     """Una sola secuencia define lo visible en el DOCX y lo exigido al PDF."""
     metadata = document["metadata"]
     issued = date.fromisoformat(metadata["issue_date"])
@@ -369,7 +369,7 @@ def _blocks(document: dict) -> list[dict]:
     if metadata["petition_number"] and metadata["petition_number"] not in subject:
         subject += " · Radicado " + metadata["petition_number"]
     add("subject", "Asunto: " + subject)
-    add("salutation", "Cordial saludo.")
+    add("salutation", metadata.get("salutation", "Cordial saludo."))
     intro = "En atención a su petición"
     if metadata["petition_number"]:
         intro += ", identificada con el radicado " + metadata["petition_number"]
@@ -378,7 +378,7 @@ def _blocks(document: dict) -> list[dict]:
         intro += f", recibida el {received.day} de {_MONTHS[received.month - 1]} de {received.year}"
     if document.get("petition_subject"):
         intro += ", relacionada con «" + document["petition_subject"] + "»"
-    add("intro", intro + ", se da respuesta a los numerales que se presentan a continuación.")
+    add("intro", metadata.get("introduction") or intro + ", se da respuesta a los numerales que se presentan a continuación.")
     known = {item["number"] for item in document["references"]}
 
     def numbered_label(request):
@@ -388,7 +388,7 @@ def _blocks(document: dict) -> list[dict]:
 
     def paragraph_block(kind, paragraph, origins):
         numbers = paragraph["reference_numbers"]
-        if not numbers or not set(numbers) <= known:
+        if not working and (not numbers or not set(numbers) <= known):
             raise DomainError("La vista previa contiene referencias inválidas.")
         bookmarks = [f"response_{i}_{j}" for i, j in origins]
         request_ids = list(dict.fromkeys(document["requests"][i]["request_id"] for i, _ in origins))
@@ -460,7 +460,7 @@ def _blocks(document: dict) -> list[dict]:
         add("heading", "Conclusión")
         for paragraph, origins in conclusions:
             paragraph_block("conclusion", paragraph, origins)
-    add("closing", "Atentamente,")
+    add("closing", metadata.get("closing", "Atentamente,"))
     add("signer", metadata["signer_name"])
     add("signer_role", metadata["signer_role"])
     # Las referencias y el alcance quedan en los datos canónicos y la revisión.
