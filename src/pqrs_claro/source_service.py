@@ -3,6 +3,7 @@
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from copy import deepcopy
 from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -14,11 +15,19 @@ from .source_assessment import OpenAISourceAssessor
 from .source_context import build_source_requests
 from .source_graph import build_source_graph
 from .source_library import digest
+from .source_passages import PASSAGE_SELECTION_VERSION, diagnostic
 from .source_retrieval import RetrievalIndex, retrieve
 from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
 from .storage import Conflict, now
 
 SOURCE_ANALYSIS_VERSION = 15
+
+
+def failed_finding(request_id, exc):
+    return dict(request_id=request_id, status="error", evidence_states=["analysis_error"],
+                summary=user_error(exc), supports=[], missing=[], warnings=[],
+                analysis_diagnostic=getattr(exc, "diagnostic", None) or diagnostic(
+                    "evidence_contract_error" if isinstance(exc, ValueError) else "internal_error"))
 
 
 def retrieval_signature(data_dir):
@@ -121,7 +130,22 @@ class SourceService:
             "source_count": len(sources),
         }
 
-    def start(self, case_id, version, *, retry_analysis=False):
+    def validate_failed_retry(self, case_id, version):
+        case, _, _, fingerprint = self.inputs(case_id)
+        previous = self.library.latest_run(case_id)
+        if case["version"] != version or case["status"] != "confirmed":
+            raise Conflict("El expediente cambió. Revisa las solicitudes antes de continuar.")
+        if (not previous or previous["fingerprint"] != fingerprint
+                or previous["status"] == "running"):
+            raise Conflict("Las fuentes o el expediente cambiaron. Actualiza la búsqueda completa.")
+        ids = {r["id"] for r in case["identification"]["requests"]}
+        results = previous.get("results", [])
+        if (len(results) != len(ids) or {r["request_id"] for r in results} != ids
+                or not any(r["status"] == "error" for r in results)):
+            raise Conflict("No hay un análisis completo con solicitudes fallidas para reintentar.")
+        return previous
+
+    def start(self, case_id, version, *, retry_analysis=False, retry_failed_only=False):
         with self.lock:
             case, sources, chunks, fingerprint = self.inputs(case_id)
             if case["status"] != "confirmed":
@@ -139,9 +163,16 @@ class SourceService:
                     "Carga al menos una norma o un soporte de este caso antes de buscar."
                 )
             previous = self.library.latest_run(case_id)
+            if retry_analysis and retry_failed_only:
+                raise Conflict("Elige reintentar los errores o actualizar todo el análisis.")
+            if retry_failed_only:
+                previous = self.validate_failed_retry(case_id, version)
+                if previous["fingerprint"] != fingerprint:
+                    raise Conflict("Las fuentes cambiaron. Actualiza la búsqueda completa.")
             if (
                 previous
                 and not retry_analysis
+                and not retry_failed_only
                 and previous["fingerprint"] == fingerprint
                 and previous["status"] == "ready"
                 and not (
@@ -159,7 +190,7 @@ class SourceService:
                 and retrieval_signature(self.settings.data_dir)["semantic_installed"]
             ):
                 retrieval_attempt = uuid4().hex
-            if retry_analysis:
+            if retry_analysis or retry_failed_only:
                 retrieval_attempt = uuid4().hex
             # La aplicación de una comprobación humana cambia el resultado, pero
             # no exige repetir recuperación/IA de fuentes idénticas.
@@ -170,22 +201,30 @@ class SourceService:
                 "retrieval": retrieval_signature(self.settings.data_dir),
                 "collections": case["allowed_collection_ids"],
             })
+            retained = ([deepcopy(r) for r in previous["results"] if r["status"] != "error"]
+                        if retry_failed_only else [])
+            retry_ids = ([r["request_id"] for r in previous["results"] if r["status"] == "error"]
+                         if retry_failed_only else [])
             run = dict(
                 id=uuid4().hex,
                 analysis_fingerprint=analysis_fingerprint,
                 case_id=case_id,
                 status="running",
                 fingerprint=fingerprint,
-                results=[],
+                results=retained,
                 source_count=len(sources),
                 source_snapshot=sources,
                 allowed_collection_ids=case["allowed_collection_ids"],
                 searched_at=now(),
                 error=None,
-                completed_count=0,
+                completed_count=len(retained),
                 total_count=len(case["identification"]["requests"]),
                 stale=False,
                 retrieval_attempt=retrieval_attempt,
+                retry_request_ids=retry_ids,
+                retry_of_run_id=previous["id"] if retry_failed_only else None,
+                passage_selection_version=PASSAGE_SELECTION_VERSION,
+                shared_checks=group_checks(retained),
             )
             self.library.save_run(run)
             self.active.add(case_id)
@@ -219,7 +258,9 @@ class SourceService:
             retrieval_lock = threading.RLock()
             concurrency = min(3, max(1, getattr(self.settings, "source_concurrency", 3)))
             run["concurrency"] = concurrency
-            run["request_states"] = {request["id"]: "queued" for request in requests}
+            retained_ids = {r["request_id"] for r in run["results"]}
+            run["request_states"] = {r["id"]: "completed" if r["id"] in retained_ids else "queued"
+                                     for r in requests}
             # Initialize SQLite/WAL once before concurrent connections open it.
             with SqliteSaver.from_conn_string(str(self.settings.data_dir / "source_checkpoints.sqlite")) as warmup:
                 warmup.get_tuple({"configurable": {"thread_id": "__schema_initialization__"}})
@@ -268,19 +309,11 @@ class SourceService:
                             ))}
                         return finding
                     except Exception as exc:
-                        return dict(
-                            request_id=request["id"],
-                            status="error",
-                            evidence_states=["analysis_error"],
-                            summary=user_error(exc),
-                            supports=[],
-                            missing=[],
-                            warnings=[],
-                        )
+                        return failed_finding(request["id"], exc)
 
             with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="source-request") as workers:
                 pending = {}
-                remaining = iter(requests)
+                remaining = iter(r for r in requests if r["id"] not in retained_ids)
 
                 def fill_slots():
                     while len(pending) < concurrency:
@@ -299,9 +332,7 @@ class SourceService:
                         try:
                             finding = future.result()
                         except Exception as exc:
-                            finding = dict(request_id=request["id"], status="error",
-                                           evidence_states=["analysis_error"], summary=user_error(exc),
-                                           supports=[], missing=[], warnings=[])
+                            finding = failed_finding(request["id"], exc)
                         run["results"].append(finding)
                         run["results"].sort(key=lambda item: order[item["request_id"]])
                         run["request_states"][request["id"]] = "error" if finding["status"] == "error" else "completed"

@@ -1,7 +1,7 @@
 import {showPetitionUpload} from './petition-upload.js';
 import {createEvidenceUpload} from './evidence-upload.js';
 import {createLibrary} from './library.js?v=20260911-source-spinner';
-import {createLive} from './live.js?v=20260911-document-tools';
+import {createLive} from './live.js?v=20260914-passages';
 import {confirmScope,reopenScope,recordDecision,rejectionForm,scopeStatement} from './quick-confirmation.js';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import './workspace-menu.js';

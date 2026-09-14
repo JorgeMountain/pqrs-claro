@@ -162,7 +162,10 @@ def test_assessment_uses_structured_responses_and_literal_references():
     assert calls[0]["store"] is False
     assert calls[0]["truncation"] == "disabled"
     sent = json.loads(calls[0]["input"])["candidates"][0]
-    assert sent == {**original, "chunk_id": "C1", "allowed_roles": ["fact", "document"]}
+    from pqrs_claro.source_passages import numbered_lines
+    assert sent == {**{k: v for k, v in original.items() if k != "quote"}, "chunk_id": "C1",
+                    "allowed_roles": ["fact", "document"],
+                    "numbered_lines": numbered_lines(original["quote"])}
     assert original["chunk_id"] == "acta-1"
     assert result["request_id"] == "P1"
     assert result["supports"][0]["quote"] == original["quote"]
@@ -206,8 +209,10 @@ def test_assessor_maps_closed_aliases_to_exact_original_chunks_in_selection_orde
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=fake_parse))
     result = assessor.assess(request(), originals)
     sent = json.loads(calls[0]["input"])["candidates"]
+    from pqrs_claro.source_passages import numbered_lines
     assert sent == [
-        {**source, "chunk_id": f"C{i}", "allowed_roles": ["fact", "document"]}
+        {**{k: v for k, v in source.items() if k != "quote"}, "chunk_id": f"C{i}",
+         "allowed_roles": ["fact", "document"], "numbered_lines": numbered_lines(source["quote"])}
         for i, source in enumerate(originals, 1)
     ]
     assert [support["chunk_id"] for support in result["supports"]] == [
@@ -259,7 +264,7 @@ def test_api_allowed_roles_and_local_rejection_share_the_same_contract(
         assessor.assess(inquiry, [source])
     sent = json.loads(calls[0]["input"])["candidates"][0]
     assert sent["allowed_roles"] == expected_roles
-    assert sent["quote"] == source["quote"]
+    assert "".join(line["text"] for line in sent["numbered_lines"]) == source["quote"]
     assert "allowed_roles" not in source
 
 

@@ -14,6 +14,7 @@ from .storage import Conflict, now
 class PreparationVersion(BaseModel):
     version: int = Field(ge=1)
     retry_analysis: StrictBool = False
+    retry_failed_only: StrictBool = False
 
 
 class PreparationService:
@@ -62,7 +63,8 @@ class PreparationService:
             job = self.start(case_id, case["version"], confirmed_from=version)
             return {"case": case, "preparation": job}
 
-    def start(self, case_id, version, confirmed_from=None, *, retry_analysis=False):
+    def start(self, case_id, version, confirmed_from=None, *, retry_analysis=False,
+              retry_failed_only=False):
         with self.lock:
             case = self.cases.get(case_id)
             if case["version"] != version or case["status"] != "confirmed":
@@ -70,7 +72,12 @@ class PreparationService:
             previous = self.get(case_id)
             if case_id in self.active:
                 return previous
-            if previous["status"] == "ready" and not previous["stale"] and not retry_analysis:
+            if retry_failed_only:
+                if retry_analysis:
+                    raise Conflict("Elige reintentar los errores o actualizar todo el análisis.")
+                self.sources.validate_failed_retry(case_id, version)
+            if (previous["status"] == "ready" and not previous["stale"]
+                    and not retry_analysis and not retry_failed_only):
                 mapping = self.sources.get(case_id)
                 if mapping["status"] == "ready" and not mapping["stale"]:
                     return previous
@@ -82,6 +89,7 @@ class PreparationService:
                 confirmed_from=confirmed_from or previous.get("confirmed_from"),
                 error=None,
                 retry_analysis=retry_analysis,
+                retry_failed_only=retry_failed_only,
             )
             self.save(job)
             self.active.add(case_id)
@@ -115,8 +123,11 @@ class PreparationService:
         try:
             self.check(job)
             mapping = self.sources.get(case_id)
+            if mapping["status"] == "running" and job.get("retry_failed_only"):
+                raise Conflict("Ya hay otra búsqueda en curso. Espera a que termine.")
             if mapping["status"] != "running":
-                self.sources.start(case_id, version, retry_analysis=job.get("retry_analysis", False))
+                self.sources.start(case_id, version, retry_analysis=job.get("retry_analysis", False),
+                                   retry_failed_only=job.get("retry_failed_only", False))
             mapping = self.wait(self.sources, job)
             if mapping.get("stale") or mapping["status"] not in {"ready", "error"}:
                 raise ValueError(mapping.get("error") or "Actualiza la búsqueda de fuentes.")
@@ -193,6 +204,7 @@ def preparation_router(service):
 
     @router.post("/api/cases/{case_id}/preparation", status_code=202)
     def resume(case_id: str, body: PreparationVersion):
-        return service.start(case_id, body.version, retry_analysis=body.retry_analysis)
+        return service.start(case_id, body.version, retry_analysis=body.retry_analysis,
+                             retry_failed_only=body.retry_failed_only)
 
     return router

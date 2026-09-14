@@ -36,5 +36,6 @@
 @media(pointer:coarse){.response-toolbar button,.response-content .scope-actions button{min-height:44px}}
 
 .response-search-status{align-self:center;font-size:10px;color:var(--muted);padding:3px 7px;border-radius:4px;background:#f2f5f0}
+.source-retry{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.source-retry-copy{flex:1 1 300px;min-width:0}.source-retry button{max-width:100%}
 
 .pending-disclosure{margin:8px 0;color:#805a20;font-size:12px}.pending-disclosure>summary{cursor:pointer;font-weight:600;padding:8px 0}.pending-disclosure[open]>summary{border-bottom:1px solid #eee7d8}.pending-disclosure summary:focus-visible{outline:2px solid var(--green);outline-offset:3px}.pre-draft-notice{padding:14px 18px;border:1px solid #dbe4d7;border-radius:8px;background:#f3f7f0;margin:16px 0;font-size:14px}.pre-draft-notice p{margin:5px 0 0;font-size:13px;line-height:1.5}

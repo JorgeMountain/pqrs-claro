@@ -4,7 +4,7 @@ import {esc} from './views.js';
 import {createProposalPanel} from './live-proposal.js?v=20260911-document-tools';
 import {createPendingActions} from './live-pending.js?v=20260911-document-tools';
 import {createResponseEditor} from './live-edit.js?v=20260911-document-tools';
-import {identification,responses,supports} from './live-views.js?v=20260911-document-decisions';
+import {identification,responses,supports} from './live-views.js?v=20260914-passages';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
@@ -132,6 +132,7 @@ export function createLive({open,close,notice,releaseDemo}){
   view.addEventListener('click',e=>{if(!current||busy)return;const b=e.target.closest('[data-action]');if(!b)return;const index=Number(b.dataset.index);
     run(async()=>{switch(b.dataset.action){
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=2;await refresh();break;}
+      case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
       case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
       case 'live-analyze':await api(path('/analyze'),{});await refresh();break;
       case 'live-responses':step=2;await refresh();break;

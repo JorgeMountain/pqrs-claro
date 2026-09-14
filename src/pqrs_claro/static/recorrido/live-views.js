@@ -1,5 +1,6 @@
 import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260911-document-decisions';
 import {esc,understanding,sourcesView} from './views.js';
+import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
 export function identification(data,state){
   let html=understanding(data,state);
   html=html.replace('PETICIÓN DE DEMOSTRACIÓN','PETICIÓN · '+esc(data.subject));
@@ -18,7 +19,9 @@ export function responses(current,job,mapping,drafts,review){
   if(running)html+=preparationProgress(job,mapping,current.request_count,drafts);
   if(job.status==='waiting_review')html+=`<section class="pre-draft-notice"><strong>Revisa los puntos antes de redactar</strong><p>Abre los puntos de cada solicitud, confirma su respaldo o explica por qué no aplican. Las solicitudes listas se redactan automáticamente; las demás conservan su avance.</p></section>`;
   if(job.error)html+=`<div class="alert" role="alert">${esc(job.error)}</div>`;
-  if(!running&&(job.status!=='ready'||job.stale||mapping.stale))html+=`<div class="actionbar"><p>Se conserva el avance guardado.</p><button class="primary" data-action="live-resume">${job.status==='idle'?'Continuar con las respuestas':job.status==='waiting_review'?'Reintentar o actualizar fuentes':'Continuar o actualizar preparación'}</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
+  const retryAction=retryFailedAction(mapping,running);
+  html+=retryAction;
+  if(!running&&!retryAction&&(job.status!=='ready'||job.stale||mapping.stale))html+=`<div class="actionbar"><p>Se conserva el avance guardado.</p><button class="primary" data-action="live-resume">${job.status==='idle'?'Continuar con las respuestas':job.status==='waiting_review'?'Reintentar o actualizar fuentes':'Continuar o actualizar preparación'}</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
   html+=current.identification.requests.map((r,i)=>{
     const finding=mapping.results?.find(x=>x.request_id===r.id),row=review.requests?.find(x=>x.request_id===r.id),draft=drafts.results?.find(x=>x.request_id===r.id);
     const states=(finding?.evidence_states||[]).filter(state=>{
@@ -48,6 +51,7 @@ export function responses(current,job,mapping,drafts,review){
       <div class="response-content">
         ${paragraphs.length?`<div class="response-copy">${paragraphs.map(p=>`<p>${esc(p.text)}</p>`).join('')}</div>`:`<p class="response-empty">${drafting?'<span class="source-spinner" aria-hidden="true"></span>':responseIcon('document')}<span>${emptyMessage}</span></p>`}
         ${draft?.error?`<p class="alert" role="alert">${esc(draft.error)}</p>`:''}
+        ${analysisErrorDetail(finding)}
         ${finding?.analysis_notices?.length?`<details class="pending-disclosure"><summary>Detalle del análisis de citas</summary>${finding.analysis_notices.map(n=>`<p class="library-note">${esc(n.message)}</p>`).join('')}</details>`:''}
         ${row?pendingCards(row,i):pending.length?`<details class="pending-disclosure" data-pending-group="${esc(r.id)}"><summary>${pending.length} puntos detectados</summary><p class="library-note">Puedes consultarlos ahora. Las decisiones se habilitan al terminar la búsqueda.</p>${pending.map(p=>`<section class="live-pending-item"><p>${esc(p.description)}</p>${p.why_unresolved?`<p>${esc(p.why_unresolved)}</p>`:""}</section>`).join("")}</details>`:''}
       </div>

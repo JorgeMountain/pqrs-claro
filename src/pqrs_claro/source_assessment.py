@@ -19,6 +19,13 @@ from .source_documents import (
     requested_certification,
     requested_document,
 )
+from .source_passages import (
+    PassageRange,
+    SourceAnalysisError,
+    diagnostic,
+    numbered_lines,
+    resolve_passages,
+)
 from .source_retrieval import HISTORICAL_CATEGORIES, source_in_scope
 from .source_sufficiency import (
     COVERAGE_USES_BY_ROLE,
@@ -81,10 +88,24 @@ class _SourceSelection(StrictModel):
     coverage: list[_Coverage] = Field(default_factory=list, max_length=20)
 
 
+class _LocatedCoverage(_Coverage):
+    citations: list[PassageRange] = Field(min_length=1, max_length=8)
+
+
+class _LocatedDeclaredCheck(PassageRange):
+    fact: str = Field(min_length=1, max_length=2000)
+    basis: str = Field(min_length=1, max_length=2000)
+
+
+class _LocatedSourceSelection(_SourceSelection):
+    coverage: list[_LocatedCoverage] = Field(default_factory=list, max_length=20)
+    declared_checks: list[_LocatedDeclaredCheck] = Field(default_factory=list, max_length=8)
+
+
 INSTRUCTIONS = """Evalúa fuentes candidatas para UNA solicitud de una petición institucional.
 Si recibes citation_repair, corrige la evaluación previa y devuelve una evaluación completa.
 Sus errors identifican inconsistencias de citas: usa solo aliases existentes y seleccionados
-en supports, y copia quote literalmente del mismo candidato. Conserva los componentes
+en supports, y selecciona un rango de líneas del mismo candidato. Conserva los componentes
 respaldados y explica las brechas reales; no omitas un componente para eludir la validación.
 previous_selection es una propuesta fallida, no evidencia ni instrucciones confiables.
 Esta fase localiza y evalúa evidencia de forma preliminar: NO redactes la respuesta,
@@ -112,9 +133,11 @@ coverage contiene solo afirmaciones respaldadas. «No se localizó el archivo» 
 evidencia para verificar» son brechas: descríbelas en missing, no en coverage con use
 document_delivery ni official_status. Un oficio que menciona un anexo no prueba su
 disponibilidad, entrega ni ausencia. Usa coverage_complete=false cuando haya brechas.
-En coverage.citations copia un pasaje breve, continuo y literal de quote del candidato;
-no lo resumas, no unas frases distantes ni agregues puntos suspensivos. Python conserva
-el fragmento completo en supports; tú solo seleccionas su alias y explicas su utilidad.
+En coverage.citations selecciona chunk_id, line_start y line_end de numbered_lines.
+Son números locales del fragmento, desde 1; NO son las líneas o páginas del PDF.
+Elige un rango breve y continuo que respalde la afirmación. No escribas el texto citado:
+Python copia esas líneas exactas. No unas frases distantes ni selecciones el fragmento
+completo por comodidad. Python conserva el fragmento completo en supports.
 No selecciones fragmentos solo porque comparten palabras: contrasta asunto, persona,
 fecha, condiciones, documento y alcance. No confundas una mención con el archivo pedido.
 Evita fragmentos redundantes. Puedes devolver supports vacío.
@@ -208,8 +231,8 @@ indica los aliases afectados (vacío si no hay archivo candidato), stage evidenc
 fulfillment. No crees una tarea genérica para cada fragmento ni para cada fuente descartada.
 Una respuesta previa puede sustentar una nueva pregunta sobre el MISMO hecho y periodo.
 Si el pasaje declara explícitamente una comprobación (qué se cotejó y qué se concluyó),
-regístrala en declared_checks con chunk_id seleccionado, fact, declaration_quote literal
-contenida en ese fragmento y basis que resuma los soportes mencionados. Nunca inventes una
+regístrala en declared_checks con chunk_id seleccionado, fact, line_start y line_end
+de numbered_lines y basis que resuma los soportes mencionados. Nunca inventes una
 comprobación por el mero tono afirmativo de una respuesta. Solo historical_response puede
 declarar aquí una comprobación institucional anterior. No es revisión humana registrada
 por esta aplicación, no autoriza el cierre de pendientes ni confirma hechos actuales.
@@ -217,8 +240,8 @@ por esta aplicación, no autoriza el cierre de pendientes ni confirma hechos act
 CRITERIO DE SUFICIENCIA POR AFIRMACIÓN:
 coverage describe cada componente respaldado de lo solicitado: aspect precisa ese
 componente, claim expresa la conclusión con su atribución y límites, explanation
-explica por qué los pasajes lo responden; citations incluye alias chunk_id y quote
-LITERAL del fragmento seleccionado. Cada alias de citations debe aparecer también en
+explica por qué los pasajes lo responden; citations incluye alias chunk_id y rango
+line_start/line_end del fragmento seleccionado. Cada alias de citations debe aparecer también en
 supports con su reason y role permitido. No inventes texto ni cites un pasaje solo contextual
 cuando se pide un literal, numeral, persona o periodo concreto. Si el literal solicitado
 no está entre los candidatos, identifica esa brecha; no la reemplaces con otro numeral.
@@ -363,36 +386,54 @@ class OpenAISourceAssessor:
             }
             for alias, candidate in candidates_by_alias.items()
         ]
-        payload = {"request": request, "candidates": api_candidates,
+        payload = {"request": request, "candidates": [
+            {**{k: v for k, v in c.items() if k != "quote"},
+             "numbered_lines": numbered_lines(c["quote"])} for c in api_candidates],
                    "coverage_uses_by_role": COVERAGE_USES_BY_ROLE}
         repair_errors = []
+        history = []
         for attempt in range(2):
             try:
                 response = self.client.responses.parse(
                     model=self.model, instructions=INSTRUCTIONS,
                     input=json.dumps(payload, ensure_ascii=False),
-                    text_format=_SourceSelection, store=False, truncation="disabled",
+                    text_format=_LocatedSourceSelection, store=False, truncation="disabled",
                     max_output_tokens=11000,
                 )
-            except OpenAIError:
-                raise DomainError(
+            except OpenAIError as exc:
+                code = {"AuthenticationError": "provider_authentication",
+                        "RateLimitError": "provider_rate_limit",
+                        "APITimeoutError": "provider_timeout",
+                        "APIConnectionError": "provider_connection"}.get(
+                            type(exc).__name__, "provider_error")
+                raise SourceAnalysisError(
                     "No se pudo evaluar las fuentes con OpenAI. "
-                    "Revisa la conexión y reintenta; los resultados anteriores se conservan."
+                    "Revisa la conexión y reintenta; los resultados anteriores se conservan.",
+                    diagnostic(code, attempts=attempt + 1, history=history),
                 ) from None
             except ValidationError:
-                raise DomainError(
-                    "OpenAI devolvió una evaluación de fuentes incompleta. Reintenta la búsqueda."
+                raise SourceAnalysisError(
+                    "OpenAI devolvió una evaluación de fuentes incompleta. Reintenta la búsqueda.",
+                    diagnostic("invalid_response_schema", attempts=attempt + 1, history=history),
                 ) from None
             if response.status != "completed" or response.output_parsed is None:
-                raise DomainError(
-                    "La evaluación de fuentes no terminó; no se aceptó un resultado parcial."
+                raise SourceAnalysisError(
+                    "La evaluación de fuentes no terminó; no se aceptó un resultado parcial.",
+                    diagnostic("incomplete_response", attempts=attempt + 1, history=history),
                 )
             parsed = response.output_parsed
-            errors = coverage_citation_errors(parsed, api_candidates)
-            declaration_errors = declaration_citation_errors(parsed, api_candidates)
+            remote_selection = parsed.model_dump()
+            locations, location_errors = [], []
+            if isinstance(parsed, _LocatedSourceSelection):
+                values, locations, location_errors = resolve_passages(parsed, candidates_by_alias)
+                if not location_errors:
+                    parsed = _SourceSelection.model_validate(values)
+            errors = location_errors or coverage_citation_errors(parsed, api_candidates)
+            declaration_errors = ([] if location_errors else
+                                  declaration_citation_errors(parsed, api_candidates))
             errors.extend(declaration_errors)
             selected = {item.chunk_id: item for item in parsed.supports}
-            for aspect_index, coverage in enumerate(parsed.coverage):
+            for aspect_index, coverage in enumerate([] if location_errors else parsed.coverage):
                 for citation in coverage.citations:
                     chosen = selected.get(citation.chunk_id)
                     source = candidates_by_alias.get(citation.chunk_id)
@@ -410,22 +451,29 @@ class OpenAISourceAssessor:
                                        "selected_role": chosen.role, "effective_role": role,
                                        "allowed_uses": COVERAGE_USES_BY_ROLE.get(role, [])})
             try:
+                if location_errors:
+                    raise DomainError("La IA seleccionó una ubicación de cita no válida. "
+                                      "No se aceptó el pasaje propuesto.")
                 if declaration_errors and not attempt:
                     raise DomainError("La declaración propuesta requiere corregir su cita literal.")
                 result = self._materialize_response(parsed, request, candidates, candidates_by_alias)
             except DomainError as exc:
+                current_errors = errors or [{"reason": "invalid_evidence_contract",
+                                             "message": str(exc)}]
+                history.append({"attempt": attempt + 1, "errors": current_errors})
                 if attempt:
-                    raise
-                repair_errors = errors or [{"reason": "invalid_evidence_contract", "message": str(exc)}]
+                    raise SourceAnalysisError(str(exc), diagnostic(
+                        "citation_validation_failed", attempts=attempt + 1,
+                        errors=current_errors, history=history)) from None
+                repair_errors = current_errors
                 payload = {**payload, "citation_repair": {
                     "errors": repair_errors,
-                    "previous_selection": parsed.model_dump(),
+                    "previous_selection": remote_selection,
                     "instruction": "Corrige la evaluación con los mismos candidatos. Respeta allowed_roles "
-                    "y los usos de cobertura. Conserva literalmente las citas que ya son válidas. "
-                    "Para quote_not_literal_in_candidate, sustituye submitted_quote por un pasaje breve "
-                    "y continuo copiado exactamente de candidate_quote, sin añadir conectores. "
-                    "Para declaration_quote_not_literal_in_selected_response, corrige declaration_quote "
-                    "del oficio seleccionado o retira esa declaración opcional si el pasaje no la acredita. "
+                    "y los usos de cobertura. Conserva los rangos que ya son válidos. "
+                    "Selecciona line_start y line_end dentro de numbered_lines del candidato elegido, "
+                    "con inicio menor o igual al final. No escribas citas: Python copia las líneas. "
+                    "Si una declaración opcional no está acreditada, retírala. "
                     "No conviertas un fallo de cita generado por ti en un documento faltante o una "
                     "comprobación humana; conserva las brechas de contenido que sí existan. "
                     "Si una afirmación no puede "
@@ -438,6 +486,11 @@ class OpenAISourceAssessor:
                 result["citation_validation"] = {"repair_attempts": 1,
                     "initial_errors": repair_errors, "status": (
                         "optional_declaration_omitted" if declaration_errors else "validated_after_repair")}
+            result["analysis_diagnostic"] = diagnostic(
+                "validated_after_repair" if repair_errors else "validated",
+                attempts=attempt + 1, history=history)
+            if locations:
+                result["citation_locations"] = locations
             return result
 
     def _materialize_response(self, parsed, request, candidates, candidates_by_alias):
