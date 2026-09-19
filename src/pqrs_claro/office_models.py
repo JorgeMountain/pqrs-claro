@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from pydantic import Field, StringConstraints, field_validator
+from pydantic import Field, StringConstraints, ValidationInfo, field_validator
 
 from .models import StrictModel
 
@@ -53,9 +53,17 @@ class OfficeMetadata(StrictModel):
 
     @field_validator("*", mode="before")
     @classmethod
-    def text_fields(cls, value):
+    def text_fields(cls, value, info: ValidationInfo):
         if isinstance(value, str):
-            return xml_text(value).strip()
+            text = xml_text(value)
+            # El texto editable del oficio conserva los saltos y el espaciado
+            # que el usuario ve; los identificadores siguen normalizándose.
+            if info.field_name in {
+                "recipient", "subject", "signer_name", "signer_role",
+                "introduction", "salutation", "closing",
+            } and text.strip():
+                return text
+            return text.strip()
         return value
 
     @field_validator("received_date", mode="before")

@@ -4,6 +4,12 @@ Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes 
 
 ## Empezar
 
+**Integración en un puerto — validación de fase 2:** `scripts/start-unificado.ps1`
+sirve el recorrido y la API en 8772, sin depender de 8770. El arranque habitual
+todavía no se ha sustituido. [Alcance, pruebas y activación](docs/INTEGRACION_UN_PUERTO.md).
+El flujo aislado con IA real y Word/PDF pasó; Gmail se comprobó con transporte
+simulado. [Evidencias y límites de fase 2](docs/QA_UNIFICACION_FASE2_20260919.md).
+
 **Recorrido elegido para continuar el trabajo: http://127.0.0.1:8772.** Conservamos su diseño e interacción. Para iniciarlo o comprobar que sigue disponible, ejecuta `scripts/start-recorrido.ps1`. La biblioteca consulta documentos reales. «Cargar petición» y «Mis expedientes» permiten identificar solicitudes y, al confirmarlas, buscar fuentes y preparar respuestas automáticamente. Las respuestas reales ya se pueden editar y guardar desde sus tarjetas. «Actualizar con IA» propone ajustes basados en las decisiones registradas y permite comparar antes de aplicar o descartar. La demo original se conserva aparte; la revisión, aprobación por respuesta y generación de Word/PDF de expedientes reales están conectadas en «Revisar el oficio». [Preparación automática](docs/PREPARACION_AUTOMATICA.md). [Alcance de la biblioteca integrada](docs/BIBLIOTECA_RECORRIDO.md). La integración de 8770 se conserva como alternativa, no como sustituto aceptado.
 
 Para ejecutar la integración alternativa con los expedientes reales:
@@ -37,7 +43,15 @@ La recomendación de alojamiento es **Drive institucional, preferiblemente una u
 
 ## Entender lo que hay detrás
 
+La interfaz de 8772 ofrece **Subir PDF** y **Peticiones recibidas desde Gmail**.
+La conexión de Gmail se configura desde la propia bandeja, con autorización de lectura
+de Google. Admite PDF adjunto, texto del correo y vinculación de seguimientos, conservando
+el original y evitando duplicados. [Configuración y prueba de Gmail](docs/GMAIL.md).
+La autorización de una cuenta real es un paso posterior a la instalación del código.
+
 Lee [COMO_FUNCIONA.md](docs/COMO_FUNCIONA.md). En la identificación de la aplicación, **Ver cómo funciona este proceso** muestra las etapas y resultados del expediente.
+
+Para seguir el código desde un clic hasta el documento final, consulta [Recorrido del código](docs/RECORRIDO_CODIGO.md): mapa de carpetas, funciones y rutas, búsqueda y redacción en paralelo, decisiones humanas, guardado y exportación.
 
 ## Instalación y configuración
 

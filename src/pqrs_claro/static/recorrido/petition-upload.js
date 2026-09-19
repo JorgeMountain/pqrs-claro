@@ -1,11 +1,17 @@
 import {esc} from './views.js';
 
-export function showPetitionUpload({container,upload,choose,demo}){
+export function showPetitionUpload({container,upload,choose,demo,gmail}){
   container.innerHTML=`<div class="petition-home"><h1>Prepara respuestas con respaldo</h1><p class="home-subtitle">Carga una petición o continúa uno de tus expedientes.</p><section class="petition-home-card"><h2>Comienza con una petición</h2><form id="petition-upload-form">
     <div id="petition-dropzone" class="petition-dropzone"><span class="petition-document-icon" aria-hidden="true">PDF</span><div class="petition-drop-copy"><h3>PDF de la petición</h3><p>Arrastra tu archivo aquí</p></div><label class="petition-file-label">Seleccionar un PDF<input id="petition-pdf" type="file" accept=".pdf,application/pdf"></label><p class="upload-limit">Un PDF por expediente</p></div>
     <div id="petition-selection" role="status" aria-live="polite"></div><p id="petition-upload-error" role="alert"></p>
     <div class="petition-upload-actions"><details class="petition-next"><summary>¿Qué pasa después?</summary><p>Verás las solicitudes identificadas junto al documento original. Podrás revisarlas antes de buscar fuentes y preparar las respuestas.</p><p>Los antecedentes y anexos se agregan en la biblioteca o como evidencia de una respuesta.</p></details><button type="submit" class="primary" disabled id="petition-upload-submit">Cargar y analizar</button></div></form></section><section class="petition-home-continue"><p>¿Ya tienes un expediente?</p><div class="home-links"><button id="home-cases">Mis expedientes</button><button id="home-demo">Ver demostración</button></div></section></div>`;
   container.querySelector('#home-cases').onclick=choose;container.querySelector('#home-demo').onclick=demo;
+  if(gmail){
+    container.querySelector('.home-subtitle').textContent='Sube un PDF, recibe una petición por correo o continúa un expediente.';
+    const card=container.querySelector('.petition-home-card'),options=document.createElement('div');options.className='petition-entry-options';card.before(options);options.append(card);
+    options.insertAdjacentHTML('beforeend','<section class="gmail-entry"><span class="gmail-entry-label">DESDE TU CORREO</span><h2>Peticiones recibidas</h2><p>Consulta tu Gmail e incorpora el mensaje o su PDF al expediente.</p><button type="button" id="home-gmail">Abrir bandeja de Gmail →</button></section>');
+    container.querySelector('#home-gmail').onclick=gmail;
+  }
   const form=container.querySelector('form'),zone=form.querySelector('#petition-dropzone'),input=form.querySelector('#petition-pdf'),selection=form.querySelector('#petition-selection'),error=form.querySelector('#petition-upload-error'),submit=form.querySelector('#petition-upload-submit');
   let selected=null,depth=0,maxBytes=null;
   const size=bytes=>bytes>=1048576?`${(bytes/1048576).toFixed(1)} MB`:`${Math.ceil(bytes/1024)} KB`;

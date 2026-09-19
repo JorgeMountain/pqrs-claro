@@ -10,9 +10,10 @@ from test_source_service_api import make_case, pdf_bytes, source_app, upload_sou
 def wait(app, client, case_id):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        result = client.get(f"/api/cases/{case_id}/preparation").json()
         if case_id not in app.state.preparation.active:
-            return result
+            # Read after completion: the worker can finish between an HTTP
+            # snapshot and the active-set check, leaving that snapshot stale.
+            return client.get(f"/api/cases/{case_id}/preparation").json()
         time.sleep(0.03)
     raise AssertionError("La preparación no terminó")
 

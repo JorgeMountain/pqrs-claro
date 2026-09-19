@@ -1,0 +1,8 @@
+.identification-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.identification-actions button{padding:5px 9px;font-size:12px;line-height:1.4;border-radius:4px;background:transparent}
+.identification-actions [data-action="live-discard"]{color:var(--muted)}
+.identification-actions [data-action="live-discard"]:hover{color:var(--danger);border-color:var(--danger)}
+.identification-undo{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin:12px 0;padding:12px 16px;background:var(--tint);border:1px solid var(--line);border-radius:6px;font-size:13px}
+.identification-undo span{flex:1;min-width:180px;overflow-wrap:anywhere}
+.identification-undo button{font-size:13px;padding:6px 12px}
+@media(max-width:760px){.identification-actions button,.identification-undo button{min-height:44px}}

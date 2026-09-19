@@ -97,8 +97,8 @@ def pdf_bytes():
         return document.tobytes()
 
 
-@pytest.fixture
-def source_app(tmp_path):
+@pytest.fixture(params=["workspace", "recorrido"])
+def source_app(tmp_path, request):
     assessor = FakeSourceAssessor()
     settings = Settings(data_dir=tmp_path / "data", api_key="test-not-real", model="test-model")
     app = create_app(
@@ -106,6 +106,7 @@ def source_app(tmp_path):
         extractor=PDFExtractor(),
         identifier=TwoRequestsIdentifier(),
         source_assessor=assessor,
+        interface=request.param,
     )
     with TestClient(app) as client:
         yield app, client, assessor, settings
@@ -445,7 +446,9 @@ def test_three_parallel_requests_publish_in_order_and_retry_only_failure(source_
     case = make_case(client, pdf_bytes)
     identification = deepcopy(case["identification"])
     original = identification["requests"][0]
-    identification["requests"] = [{**deepcopy(original), "id": f"P{i}", "label": str(i)} for i in range(1, 6)]
+    identification["requests"] = [
+        {**deepcopy(original), "id": f"P{i}", "label": str(i)} for i in range(1, 6)
+    ]
     case = app.state.store.update(case["id"], identification=identification)
     assert upload_source(client).status_code == 201
 

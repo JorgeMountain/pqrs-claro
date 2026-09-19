@@ -467,6 +467,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         if len(selected) >= limit or row["chunk_id"] in seen:
             return False
         document_limit = 8 if expanded else (
+            6 if channel in {"document_content", "semantic"} else
             3 if row["document_id"] in requested_documents or channel != "lexical" else 2
         )
         if counts[row["document_id"]] >= document_limit:
@@ -480,6 +481,18 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     # Cada elemento sigue siendo un candidato original, con su alcance y metadatos.
     for row, channel in _targeted_passages(request, eligible, index=index):
         add(row, channel, expanded=True)
+    for row in baseline[:8]:
+        if row.get("document_identity_rank", 0):
+            add(row, "lexical")
+    # Las preguntas por fechas necesitan pasajes con fechas explícitas, no solo
+    # apartados que repitan "presentación", "calendario" o "convocatoria".
+    for row in _date_passages(request, eligible):
+        add(row, "calendar")
+    # El asunto ayuda a localizar el documento; la pregunta atómica selecciona
+    # su contenido. Una portada coincidente no sustituye el pasaje de respuesta.
+    ranked_by_id = {row["chunk_id"]: row for row in general}
+    for row in _document_content(request, eligible):
+        add(ranked_by_id.get(row["chunk_id"], row), "document_content")
     # Protege resultados ya útiles, incluida la prioridad del objeto pedido.
     for row in baseline[:8]:
         add(row, "lexical")
@@ -534,3 +547,95 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         row, name = representatives[key]
         add(row, name)
     return selected
+
+
+def _search_words(text, *, expand=False):
+    """Variantes de consulta, nunca cambios al texto citado ni hechos nuevos."""
+    words = tokenize(text)
+    normalized = []
+    for word in words:
+        if word.endswith("iones"):
+            word = word[:-2]
+        elif len(word) > 4 and word.endswith(("as", "os")):
+            word = word[:-1]
+        normalized.append(word)
+    # Equivalencias generales de preguntas informativas, sin respuestas de dominio.
+    variants = {"tiempo": "duracion", "porcentaje": "ponderacion peso"}
+    extra = [variants[w] for w in normalized if w in variants] if expand else []
+    return " ".join(normalized + extra)
+
+
+_EXPLICIT_DATE = re.compile(
+    r"\b\d{1,2}\s+(?:y\s+\d{1,2}\s+)?de\s+"
+    r"(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\b"
+    r"|\b\d{1,2}[/.-]\d{1,2}[/.-]\d{4}\b"
+)
+
+
+def _date_passages(request, eligible):
+    """Reserva dos candidatos fechados; no interpreta la fecha ni su vigencia.
+
+    Los fragmentos ya están filtrados por permisos. Se exige una coincidencia
+    del asunto de la pregunta cerca de la fecha y se conserva el texto original.
+    """
+    query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
+    words = set(tokenize(_search_words(query)))
+    if not words.intersection({"fecha", "calendario", "cuando"}):
+        return []
+    generic = {"fecha", "calendario", "cuando", "prevista", "previsto", "previstas",
+               "previstos", "presentacion", "informar", "dentro", "convocatoria",
+               "periodo", "publicacion", "consulta", "programada", "programado"}
+    event = {w for w in words - generic if len(w) > 3 and not w.isdigit()}
+    if not event:
+        return []
+    candidates, originals = [], {}
+    for row in eligible:
+        text = _search_words(row["quote"])
+        # Tokenizar toda la página diluye la relación. La ventana admite títulos
+        # y celdas consecutivas en calendarios extraídos de PDF.
+        matches = list(_EXPLICIT_DATE.finditer(row["quote"].casefold()))
+        if not any(event.intersection(tokenize(_search_words(
+            row["quote"][max(0, m.start()-180):m.end()+180]
+        ))) for m in matches):
+            continue
+        originals[row["chunk_id"]] = row
+        candidates.append({**row, "title": "", "quote": text})
+    return [originals[r["chunk_id"]] for r in
+            _rank({}, candidates, query=_search_words(query, expand=True))[:2]]
+
+
+def _document_content(request, eligible):
+    """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
+
+    El corpus ya está filtrado por permisos y versión. El asunto solo localiza
+    documentos, nunca se convierte en evidencia ni sustituye la pregunta. Se
+    requieren dos términos discriminantes coincidentes en metadatos, y luego
+    coincidencia en el cuerpo. Se devuelven las citas originales sin normalizar.
+    """
+    query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
+    subject = str((request.get("context") or {}).get("subject") or "")[:1200]
+    metadata = {}
+    for row in eligible:
+        metadata.setdefault(row["source_id"], {**row, "title": "", "quote": _search_words(
+            " ".join(str(row.get(k) or "") for k in ("title", "filename", "historical_group"))
+        )})
+    topic = _search_words(subject or query)
+    generic = {"universidad", "institucional", "documento", "respuesta", "consulta", "solicita"}
+    terms = {w for w in tokenize(topic) if len(w) >= 3 and w not in generic}
+    matches = [row for row in metadata.values()
+               if len(terms.intersection(tokenize(row["quote"]))) >= 2]
+    if not matches:
+        return []
+    # No favorecer documentos largos por repetir su título en cada fragmento.
+    documents = _rank({}, matches, query=topic)[:3]
+    originals = {row["chunk_id"]: row for row in eligible}
+    result = []
+    for document in documents:
+        body = [{**row, "title": "", "quote": _search_words(row["quote"])}
+                for row in eligible if row["source_id"] == document["source_id"]]
+        # Reservar más que los dos primeros: títulos de trámite y referencias
+        # al portal pueden puntuar por encima del contenido de la respuesta.
+        # El cupo semántico conserva espacio adicional dentro del mismo archivo.
+        for hit in _rank({}, body, query=_search_words(query, expand=True))[:4]:
+            result.append(originals[hit["chunk_id"]])
+    return result

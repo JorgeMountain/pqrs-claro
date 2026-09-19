@@ -74,8 +74,8 @@ class FakeOfficeRenderer:
         )
 
 
-@pytest.fixture
-def office_app(tmp_path, monkeypatch):
+@pytest.fixture(params=["workspace", "recorrido"])
+def office_app(tmp_path, monkeypatch, request):
     monkeypatch.setattr(
         "pqrs_claro.office_service.pdf_capabilities",
         lambda: {
@@ -91,6 +91,7 @@ def office_app(tmp_path, monkeypatch):
         draft_engine=FakeDraftEngine(),
         review_engine=FakeReviewEngine(),
         office_renderer=renderer,
+        interface=getattr(request, "param", "workspace"),
     )
     with TestClient(app) as client:
         yield app, client, renderer, settings

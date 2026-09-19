@@ -50,10 +50,10 @@ class CaseStore:
         finally:
             conn.close()
 
-    def create(self, filename: str, pdf: bytes):
-        case_id = uuid4().hex
+    def create(self, filename: str, pdf: bytes, *, case_id=None, origin=None):
+        case_id = case_id or uuid4().hex
         folder = self.root / "files" / case_id
-        folder.mkdir(parents=True)
+        folder.mkdir(parents=True, exist_ok=True)
         write_original(folder / "original.pdf", pdf)
 
         case = dict(
@@ -75,6 +75,8 @@ class CaseStore:
         case["events"].append(
             dict(stage="uploaded", message="Original conservado.", created_at=now())
         )
+        if origin is not None:
+            case["origin"] = origin
         with self.connect() as conn:
             conn.execute("INSERT INTO cases VALUES (?,?,?)", (case_id, 1, json.dumps(case)))
         return case

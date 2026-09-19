@@ -75,6 +75,20 @@ def test_working_document_before_approval_and_export_fidelity(office_app):
     ]
 
 
+def test_workspace_keeps_closing_blank_lines_after_save_and_reload(office_app):
+    app, client, _, _ = office_app
+    case, _, _ = prepare(app, client)
+    work = client.get(endpoint(case)).json()
+    data = body(work)
+    closing = "Atentamente," + "\n" * 40
+    data["metadata"]["closing"] = closing
+    saved = client.put(endpoint(case), json=data)
+    assert saved.status_code == 200, saved.text
+    reopened = client.get(endpoint(case)).json()
+    assert reopened["metadata"]["closing"] == closing
+    assert next(b["text"] for b in reopened["blocks"] if b["kind"] == "closing") == closing
+
+
 def test_atomic_conflict_does_not_save_other_text_or_metadata(office_app):
     app, client, _, _ = office_app
     case, _, _ = prepare(app, client, count=2)

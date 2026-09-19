@@ -415,6 +415,18 @@ def test_pdf_excludes_only_exact_centered_page_number_and_keeps_other_text(tmp_p
             render_office(document(), tmp_path, converter=converter)
 
 
+def test_closing_blank_lines_reach_exported_word(tmp_path):
+    closing = "Atentamente," + "\n" * 40
+    values = OfficeMetadata.model_validate(metadata(closing=closing, city=" Medellín "))
+    assert values.city == "Medellín"
+    canonical = build_document(approved(), values.model_dump(mode="json"), [], "Prueba")
+    render_office(canonical, tmp_path, converter=fake_pdf)
+    paragraphs = [p.text for p in Document(tmp_path / "oficio.docx").paragraphs]
+    assert closing in paragraphs
+    with pytest.raises(ValidationError):
+        OfficeMetadata.model_validate(metadata(closing="\n\n"))
+
+
 def test_unicode_line_breaks_and_multi_page_response_are_preserved(tmp_path):
     value = approved(1)
     row = value["requests"][0]["review"]

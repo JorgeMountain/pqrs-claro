@@ -20,7 +20,7 @@ from .source_retrieval import RetrievalIndex, retrieve
 from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 15
+SOURCE_ANALYSIS_VERSION = 18
 
 
 def failed_finding(request_id, exc):
@@ -105,10 +105,11 @@ class SourceService:
                 stale=False,
             )
         stale = run["fingerprint"] != fingerprint
-        # v15 repara declaraciones opcionales inválidas y simplifica pendientes.
-        # Un resultado v14 ya satisfactorio sigue siendo utilizable si TODAS sus
+        # v18 amplía pasajes y evita que el cupo léxico cierre el canal semántico.
+        # v17 recupera fechas explícitas; v16 busca dentro de documentos.
+        # Un resultado anterior ya satisfactorio sigue siendo utilizable si TODAS sus
         # entradas actuales coinciden. No se promueven errores ni se reescribe el run.
-        if (stale and SOURCE_ANALYSIS_VERSION == 15
+        if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18}
                 and run.get("status") == "ready" and not run.get("error")):
             results = run.get("results", [])
             compatible = len(results) == case["request_count"] and all(
@@ -120,9 +121,15 @@ class SourceService:
                 for r in results
             )
             if compatible:
-                previous = {**fingerprint_inputs, "analysis_version": 14,
-                            "retrieval": {**fingerprint_inputs["retrieval"], "version": 14}}
-                stale = run["fingerprint"] != digest(previous)
+                for previous_version in range(14, SOURCE_ANALYSIS_VERSION):
+                    previous = {
+                        **fingerprint_inputs, "analysis_version": previous_version,
+                        "retrieval": {
+                            **fingerprint_inputs["retrieval"], "version": previous_version},
+                    }
+                    if run["fingerprint"] == digest(previous):
+                        stale = False
+                        break
         return {
             **run,
             "status": "stale" if stale and run["status"] != "running" else run["status"],
@@ -253,7 +260,8 @@ class SourceService:
             semantic.prepare(chunks, progress=index_progress)
             run["retrieval_warning"] = semantic.warning
             run["retrieval_progress"] = {"phase": "searching", **semantic.diagnostics}
-            requests = build_source_requests(case, allowed_collection_ids=run.get("allowed_collection_ids", []))
+            requests = build_source_requests(
+                case, allowed_collection_ids=run.get("allowed_collection_ids", []))
             order = {request["id"]: i for i, request in enumerate(requests)}
             retrieval_lock = threading.RLock()
             concurrency = min(3, max(1, getattr(self.settings, "source_concurrency", 3)))
@@ -262,7 +270,8 @@ class SourceService:
             run["request_states"] = {r["id"]: "completed" if r["id"] in retained_ids else "queued"
                                      for r in requests}
             # Initialize SQLite/WAL once before concurrent connections open it.
-            with SqliteSaver.from_conn_string(str(self.settings.data_dir / "source_checkpoints.sqlite")) as warmup:
+            checkpoint_path = str(self.settings.data_dir / "source_checkpoints.sqlite")
+            with SqliteSaver.from_conn_string(checkpoint_path) as warmup:
                 warmup.get_tuple({"configurable": {"thread_id": "__schema_initialization__"}})
 
             def locate(request, _):
@@ -311,7 +320,9 @@ class SourceService:
                     except Exception as exc:
                         return failed_finding(request["id"], exc)
 
-            with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="source-request") as workers:
+            with ThreadPoolExecutor(
+                max_workers=concurrency, thread_name_prefix="source-request"
+            ) as workers:
                 pending = {}
                 remaining = iter(r for r in requests if r["id"] not in retained_ids)
 
@@ -335,7 +346,8 @@ class SourceService:
                             finding = failed_finding(request["id"], exc)
                         run["results"].append(finding)
                         run["results"].sort(key=lambda item: order[item["request_id"]])
-                        run["request_states"][request["id"]] = "error" if finding["status"] == "error" else "completed"
+                        run["request_states"][request["id"]] = (
+                            "error" if finding["status"] == "error" else "completed")
                     run["shared_checks"] = group_checks(run["results"])
                     run["completed_count"] = len(run["results"])
                     run["retrieval_warning"] = semantic.warning

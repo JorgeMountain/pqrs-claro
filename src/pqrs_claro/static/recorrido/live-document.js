@@ -1,6 +1,7 @@
 import {esc} from './views.js';
 import {bindActor,sessionActor} from './session-actor.js';
-import {createDocumentTools,toolsMarkup} from './document-tools.js?v=20260911-tools';
+import {createDocumentTools,toolsMarkup} from './document-tools.js?v=20260916-pages';
+import {paginate,fragmentText,selectionPoint,focusPoint} from './document-pages.js';
 
 const clone=v=>structuredClone(v);
 const signature=s=>JSON.stringify([s.metadata,s.attachment_source_ids,s.requests.map(r=>[r.request_id,r.paragraphs])]);
@@ -46,13 +47,33 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back}){
     if(adding){const mark=`response_${ri}_${pi+1}`;s.work.blocks.splice(index+1,0,{...clone(block),text:'',bookmark:mark,bookmarks:[mark]});return index+1;}
     return Math.max(0,index-1);
   }
-  function renderSheet(s){
-    s.node.querySelector('.oficio-sheet').innerHTML=`<div class="oficio-letterhead"><img src="/logo.png" alt="Universidad de Antioquia · Facultad de Ingeniería"></div>${s.work.blocks.map((b,i)=>editor(s,b,i)).join('')||'<p>Las respuestas aparecerán cuando estén preparadas.</p>'}`;
+  function renderSheet(s,point=null){
+    paginate(s.node,s.work.blocks,(b,i)=>editor(s,b,i),s.work.letterhead);
     s.node.querySelectorAll('[data-block]').forEach(el=>{
-      el.oninput=()=>{updateText(s,Number(el.dataset.block),el.innerText.replace(/\r\n/g,'\n'));stamp(s);};
+      el.oninput=event=>{
+        const index=Number(el.dataset.block),point=selectionPoint(s.node);
+        const text=[...s.node.querySelectorAll(`[data-block="${index}"]`)].map(fragmentText).join('');
+        updateText(s,index,text.replace(/\r\n/g,'\n'));stamp(s);
+        if(!event.isComposing)renderSheet(s,point);
+      };
+      el.addEventListener('compositionend',()=>renderSheet(s,selectionPoint(s.node)));
+      el.addEventListener('beforeinput',event=>{
+        const point=selectionPoint(s.node);if(!point)return;
+        const index=point.block,text=s.work.blocks[index].text;
+        const enter=['insertParagraph','insertLineBreak'].includes(event.inputType);
+        const back=event.inputType==='deleteContentBackward'&&point.start===point.end&&point.start===Number(el.dataset.offset)&&point.start>0;
+        const forward=event.inputType==='deleteContentForward'&&point.start===point.end&&point.start===Number(el.dataset.offset)+fragmentText(el).length&&point.start<text.length;
+        if(!enter&&!back&&!forward)return;
+        event.preventDefault();s.tools?.record(el.dataset.block);
+        const start=back?point.start-[...text.slice(0,point.start)].at(-1).length:point.start;
+        const end=forward?point.end+[...text.slice(point.end)][0].length:point.end;
+        updateText(s,index,text.slice(0,start)+(enter?'\n':'')+text.slice(end));stamp(s);
+        renderSheet(s,{block:index,start:start+(enter?1:0),end:start+(enter?1:0)});
+      });
       el.addEventListener('paste',event=>{event.preventDefault();s.tools?.record(el.dataset.block);document.execCommand('insertText',false,event.clipboardData.getData('text/plain'));});
     });
     s.tools?.bindSheet();
+    focusPoint(s.node,point);
   }
   function editor(s,block,index){
     const meta={recipient:'recipient',subject:'subject',signer:'signer_name',signer_role:'signer_role',salutation:'salutation',intro:'introduction',closing:'closing'}[block.kind];
@@ -72,7 +93,7 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back}){
     s.node.innerHTML=`<header class="document-heading"><div><p class="eyebrow">PASO 3 · OFICIO</p><h1>Tu oficio, listo para ajustar</h1><p class="muted">Edita directamente sobre el documento. Guarda los cambios y genera la versión final.</p></div><span class="document-save-state" data-save-state>${dirty(s)?'Cambios sin guardar':s.work.revision?'Borrador guardado':'Oficio armado'}</span></header>
       <form class="document-settings"><details><summary>Datos del oficio y responsable</summary><div class="document-fields">${Object.entries(labels).map(([key,label])=>`<label>${label}<input data-meta="${key}" type="${key.endsWith('date')?'date':'text'}" value="${esc(w.metadata[key]||'')}" maxlength="300"></label>`).join('')}</div><fieldset class="document-attachments"><legend>Anexos que se incluirán</legend>${w.attachment_options.map(a=>`<label><input type="checkbox" data-attachment="${esc(a.source_id)}" ${w.attachment_source_ids.includes(a.source_id)?'checked':''}>${esc(a.title)}</label>`).join('')||'<p>No hay documentos citados disponibles para anexar.</p>'}</fieldset><label class="field">Responsable de esta sesión<input id="office-actor" required maxlength="240" value="${esc(sessionActor())}" autocomplete="name"></label><p class="small muted">Se registra una vez en esta sesión. La persona que suscribe se indica al cierre del oficio.</p></details></form>
       <div class="document-checks" role="status" aria-live="polite" data-checks></div>
-      <div class="document-stage">${toolsMarkup()}<div class="document-canvas" tabindex="0" aria-label="Documento con desplazamiento independiente"><article class="oficio-sheet ${w.letterhead?'with-letterhead':''}" aria-label="Borrador editable del oficio"></article></div></div>
+      <div class="document-stage">${toolsMarkup()}<div class="document-canvas" tabindex="0" aria-label="Documento con desplazamiento independiente"><div class="oficio-pages" aria-label="Borrador editable del oficio"></div></div></div>
       <footer class="document-toolbar"><div><span data-operation role="status"></span><small>Al generar apruebas el contenido guardado de este oficio.</small></div><div class="document-buttons"><button data-command="cancel">Cancelar</button><button data-command="save">Guardar cambios</button><button class="primary" data-command="docx">Generar Word</button><button class="primary" data-command="pdf">Generar PDF</button></div></footer>
       <p data-error role="alert"></p><div data-downloads class="document-downloads"></div>`;
     const form=s.node.querySelector('form');bindActor(form);

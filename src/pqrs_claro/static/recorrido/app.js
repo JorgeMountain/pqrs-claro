@@ -1,7 +1,8 @@
-import {showPetitionUpload} from './petition-upload.js';
+import {showPetitionUpload} from './petition-upload.js?v=20260916-mail';
+import {createGmail} from './gmail-inbox.js?v=20260916-mail';
 import {createEvidenceUpload} from './evidence-upload.js';
 import {createLibrary} from './library.js?v=20260911-source-spinner';
-import {createLive} from './live.js?v=20260914-passages';
+import {createLive} from './live.js?v=20260916-discard';
 import {confirmScope,reopenScope,recordDecision,rejectionForm,scopeStatement} from './quick-confirmation.js';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import './workspace-menu.js';
@@ -15,7 +16,9 @@ const notice=message=>{clearTimeout(timer);document.querySelector('#notice').tex
 const library=createLibrary({open,close:()=>drawer.close(),notice});
 const evidence=createEvidenceUpload({open,close:()=>drawer.close(),render:()=>render(),notice,getData:()=>data,changed:dirty=>{state.evidenceDirty=dirty;if(dirty)invalidate();}});
 let releaseSplitPane=()=>{};
-const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane()});
+const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id)});
+const gmail=createGmail({open,close:()=>drawer.close(),notice,onOpenCase:async id=>{homeVisible=false;showWorkspace();await live.select(id);}});
+document.querySelector('#gmail-inbox').onclick=()=>gmail.show();
 document.querySelector('#live-open').onclick=()=>live.choose();
 function showWorkspace(){document.querySelector('.steps').hidden=false;document.querySelector('.prototype').hidden=false;}
 function showHome(){
@@ -23,7 +26,7 @@ function showHome(){
   document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
   document.querySelector('.demo-badge').textContent='Gestión de Peticiones';document.querySelector('.prototype-status').textContent='Inicio';
   document.querySelector('#case').classList.remove('active');
-  showPetitionUpload({container:view,upload:async file=>{homeVisible=false;showWorkspace();await live.upload(file);if(!live.active()){homeVisible=true;document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;}},choose:()=>live.choose(),demo:()=>{live.leave();go(1);}});
+  showPetitionUpload({container:view,gmail:()=>gmail.show(),upload:async file=>{homeVisible=false;showWorkspace();await live.upload(file);if(!live.active()){homeVisible=true;document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;}},choose:()=>live.choose(),demo:()=>{live.leave();go(1);}});
   document.querySelector('#main').focus();window.scrollTo(0,0);
 }
 document.querySelector('#live-new').onclick=showHome;
@@ -45,7 +48,7 @@ function render(focus=false){
 }
 function invalidate(){state.confirm=false;state.approved=false;}
 function go(step){if(busy)return;homeVisible=false;showWorkspace();state.step=step;render(true);}
-function open(title,html){drawer.classList.remove('petition-upload-window');opener=document.activeElement;document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
+function open(title,html){drawer.classList.remove('petition-upload-window');opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA';document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
 drawer.addEventListener('close',()=>{if(opener?.isConnected&&opener.getClientRects().length)opener.focus();else if(opener?.closest('#workspace-menu'))document.querySelector('#workspace-toggle').focus();else document.querySelector('#main').focus();});
 document.querySelector('#close').addEventListener('click',()=>drawer.close());
 document.querySelectorAll('[data-step]').forEach(b=>b.addEventListener('click',()=>live.active()?live.go(+b.dataset.step):go(+b.dataset.step)));

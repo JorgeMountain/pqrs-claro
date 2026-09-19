@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 
 import pymupdf
 import pytest
@@ -130,6 +131,63 @@ def test_upload_analyze_edit_version_conflict_and_confirm(app_client, pdf_bytes)
     with app.state.store.connect() as connection:
         count = connection.execute("SELECT count(*) FROM revisions").fetchone()[0]
     assert count >= 2
+
+
+def test_discard_request_persists_and_confirm_uses_only_remaining_requests(app_client, pdf_bytes):
+    app, client, identifier, _ = app_client
+    case = analyze(client, upload(client, pdf_bytes))
+    path = f"/api/cases/{case['id']}"
+    identification = deepcopy(case["identification"])
+    extra = deepcopy(identification["requests"][0])
+    extra.update(id="P2", label="2", title="Introducción identificada por error")
+    identification["requests"].append(extra)
+    added = client.put(path + "/identification", json={
+        "version": case["version"], "identification": identification,
+    })
+    assert added.status_code == 200, added.text
+    before = added.json()
+    remaining = deepcopy(before["identification"])
+    remaining["requests"].pop()
+    payload = {"version": before["version"], "identification": remaining}
+    removed = client.put(path + "/identification", json=payload)
+    assert removed.status_code == 200, removed.text
+    saved = client.get(path).json()
+    assert saved["request_count"] == 1
+    assert saved["identification"] == remaining
+    assert client.get(path + "/original").content == pdf_bytes
+    assert client.put(path + "/identification", json=payload).status_code == 409
+    with app.state.store.connect() as connection:
+        old = connection.execute(
+            "SELECT body FROM revisions WHERE case_id=? AND version=?",
+            (case["id"], before["version"]),
+        ).fetchone()
+    assert 'P2' in old[0]
+    # Undo uses a fresh version; removing it again must also reach the graph checkpoint.
+    restored = client.put(path + "/identification", json={
+        "version": saved["version"], "identification": before["identification"],
+    }).json()
+    assert restored["request_count"] == 2
+    saved = client.put(path + "/identification", json={
+        "version": restored["version"], "identification": remaining,
+    }).json()
+    confirmed = client.post(path + "/confirm", json={"version": saved["version"]})
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["identification"] == remaining
+    assert confirmed.json()["request_count"] == 1
+    assert identifier.calls == 1
+
+
+def test_discard_last_request_does_not_empty_case(app_client, pdf_bytes):
+    _, client, _, _ = app_client
+    case = analyze(client, upload(client, pdf_bytes))
+    path = f"/api/cases/{case['id']}"
+    identification = deepcopy(case["identification"])
+    identification["requests"] = []
+    result = client.put(path + "/identification", json={
+        "version": case["version"], "identification": identification,
+    })
+    assert result.status_code == 422
+    assert client.get(path).json()["version"] == case["version"]
 
 
 def test_save_rejects_quote_that_does_not_match_the_original(app_client, pdf_bytes):

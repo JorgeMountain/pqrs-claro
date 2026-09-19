@@ -2,10 +2,10 @@ import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260911-doc
 import {esc,understanding,sourcesView} from './views.js';
 import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
 export function identification(data,state){
-  let html=understanding(data,state);
+  let html=understanding(data,state,{reviewable:data.status==='needs_review'});
   html=html.replace('PETICIÓN DE DEMOSTRACIÓN','PETICIÓN · '+esc(data.subject));
   html=html.replace('Solicitante de demostración · 10 de septiembre de 2026',esc([data.requester,data.document_date].filter(Boolean).join(' · ')||data.filename));
-  html=html.replace('3 solicitudes identificadas',`${data.requests.length} solicitudes identificadas`);
+  html=html.replace('3 solicitudes identificadas',data.requests.length===1?'1 solicitud identificada':`${data.requests.length} solicitudes identificadas`);
   const confirmed=data.status==='confirmed';
   const action=confirmed?'<button class="primary" data-action="live-responses">Ver respuestas →</button>':'<button class="primary" data-action="live-confirm">Confirmar solicitudes →</button>';
   html=html.replace('<p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button>',`<p>${confirmed?'Identificación confirmada.':'Al confirmar, se buscarán las fuentes. Revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.'}</p>${action}`);

@@ -66,6 +66,7 @@ def get_workspace(service, case_id):
             "department": "Facultad de Ingeniería",
             "recipient": identification.get("requester") or "",
             "subject": identification.get("subject") or "",
+            "petition_number": case.get("origin", {}).get("reported_case_number", ""),
         }
     ).model_dump(mode="json")
     letterhead = service._letterhead()

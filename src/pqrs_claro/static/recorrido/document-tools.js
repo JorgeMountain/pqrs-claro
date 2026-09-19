@@ -1,12 +1,13 @@
 // Herramientas de texto: el contenido sigue usando el contrato del oficio.
 const copy=v=>structuredClone(v);
+import {focusPoint} from './document-pages.js';
 const button=(action,label,icon)=>`<button type="button" data-tool="${action}" title="${label}" aria-label="${label}">${icon?`<span aria-hidden="true">${icon}</span>`:''}<span>${label}</span></button>`;
 export const toolsMarkup=()=>`<div class="document-tools" role="region" aria-label="Herramientas del documento">
   <div class="tool-group">${button('undo','Deshacer','↶')}${button('redo','Rehacer','↷')}${button('save','Guardar','✓')}</div>
   <div class="tool-group">${button('find','Buscar y reemplazar','⌕')}${button('add','Añadir párrafo','+')}${button('remove','Quitar párrafo','−')}</div>
   <div class="tool-group tool-view"><button type="button" data-tool="out" aria-label="Reducir zoom" title="Reducir zoom">−</button><label class="zoom-control"><span class="tool-sr">Zoom del documento</span><select data-zoom><option value="fit">Ajustar al ancho</option>${[50,75,90,100,110,125,150,175,200].map(n=>`<option value="${n}">${n}%</option>`).join('')}</select></label><button type="button" data-tool="in" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>${button('full','Pantalla completa','⛶')}</div>
   <div class="document-find" hidden><label>Buscar en el texto editable<input type="search" data-find autocomplete="off"></label><label>Reemplazar por<input data-replacement autocomplete="off"></label><div class="find-actions">${button('previous','Anterior','↑')}${button('next','Siguiente','↓')}${button('replace','Reemplazar')}${button('all','Reemplazar todos')}${button('close-find','Cerrar búsqueda','×')}</div><span data-find-count role="status"></span></div>
-  </div><div class="document-tool-status"><span data-word-count></span><span data-selection-label>Selecciona un párrafo para editarlo</span><details><summary>Atajos</summary><p>Ctrl + Z: deshacer · Ctrl + Y: rehacer · Ctrl + F: buscar · Ctrl + S: guardar. En Mac, usa ⌘. El zoom cambia solo la vista.</p></details></div>`;
+  </div><div class="document-tool-status"><span data-page-count></span><span data-word-count></span><span data-selection-label>Selecciona un párrafo para editarlo</span><details><summary>Atajos</summary><p>Ctrl + Z: deshacer · Ctrl + Y: rehacer · Ctrl + F: buscar · Ctrl + S: guardar. En Mac, usa ⌘. El zoom cambia solo la vista. La paginación es orientativa; consulta el PDF generado para ver la distribución final.</p></details></div>`;
 
 export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,save}){
   const root=s.node,stage=root.querySelector('.document-stage'),canvas=root.querySelector('.document-canvas');
@@ -42,7 +43,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   }
   const editables=()=>[...root.querySelectorAll('[data-block]')];
   function refresh(){
-    const text=root.querySelector('.oficio-sheet').innerText.trim();
+    const text=s.work.blocks.map(b=>b.text).join('\n').trim();
     root.querySelector('[data-word-count]').textContent=`${text?text.split(/\s+/u).length:0} palabras · ${text.length.toLocaleString('es-CO')} caracteres`;
     root.querySelector('[data-tool="undo"]').disabled=s.busy||!history.past.length;
     root.querySelector('[data-tool="redo"]').disabled=s.busy||!history.future.length;
@@ -71,15 +72,15 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     picker.value=s.zoomMode||'fit';
     const width=Math.max(150,canvas.clientWidth-36);
     const zoom=s.zoomMode&&s.zoomMode!=='fit'?Number(s.zoomMode)/100:Math.min(1.25,width/816);
-    root.querySelector('.oficio-sheet').style.zoom=zoom;
+    root.querySelector('.oficio-pages').style.zoom=zoom;
     picker.title=`Zoom actual: ${Math.round(zoom*100)}%`;
     s.zoom=zoom;
   }
   function scan(){
     const needle=root.querySelector('[data-find]').value.toLocaleLowerCase('es');matches=[];
-    if(needle)for(const el of editables()){
-      const text=el.innerText.toLocaleLowerCase('es');let at=0;
-      while((at=text.indexOf(needle,at))!==-1){matches.push({block:Number(el.dataset.block),at,length:needle.length});at+=needle.length;}
+    if(needle)for(const block of new Set(editables().map(el=>Number(el.dataset.block)))){
+      const text=s.work.blocks[block].text.toLocaleLowerCase('es');let at=0;
+      while((at=text.indexOf(needle,at))!==-1){matches.push({block,at,length:needle.length});at+=needle.length;}
     }
     root.querySelector('[data-find-count]').textContent=needle?`${matches.length} coincidencias en el texto editable`:'';
     return matches;
@@ -87,14 +88,11 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   function showMatch(direction=1){
     scan();if(!matches.length)return;
     matchIndex=(matchIndex+direction+matches.length)%matches.length;
-    const match=matches[matchIndex],el=root.querySelector(`[data-block="${match.block}"]`);
+    const match=matches[matchIndex],el=[...root.querySelectorAll(`[data-block="${match.block}"]`)].find(el=>match.at<Number(el.dataset.offset)+el.textContent.length);
     editables().forEach(e=>e.classList.toggle('search-current',e===el));
     selected=match.block;el.scrollIntoView({block:'center',inline:'nearest'});
     // Texto plano renderizado: seleccionar la coincidencia sin insertar HTML.
-    if(el.childNodes.length===1&&el.firstChild.nodeType===Node.TEXT_NODE){
-      const range=document.createRange();range.setStart(el.firstChild,match.at);range.setEnd(el.firstChild,match.at+match.length);
-      const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
-    }
+    focusPoint(root,{block:match.block,start:match.at,end:match.at+match.length});
     root.querySelector('[data-find-count]').textContent=`${matchIndex+1} de ${matches.length} coincidencias`;refresh();
   }
   function replace(all){
@@ -102,7 +100,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     record();const replacement=root.querySelector('[data-replacement]').value;
     const chosen=all?matches:[matches[Math.max(0,Math.min(matchIndex,matches.length-1))]];
     for(const index of new Set(chosen.map(m=>m.block))){
-      let text=root.querySelector(`[data-block="${index}"]`).innerText;
+      let text=s.work.blocks[index].text;
       for(const m of chosen.filter(m=>m.block===index).reverse())text=text.slice(0,m.at)+replacement+text.slice(m.at+m.length);
       updateText(index,text);
     }
@@ -140,7 +138,10 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     else if(key==='f'){e.preventDefault();root.querySelector('[data-tool="find"]').click();}
     else if(inText&&(key==='z'||key==='y')){e.preventDefault();travel(key==='y'||e.shiftKey);}
   };
-  const observer=new ResizeObserver(applyZoom);observer.observe(canvas);
+  const observer=new ResizeObserver(()=>{
+    if(canvas.clientWidth&&root.querySelector('.oficio-pages')?.dataset.needsPagination)renderSheet();
+    applyZoom();
+  });observer.observe(canvas);
   const fullChange=()=>{const full=document.fullscreenElement===stage;root.querySelector('[data-tool="full"]').setAttribute('aria-pressed',String(full));applyZoom();};
   document.addEventListener('fullscreenchange',fullChange);
   bindSheet();

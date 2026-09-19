@@ -1,10 +1,11 @@
-import {createFinal} from './live-document.js?v=20260911-document-tools';
+import {createFinal} from './live-document.js?v=20260916-pages';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
 import {createProposalPanel} from './live-proposal.js?v=20260911-document-tools';
 import {createPendingActions} from './live-pending.js?v=20260911-document-tools';
 import {createResponseEditor} from './live-edit.js?v=20260911-document-tools';
-import {identification,responses,supports} from './live-views.js?v=20260914-passages';
+import {identification,responses,supports} from './live-views.js?v=20260916-discard';
+import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
@@ -14,9 +15,10 @@ async function api(path,body,method='POST'){
   const response=await fetch(path,options);const value=await response.json();
   if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'Revisa los campos y vuelve a intentarlo.');return value;
 }
-export function createLive({open,close,notice,releaseDemo}){
+export function createLive({open,close,notice,releaseDemo,showMail}){
   let current=null,data=null,job={},mapping={},drafts={},review={},step=1,busy=false,timer,token=0,release=()=>{};
   const state={originalPage:1,originalSelection:null};const view=document.querySelector('#view');
+  const identificationActions=createIdentificationActions({api,open,close,notice,getCase:()=>current,onSaved:select});
   const editor=createResponseEditor({open,close,notice,getCase:()=>current,onSaved:async row=>{
     if(current?.id!==row.case_id)return;
     review.requests=review.requests.map(r=>r.request_id===row.request_id?row:r);render();
@@ -46,10 +48,12 @@ export function createLive({open,close,notice,releaseDemo}){
     document.querySelector('.prototype-status').textContent='Expediente conectado';
     document.querySelector('.demo-badge').textContent='Gestión de Peticiones';
     document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed');if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
+    view.querySelector('.gmail-origin')?.remove();
     if(!current.identification)renderAnalysis(view,current);
-    else if(step===1)view.innerHTML=identification(data,state);
+    else if(step===1)view.innerHTML=identificationActions.banner()+identification(data,state);
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
+    if(step===1&&showMail)view.insertAdjacentHTML('afterbegin',`<div class="gmail-origin">${current.origin?.kind==='gmail'?`<span>Recibida por Gmail${current.origin.reported_case_number?' · Caso '+esc(current.origin.reported_case_number):''}</span>`:''}<button data-action="live-mail-origin">Ver correos del expediente</button></div>`);
     if(current.error&&current.identification)view.insertAdjacentHTML('afterbegin',`<p role="alert" class="alert">${esc(current.error)}</p><button data-action="live-analyze">Reintentar identificación</button>`);
     if(step===1&&data){bindOriginal(state,number=>run(()=>loadPage(number)));release=bindSplitPane();}
     view.querySelectorAll("[data-pending-group]").forEach(e=>e.open=expanded.includes(e.dataset.pendingGroup));
@@ -121,16 +125,17 @@ export function createLive({open,close,notice,releaseDemo}){
       try{if(current?.id!==caseId)throw new Error('El expediente cambió.');await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');close();notice('Fuentes de consulta guardadas.');}catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}}
     };
   }
-  function correct(){
+  function correct(index=0){
     const caseId=current.id,version=current.version;
     open('Corregir solicitud',`<form id="live-correction"><label class="field">Solicitud<select id="live-request">${data.requests.map((r,i)=>`<option value="${i}">${esc(r.label)}. ${esc(r.title)}</option>`).join('')}</select></label><label class="field">Título<input id="live-title" required maxlength="240"></label><label class="field">Qué solicita<textarea id="live-description" required maxlength="8000"></textarea></label><p>Se conserva la referencia al documento original.</p><button class="primary">Guardar corrección</button></form><p id="live-correction-error" role="alert"></p>`);
-    const selector=document.querySelector('#live-request');const fill=()=>{const r=data.requests[Number(selector.value)];document.querySelector('#live-title').value=r.title;document.querySelector('#live-description').value=r.description;};selector.onchange=fill;fill();
+    const selector=document.querySelector('#live-request');selector.value=String(index);const fill=()=>{const r=data.requests[Number(selector.value)];document.querySelector('#live-title').value=r.title;document.querySelector('#live-description').value=r.description;};selector.onchange=fill;fill();
     document.querySelector('#live-correction').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('button').disabled=true;
       try{const identification=structuredClone(current.identification);const row=identification.requests[Number(selector.value)];row.title=document.querySelector('#live-title').value;row.description=document.querySelector('#live-description').value;await api(`/api/cases/${caseId}/identification`,{version,identification},'PUT');close();await select(caseId);}catch(e){if(form.isConnected){document.querySelector('#live-correction-error').textContent=e.message;form.querySelector('button').disabled=false;}}
     };
   }
   view.addEventListener('click',e=>{if(!current||busy)return;const b=e.target.closest('[data-action]');if(!b)return;const index=Number(b.dataset.index);
     run(async()=>{switch(b.dataset.action){
+      case 'live-mail-origin':await showMail?.(current.id);break;
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=2;await refresh();break;}
       case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
       case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
@@ -141,7 +146,9 @@ export function createLive({open,close,notice,releaseDemo}){
       case 'clear-original':state.originalSelection=null;await loadPage(state.originalPage);break;
       case 'back-to-question':focusRequest(index);break;
       case 'live-collections':await collections();break;
-      case 'live-correct':correct();break;
+      case 'live-correct':correct(Number.isInteger(index)?index:0);break;
+      case 'live-discard':identificationActions.discard(index);break;
+      case 'live-undo-discard':await identificationActions.restore();break;
       case 'live-pending':await pendingActions.decide(data.requests[index].id,b.dataset.pending,b.dataset.decision);break;
       case 'live-pending-history':await pendingActions.history(data.requests[index].id);break;
       case 'live-proposal':await proposals.show(data.requests[index].id);break;

@@ -17,6 +17,8 @@ from .draft_api import draft_router
 from .draft_service import DraftService
 from .evidence_api import evidence_router
 from .extraction import OpenAIOCR, PDFExtractor
+from .gmail_api import gmail_router
+from .gmail_service import GmailService
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
@@ -71,7 +73,11 @@ def create_app(
     review_engine=None,
     office_renderer=None,
     proposal_engine=None,
+    gmail_auth=None,
+    interface="workspace",
 ):
+    if interface not in {"workspace", "recorrido"}:
+        raise ValueError("Interfaz no reconocida.")
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
@@ -104,6 +110,7 @@ def create_app(
     reviews_service.preparation = preparation
 
     proposals = ResponseProposalService(settings, reviews_service, engine=proposal_engine)
+    gmail = GmailService(settings, store, library, check_pdf, auth=gmail_auth)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -115,6 +122,7 @@ def create_app(
         preparation.recover()
         proposals.recover()
         yield
+        gmail.close()
         proposals.close()
         preparation.close()
         service.close()
@@ -135,6 +143,8 @@ def create_app(
     app.state.proposals = proposals
     app.include_router(response_proposal_router(proposals))
     app.state.preparation = preparation
+    app.state.gmail = gmail
+    app.include_router(gmail_router(gmail))
     app.include_router(preparation_router(preparation))
     app.include_router(source_router(library, sources_service, store))
     app.include_router(document_view_router(store))
@@ -263,10 +273,6 @@ def create_app(
     static = Path(__file__).parent / "static"
     app.mount("/static", StaticFiles(directory=static), name="static")
 
-    @app.get("/")
-    def home():
-        return FileResponse(static / "workspace" / "index.html")
-
     @app.get("/anterior")
     def previous_interface():
         return FileResponse(static / "index.html")
@@ -274,6 +280,15 @@ def create_app(
     @app.get("/favicon.ico", include_in_schema=False)
     def favicon():
         return Response(status_code=204)
+
+    if interface == "recorrido":
+        from .recorrido_ui import mount_recorrido_ui
+
+        mount_recorrido_ui(app)
+    else:
+        @app.get("/")
+        def home():
+            return FileResponse(static / "workspace" / "index.html")
 
     return app
 
