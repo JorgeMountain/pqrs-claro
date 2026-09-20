@@ -21,7 +21,8 @@ filtrada por una etiqueta, inicialmente `PQRS-Pruebas`. No hay vigilancia progra
    En el sistema pulsa **Consultar correos**. También puedes escribir otra etiqueta
    existente. Si no existe, no se amplía la búsqueda al buzón completo.
 
-Mantén activos el backend 8770 y el recorrido 8772 durante la conexión. El retorno
+Inicia el sistema con `scripts/start-recorrido.ps1` o `scripts/start.ps1`;
+ambos usan ahora un único proceso en 8772. El retorno
 local es `http://127.0.0.1:8772/api/gmail/oauth/callback`. Usa el navegador habitual
 si Google no admite iniciar sesión dentro de un navegador integrado.
 

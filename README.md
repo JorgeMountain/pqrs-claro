@@ -4,24 +4,24 @@ Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes 
 
 ## Empezar
 
-**Integración en un puerto — validación de fase 2:** `scripts/start-unificado.ps1`
-sirve el recorrido y la API en 8772, sin depender de 8770. El arranque habitual
-todavía no se ha sustituido. [Alcance, pruebas y activación](docs/INTEGRACION_UN_PUERTO.md).
+**Integración en un puerto activa:** `scripts/start.ps1`, `scripts/start-recorrido.ps1`
+y `scripts/start-unificado.ps1` sirven el recorrido y la API en 8772, sin depender
+de 8770. [Alcance, pruebas y activación](docs/INTEGRACION_UN_PUERTO.md).
 El flujo aislado con IA real y Word/PDF pasó; Gmail se comprobó con transporte
 simulado. [Evidencias y límites de fase 2](docs/QA_UNIFICACION_FASE2_20260919.md).
 
 **Recorrido elegido para continuar el trabajo: http://127.0.0.1:8772.** Conservamos su diseño e interacción. Para iniciarlo o comprobar que sigue disponible, ejecuta `scripts/start-recorrido.ps1`. La biblioteca consulta documentos reales. «Cargar petición» y «Mis expedientes» permiten identificar solicitudes y, al confirmarlas, buscar fuentes y preparar respuestas automáticamente. Las respuestas reales ya se pueden editar y guardar desde sus tarjetas. «Actualizar con IA» propone ajustes basados en las decisiones registradas y permite comparar antes de aplicar o descartar. La demo original se conserva aparte; la revisión, aprobación por respuesta y generación de Word/PDF de expedientes reales están conectadas en «Revisar el oficio». [Preparación automática](docs/PREPARACION_AUTOMATICA.md). [Alcance de la biblioteca integrada](docs/BIBLIOTECA_RECORRIDO.md). La integración de 8770 se conserva como alternativa, no como sustituto aceptado.
 
-Para ejecutar la integración alternativa con los expedientes reales:
+Para iniciar el sistema con tus expedientes:
 
 ```powershell
 cd C:\Users\jorge\Desktop\AgenteO\pqrs-claro
 .\scripts\start.ps1
 ```
 
-Abrir **http://127.0.0.1:8770**. La opción **Practicar con un ejemplo** utiliza un PDF ficticio y llama a OpenAI de verdad. También puedes cargar tu propio PDF y pulsar Analizar. Selecciona una solicitud para contrastarla con la página original; corrige lo necesario, guarda y confirma la identificación.
+Abrir **http://127.0.0.1:8772**. Puedes cargar un PDF o importar una petición desde Gmail. Selecciona cada solicitud para contrastarla con el original; corrige lo necesario, guarda y confirma la identificación.
 
-La integración de 8770 tiene tres etapas: **Entender la petición → Preparar las respuestas → Revisar el oficio**. Integra los expedientes y la biblioteca reales. La interfaz anterior se conserva en **http://127.0.0.1:8770/anterior**. Ambas utilizan los mismos datos; la anterior no es una copia aislada. Consulta [el alcance de esta integración y la decisión vigente de continuar en 8772](docs/INTERFAZ_PRINCIPAL.md).
+Las tres etapas son **Entender la petición → Preparar las respuestas → Revisar el oficio**. La interfaz anterior se conserva en **http://127.0.0.1:8772/anterior**. Ambas utilizan los mismos datos; la anterior no es una copia aislada. Consulta [el historial de interfaces](docs/INTERFAZ_PRINCIPAL.md).
 
 ## Qué incluye esta entrega
 

@@ -7,6 +7,9 @@ carga de PDF. `gmail_auth.py` conecta la cuenta; `gmail_service.py` conserva el 
 y crea o vincula el expediente; después se utiliza el mismo flujo descrito aquí.
 Consulta [GMAIL.md](GMAIL.md) para configurar la conexión y conocer su alcance.
 
+**Actualización del 19 de septiembre:** interfaz y API funcionan en un solo proceso
+en 8772. Los comandos `start.ps1` y `start-recorrido.ps1` usan ese modo.
+
 ## 1. La idea central
 
 El sistema transforma un PDF en solicitudes individuales y prepara respuestas con sus soportes. El navegador muestra y permite editar; Python coordina los procesos y aplica las reglas; la IA identifica, evalúa y redacta; SQLite y los archivos locales conservan el trabajo.
@@ -16,9 +19,9 @@ Tú, en el navegador
         │ clic, archivo o edición
         ▼
 Interfaz 8772 — HTML, CSS y JavaScript
-        │ /api/… → recorrido_app.py reenvía la petición
+        │ /api/… → rutas de la misma aplicación
         ▼
-Backend 8770 — app.py y módulos *_api.py
+API 8772 — unified_app.py, app.py y módulos *_api.py
         │
         ├── Servicios: coordinan operaciones y comprueban versiones
         ├── Grafos: ordenan pasos, guardan avance y permiten pausas
@@ -26,7 +29,7 @@ Backend 8770 — app.py y módulos *_api.py
         └── Almacenamiento: SQLite + documentos originales + exportaciones
 ```
 
-**8772 y 8770 no son dos bases de datos independientes.** El recorrido de 8772 utiliza el backend de 8770. Abrir la interfaz alternativa de 8770 trabaja con los mismos datos de ese backend. Esto es distinto de `langgraph-pqrs/`, que es otro proyecto del directorio padre.
+**La interfaz y la API comparten un solo proceso en 8772 y las mismas bases.** El puerto 8770 ya no es necesario para el arranque habitual. El proxy anterior se conserva en `recorrido_app.py` para recuperación explícita. `langgraph-pqrs/` es otro proyecto del directorio padre.
 
 El flujo real actual no depende de n8n. Tampoco hay una consulta automática a OnBase: la recuperación se hace sobre las fuentes incorporadas y habilitadas en la biblioteca local.
 
@@ -36,8 +39,10 @@ Las rutas de esta guía parten de `pqrs-claro/`. El código Python está en `src
 
 | Carpeta o archivo | Qué contiene | Cuándo lo abrirías |
 |---|---|---|
-| `scripts/start-recorrido.ps1` | Arranque del recorrido y del backend cuando corresponde | Para levantar la página de 8772 |
-| `src/pqrs_claro/recorrido_app.py` | Servidor de la interfaz y reenvío de `/api/` a 8770 | Si la interfaz no alcanza el backend |
+| `scripts/start-recorrido.ps1` | Arranque unificado, compartido con `start.ps1` | Para levantar la página de 8772 |
+| `src/pqrs_claro/unified_app.py` | Entrada de la aplicación unificada | Para entender el arranque en un puerto |
+| `src/pqrs_claro/recorrido_ui.py` | Montaje de los recursos de la interfaz después de la API | Para revisar rutas estáticas |
+| `src/pqrs_claro/recorrido_app.py` | Proxy anterior, conservado como alternativa | Para una recuperación explícita del modo anterior |
 | `src/pqrs_claro/static/recorrido/` | La interfaz elegida: pantallas, eventos y estilos | Para modificar tarjetas, editor o interacción |
 | `src/pqrs_claro/app.py` | Construcción de la aplicación, servicios y rutas | Para entender cómo se conecta todo |
 | `src/pqrs_claro/preparation.py` | Coordinación de fuentes → pendientes → borradores | Para cambiar cuándo comienza cada proceso |

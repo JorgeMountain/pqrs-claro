@@ -1,5 +1,10 @@
 # Integración alternativa conservada · 8770
 
+> Actualización del 19 de septiembre de 2026: el arranque habitual ya está unificado.
+> `start.ps1` y `start-recorrido.ps1` sirven el recorrido y la API en 8772, sin backend
+> en 8770. El texto siguiente conserva el historial de la interfaz alternativa.
+> Para la operación actual, consultar [la integración activa](INTEGRACION_UN_PUERTO.md).
+
 **Decisión vigente del usuario: continuar sobre http://127.0.0.1:8772, preservando su diseño e interacción.** La integración de 8770 no fue aceptada como sustituto. Se conserva como implementación alternativa y referencia técnica, sin borrar versiones ni datos. Las futuras conexiones de biblioteca y expedientes deben incorporarse al recorrido de 8772, sin sustituir su interfaz ni presentar estados simulados como resultados reales.
 
 `scripts/start-recorrido.ps1` inicia o comprueba el recorrido elegido en 8772. Su interfaz está en `src/pqrs_claro/static/recorrido/` y ya incorpora la [biblioteca compartida real](BIBLIOTECA_RECORRIDO.md) y la [confirmación con preparación automática](PREPARACION_AUTOMATICA.md). Conserva los documentos y respuestas de la demostración en `output/ux-peticiones-20260910/`; no equivale a una validación nueva del expediente completo. `scripts/start.ps1` continúa sirviendo el servicio y la integración alternativa de 8770, descrita a continuación.

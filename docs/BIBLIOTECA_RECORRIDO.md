@@ -12,7 +12,7 @@ La biblioteca compartida incluye las colecciones importadas de ONMAN y Drive. No
 
 ## Operación y conservación
 
-`scripts/start-recorrido.ps1` inicia el recorrido en 8772 y, si no hay servicio en 8770, lo inicia en segundo plano con `data/`. Si 8772 ya está activo, verifica su conexión. El proceso del recorrido (`pqrs_claro.recorrido_app`) reenvía las llamadas API al único servicio de 8770. No abre otro proceso sobre SQLite ni copia la biblioteca.
+Desde el 19 de septiembre de 2026, `scripts/start-recorrido.ps1` y `scripts/start.ps1` inician interfaz y API en un solo proceso (`pqrs_claro.unified_app`) en 8772, usando los mismos datos de `data/`. Si ya está activo, comprueban la instancia existente. No se inicia un backend adicional en 8770 ni se copia la biblioteca.
 
 La interfaz está en `src/pqrs_claro/static/recorrido/`; los recursos/documentos de la demo se sirven desde `output/ux-peticiones-20260910/`. Esa versión anterior queda conservada. Se guardaron además copias de sus archivos de interfaz y de las bases relevantes en `output/qa/library-recorrido-20260910/`.
 

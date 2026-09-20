@@ -1,19 +1,21 @@
-# Integración en un puerto · fases 1 y 2
+# Integración en un puerto · activa
 
 Implementada el 19 de septiembre de 2026. El modo unificado sirve la interfaz
 elegida del recorrido y todas las rutas `/api/` desde la misma aplicación FastAPI.
 No crea un cliente HTTP hacia 8770, ni un segundo conjunto de servicios o bases.
 Usa los mismos servicios de identificación, fuentes, revisión, Gmail y oficios.
 
-## Arranque preparado
+## Arranque habitual
 
-Desde la raíz de `pqrs-claro`, para la fase de activación:
+Desde la raíz de `pqrs-claro`:
 
 ```powershell
-.\scripts\start-unificado.ps1
+.\scripts\start-recorrido.ps1
 ```
 
-La dirección es `http://127.0.0.1:8772/`. También se puede ejecutar
+La dirección es `http://127.0.0.1:8772/`. `start.ps1` y `start-unificado.ps1`
+inician el mismo modo; ejecutar de nuevo cualquiera comprueba la instancia
+existente sin crear otro servidor. También se puede ejecutar
 `scripts/dev-python.ps1 -m pqrs_claro.unified_app --port 8772`.
 El script comprueba si ya hay una instancia unificada; no detiene procesos
 ni reemplaza el recorrido anterior si ocupa el puerto. Rechaza el inicio si
@@ -32,10 +34,12 @@ para QA sin autorización Gmail real.
 - `recorrido_ui.py` sirve los mismos archivos en ambos modos; no cambia el diseño.
 - La protección de origen local, hosts permitidos, caché y descarga de originales
   se aplica desde el servicio integrado.
-- El arranque habitual `start-recorrido.ps1` sigue en modo de dos puertos.
-  Su sustitución y el retiro de 8770 corresponden a la fase de activación.
-- Para volver al modo anterior, cerrar el unificado y usar `start-recorrido.ps1`.
-  Nunca mantener ambos backends sobre la misma carpeta de datos.
+- Los arranques habituales `start-recorrido.ps1` y `start.ps1` usan el modo unificado.
+- Para volver temporalmente al modo anterior, cerrar primero el unificado y ejecutar
+  `scripts/dev-python.ps1 -m pqrs_claro.app` en una terminal y
+  `scripts/dev-python.ps1 -m pqrs_claro.recorrido_app --port 8772 --backend-port 8770`
+  en otra. El backend anterior usa 8770 por defecto; comprobar que la configuración
+  local no cambie ese puerto. Nunca mantener ambos backends sobre los mismos datos.
 
 ## Validación de esta fase
 
@@ -61,5 +65,23 @@ en Edge, exportación Word/PDF real y reapertura de los datos guardados. Gmail
 se validó con un transporte simulado, incluidos PDF, cuerpo y duplicados.
 Consulta [el informe de fase 2](QA_UNIFICACION_FASE2_20260919.md).
 
-La fase 3 pendiente es cambiar el arranque habitual, comprobar la configuración
-Gmail real en 8772 y retirar el proceso de 8770. No se ha hecho esa activación.
+## Fase 3: activación sobre los datos existentes
+
+El 19 de septiembre se sustituyeron los dos comandos habituales por el arranque
+unificado. Se respaldaron diez bases SQLite y se registraron las huellas de 1139
+archivos locales antes del inicio. No había servidores anteriores activos.
+
+La aplicación abrió los 47 expedientes existentes. En Edge se consultó la etiqueta
+`PQRS-Pruebas` mediante la conexión Gmail existente: Google devolvió tres mensajes.
+No se importaron mensajes ni se llamó a IA. Las 49 solicitudes del navegador
+fueron a 8772, sin errores HTTP o JavaScript. No fue necesario volver a autorizar Gmail.
+
+Se cerró el servidor con Ctrl+C y se inició nuevamente usando `start.ps1`.
+La verificación posterior y las huellas se conservan en
+`output/qa/activation-20260919/` (respaldo y evidencia local excluidos de Git).
+Después del reinicio las diez bases conservan su contenido exacto y los documentos
+originales no cambiaron. La única huella distinta corresponde a `token.protected`:
+Gmail renovó su token de acceso mediante la conexión existente. La segunda consulta
+de navegador volvió a responder sin errores y mostró los mismos tres mensajes.
+Solo debe escuchar 8772. Los informes de fases anteriores conservan sus límites
+históricos; esta fase añade la comprobación de Gmail real y del arranque habitual.

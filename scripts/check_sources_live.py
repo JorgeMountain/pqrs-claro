@@ -8,7 +8,7 @@ import httpx
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("case_id")
-parser.add_argument("--url", default="http://127.0.0.1:8770")
+parser.add_argument("--url", default="http://127.0.0.1:8772")
 args = parser.parse_args()
 
 with httpx.Client(base_url=args.url, timeout=30) as client:
