@@ -580,28 +580,46 @@ def _date_passages(request, eligible):
     """
     query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
     words = set(tokenize(_search_words(query)))
-    if not words.intersection({"fecha", "calendario", "cuando"}):
+    if not words.intersection({"fecha", "calendario"}) and not re.search(
+        r"\bcu[aá]ndo\b", query, re.IGNORECASE
+    ):
         return []
     generic = {"fecha", "calendario", "cuando", "prevista", "previsto", "previstas",
                "previstos", "presentacion", "informar", "dentro", "convocatoria",
-               "periodo", "publicacion", "consulta", "programada", "programado"}
+               "periodo", "consulta", "programada", "programado", "solicita",
+               "correspondiente", "conocer"}
     event = {w for w in words - generic if len(w) > 3 and not w.isdigit()}
     if not event:
         return []
-    candidates, originals = [], {}
+    candidates, originals, proximity = [], {}, {}
     for row in eligible:
         text = _search_words(row["quote"])
         # Tokenizar toda la página diluye la relación. La ventana admite títulos
         # y celdas consecutivas en calendarios extraídos de PDF.
         matches = list(_EXPLICIT_DATE.finditer(row["quote"].casefold()))
-        if not any(event.intersection(tokenize(_search_words(
-            row["quote"][max(0, m.start()-180):m.end()+180]
-        ))) for m in matches):
+        relations = []
+        for match in matches:
+            nearby = row["quote"][max(0, match.start()-180):match.end()+180]
+            hits = []
+            for word in re.finditer(r"\w+", nearby):
+                if event.intersection(tokenize(_search_words(word[0]))):
+                    start = max(0, match.start()-180) + word.start()
+                    end = max(0, match.start()-180) + word.end()
+                    hits.append((next(iter(tokenize(_search_words(word[0])))),
+                                 max(0, match.start()-end, start-match.end())))
+            if hits:
+                relations.append((len({word for word, distance in hits}),
+                                  -min(distance for word, distance in hits)))
+        if not relations:
             continue
+        proximity[row["chunk_id"]] = max(relations)
         originals[row["chunk_id"]] = row
         candidates.append({**row, "title": "", "quote": text})
-    return [originals[r["chunk_id"]] for r in
-            _rank({}, candidates, query=_search_words(query, expand=True))[:2]]
+    ranked = _rank({}, candidates, query=_search_words(query, expand=True))
+    # Relate the date to the requested event, not to repeated words elsewhere
+    # on the page (e.g. historical regulations or registration deadlines).
+    ranked.sort(key=lambda r: proximity[r["chunk_id"]], reverse=True)
+    return [originals[r["chunk_id"]] for r in ranked[:2]]
 
 
 def _document_content(request, eligible):

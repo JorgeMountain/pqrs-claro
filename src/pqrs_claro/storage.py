@@ -38,6 +38,15 @@ class CaseStore:
                 CREATE TABLE IF NOT EXISTS revisions (
                     case_id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL,
                     PRIMARY KEY (case_id, version));
+                CREATE TABLE IF NOT EXISTS case_lifecycle (
+                    case_id TEXT PRIMARY KEY, revision INTEGER NOT NULL,
+                    deleted_at TEXT);
+                CREATE TABLE IF NOT EXISTS case_lifecycle_events (
+                    case_id TEXT NOT NULL, revision INTEGER NOT NULL,
+                    action TEXT NOT NULL, created_at TEXT NOT NULL,
+                    PRIMARY KEY (case_id, revision));
+                CREATE TABLE IF NOT EXISTS case_purges (
+                    case_id TEXT PRIMARY KEY, started_at TEXT NOT NULL);
             """)
 
     @contextmanager
@@ -81,18 +90,64 @@ class CaseStore:
             conn.execute("INSERT INTO cases VALUES (?,?,?)", (case_id, 1, json.dumps(case)))
         return case
 
-    def get(self, case_id):
+    def get(self, case_id, *, include_deleted=False):
         with self.connect() as conn:
             row = conn.execute("SELECT body FROM cases WHERE id=?", (case_id,)).fetchone()
+            lifecycle = conn.execute(
+                "SELECT deleted_at FROM case_lifecycle WHERE case_id=?", (case_id,)
+            ).fetchone()
         if not row:
             raise KeyError("No se encontró el expediente.")
+        if not include_deleted and lifecycle and lifecycle[0]:
+            raise Conflict("Este expediente está en la papelera. Restáuralo para continuar.")
         return json.loads(row[0])
 
-    def list(self):
+    def list(self, *, deleted=False):
         with self.connect() as conn:
-            rows = conn.execute("SELECT body FROM cases ORDER BY rowid DESC").fetchall()
+            rows = conn.execute(
+                "SELECT c.body, COALESCE(l.revision,0), l.deleted_at FROM cases c "
+                "LEFT JOIN case_lifecycle l ON l.case_id=c.id "
+                "WHERE (l.deleted_at IS NOT NULL)=? ORDER BY c.rowid DESC", (deleted,)
+            ).fetchall()
         keys = ("id", "filename", "status", "created_at", "request_count", "version")
-        return [{key: body[key] for key in keys} for body in (json.loads(r[0]) for r in rows)]
+        result = []
+        for raw, revision, deleted_at in rows:
+            body = json.loads(raw)
+            origin = body.get("origin") or {}
+            result.append({**{key: body[key] for key in keys},
+                           "subject": (body.get("identification") or {}).get("subject")
+                           or origin.get("subject") or "",
+                           "origin_kind": origin.get("kind", "pdf"),
+                           "case_number": origin.get("reported_case_number", ""),
+                           "lifecycle_revision": revision, "deleted_at": deleted_at})
+        return result
+
+    def set_deleted(self, case_id, *, version, lifecycle_revision, deleted):
+        """Soft deletion preserves content versions, approvals and all original files."""
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            case = conn.execute("SELECT version FROM cases WHERE id=?", (case_id,)).fetchone()
+            if not case:
+                raise KeyError(case_id)
+            row = conn.execute(
+                "SELECT revision,deleted_at FROM case_lifecycle WHERE case_id=?", (case_id,)
+            ).fetchone()
+            if conn.execute("SELECT 1 FROM case_purges WHERE case_id=?", (case_id,)).fetchone():
+                raise Conflict("El borrado definitivo está iniciado. "
+                               "Reintenta eliminarlo desde la papelera.")
+            revision, deleted_at = row or (0, None)
+            if version != case[0] or lifecycle_revision != revision:
+                raise Conflict("El expediente cambió. Actualiza la lista y vuelve a intentarlo.")
+            if bool(deleted_at) == deleted:
+                raise Conflict("El expediente ya está en ese estado. Actualiza la lista.")
+            timestamp = now()
+            conn.execute(
+                "INSERT OR REPLACE INTO case_lifecycle VALUES (?,?,?)",
+                (case_id, revision + 1, timestamp if deleted else None),
+            )
+            conn.execute("INSERT INTO case_lifecycle_events VALUES (?,?,?,?)",
+                         (case_id, revision + 1, "deleted" if deleted else "restored", timestamp))
+        return {"id": case_id, "deleted": deleted, "lifecycle_revision": revision + 1}
 
     def update(self, case_id, *, expected=None, event=None, **changes):
         with self.connect() as conn:
@@ -100,6 +155,11 @@ class CaseStore:
             row = conn.execute("SELECT version,body FROM cases WHERE id=?", (case_id,)).fetchone()
             if not row:
                 raise KeyError("No se encontró el expediente.")
+            lifecycle = conn.execute(
+                "SELECT deleted_at FROM case_lifecycle WHERE case_id=?", (case_id,)
+            ).fetchone()
+            if lifecycle and lifecycle[0]:
+                raise Conflict("Restaura el expediente desde la papelera antes de modificarlo.")
             version, body = row
             if expected is not None and expected != version:
                 raise Conflict("El expediente cambió en otra ventana. Recargue antes de guardar.")

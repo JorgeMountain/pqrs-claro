@@ -1,6 +1,7 @@
+import {bindSupportPicker} from './pending-supports.js';
 import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
-import {decisionForm,factForm,when} from './live-pending-view.js?v=20260911-document-decisions';
+import {decisionForm,factForm,when} from './live-pending-view.js?v=20260919-supports';
 import {documentDecisionForm} from './document-decision.js';
 
 export function createPendingActions({open,close,notice,getCase,onSaved,upload}) {
@@ -63,15 +64,14 @@ export function createPendingActions({open,close,notice,getCase,onSaved,upload})
       }
       const view=decisionForm(row,p,action,actor);body.innerHTML=view.html;
       const form=document.querySelector('#pending-decision-form');
-      const select=form.querySelector('#pending-support');
-      if(select)select.onchange=()=>{const quote=form.querySelector('#pending-quote');quote.textContent=view.options.find(o=>o.value===select.value)?.text||'';quote.hidden=!quote.textContent;};
+      bindSupportPicker(form);
       form.querySelector('#pending-upload')?.addEventListener('click',()=>upload(requestId));
       form.querySelector('#pending-fact')?.addEventListener('click',()=>contribute(row,pendingId));
       bind(form,async()=>{
         if(getCase()?.id!==id)throw new Error('Cambió el expediente abierto.');
         const name=form.querySelector('#pending-actor').value.trim(),note=form.querySelector('#pending-note')?.value.trim()||'';
         if(!name||(action!=='open'&&!note))throw new Error('Completa tu nombre y la explicación de la decisión.');
-        const choice=select?.value||'';
+        const choice=form.querySelector('input[name="pending-support"]:checked')?.value||'';
         if(action==='resolved'&&!view.options.some(o=>o.value===choice))throw new Error('Selecciona el respaldo que revisaste.');
         const resolution={pending_id:pendingId,action,note,cited_chunk_ids:choice.startsWith('source:')?[choice.slice(7)]:[],cited_fact_ids:choice.startsWith('fact:')?[choice.slice(5)]:[]};
         const saved=await api(prefix(id)+`/requests/${encodeURIComponent(requestId)}`,{revision:row.revision,edited_by:name,paragraphs:row.paragraphs,pending_resolutions:[resolution]},'PUT');

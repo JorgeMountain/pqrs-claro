@@ -307,6 +307,26 @@ def test_pdf_import_duplicate_and_manual_upload_preserved(mail_app):
     assert len(app.state.store.list()) == 2
 
 
+def test_reimport_cannot_resurrect_a_case_in_trash(mail_app):
+    app, client, _, _, _ = mail_app
+    connect(client)
+    cid = ingest(client).json()['case_id']
+    path = '/api/cases/' + cid
+    before = client.get(path).json()
+    original = client.get(path + '/original').content
+    action = dict(version=before['version'], lifecycle_revision=0, confirmed=True)
+    assert client.request('DELETE', path, json=action).status_code == 200
+    response = ingest(client)
+    assert response.status_code == 409 and 'papelera' in response.json()['detail']
+    assert not app.state.store.list()
+    assert len(app.state.store.list(deleted=True)) == 1
+    restored = client.post(path + '/restore', json={**action, 'lifecycle_revision': 1})
+    assert restored.status_code == 200
+    assert ingest(client).json()['duplicate']
+    assert client.get(path).json() == before
+    assert client.get(path + '/original').content == original
+
+
 def test_import_is_idempotent_for_concurrent_clicks(mail_app):
     app, client, _, _, _ = mail_app
     connect(client)

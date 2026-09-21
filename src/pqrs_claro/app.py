@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .case_lifecycle import case_busy, lifecycle_router
 from .config import ROOT, Settings
 from .document_view import document_view_router
 from .draft_api import draft_router
@@ -144,6 +145,10 @@ def create_app(
     app.include_router(response_proposal_router(proposals))
     app.state.preparation = preparation
     app.state.gmail = gmail
+    lifecycle_services = (preparation, service, sources_service, drafts_service,
+                          proposals, offices_service, reviews_service, gmail, library,
+                          verifications)
+    app.include_router(lifecycle_router(store, lifecycle_services))
     app.include_router(gmail_router(gmail))
     app.include_router(preparation_router(preparation))
     app.include_router(source_router(library, sources_service, store))
@@ -203,8 +208,9 @@ def create_app(
         )
 
     @app.get("/api/cases")
-    def list_cases():
-        return store.list()
+    def list_cases(deleted: bool = False):
+        return [{**case, "processing": case_busy(case["id"], lifecycle_services)}
+                for case in store.list(deleted=deleted)]
 
     def create_case(filename, data):
         case = store.create(filename, data)

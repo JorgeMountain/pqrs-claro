@@ -185,6 +185,7 @@ class GmailService:
                 row = self.detail(mid, body.account)
                 row.pop("related_cases", None)
                 if row.get("case_id"):
+                    self.cases.get(row["case_id"])  # A deleted case must be restored explicitly.
                     return {"case_id": row["case_id"], "duplicate": True, "linked": True}
                 if body.mode == "link":
                     if not body.target_case_id:
@@ -206,6 +207,8 @@ class GmailService:
                     self.validate_pdf(pdf, self.settings)
                     # Deterministic ID recovers a crash between case creation and receipt save.
                     cid = self.key(body.account, mid)
+                    if row.get("import_generation"):
+                        cid = uuid5(NAMESPACE_URL, f"{cid}:import:{row['import_generation']}").hex
                     try:
                         case = self.cases.get(cid)
                     except KeyError:

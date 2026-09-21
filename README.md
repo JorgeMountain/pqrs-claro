@@ -25,6 +25,10 @@ Las tres etapas son **Entender la petición → Preparar las respuestas → Revi
 
 ## Qué incluye esta entrega
 
+**Mis expedientes** incluye búsqueda, filtros, ordenación, paginación y una papelera
+con confirmación y restauración. Conserva los documentos y las respuestas; no borra
+fuentes compartidas. [Uso y alcance](docs/EXPEDIENTES.md).
+
 - Parte 1: [objetivo, alcance y criterios de aceptación](docs/PLAN.md), con seis PDFs ficticios y referencia humana en [examples/cases.json](examples/cases.json).
 - Parte 2: aplicación independiente, contratos de datos, SQLite para expedientes y checkpoints persistentes de LangGraph.
 - Parte 3: carga y conservación del PDF original, extracción por página, OCR cuando hace falta, identificación estructurada, referencias literales, corrección y confirmación humana.

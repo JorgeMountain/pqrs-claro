@@ -20,7 +20,7 @@ from .source_retrieval import RetrievalIndex, retrieve
 from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 18
+SOURCE_ANALYSIS_VERSION = 19
 
 
 def failed_finding(request_id, exc):
@@ -105,11 +105,12 @@ class SourceService:
                 stale=False,
             )
         stale = run["fingerprint"] != fingerprint
+        # v19 relaciona cada fecha con el evento cercano, no con toda la página.
         # v18 amplía pasajes y evita que el cupo léxico cierre el canal semántico.
         # v17 recupera fechas explícitas; v16 busca dentro de documentos.
         # Un resultado anterior ya satisfactorio sigue siendo utilizable si TODAS sus
         # entradas actuales coinciden. No se promueven errores ni se reescribe el run.
-        if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18}
+        if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18, 19}
                 and run.get("status") == "ready" and not run.get("error")):
             results = run.get("results", [])
             compatible = len(results) == case["request_count"] and all(

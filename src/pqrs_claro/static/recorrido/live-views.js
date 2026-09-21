@@ -1,4 +1,4 @@
-import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260911-document-decisions';
+import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260919-supports';
 import {esc,understanding,sourcesView} from './views.js';
 import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
 export function identification(data,state){

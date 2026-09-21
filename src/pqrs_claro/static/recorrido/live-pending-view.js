@@ -1,3 +1,4 @@
+import {supportOptions,supportPicker} from './pending-supports.js';
 import {esc} from './views.js';
 import {documentTarget} from './document-decision.js';
 export const isLater=p=>p.stage==='fulfillment'&&p.blocks_approval===false;
@@ -26,10 +27,10 @@ export function pendingCards(row,index) {
 
 export function decisionForm(row,p,action,actor) {
   const resolved=action==='resolved',isDocument=p.kind==='document';
-  const options=[...(row.available_supports||[]).map(s=>({value:'source:'+s.chunk_id,label:`${s.title} · versión ${s.version} · ${s.location_kind==='section'?'sección':'página'} ${s.page}`,text:s.quote})),...(!isDocument&&!row.pre_draft?(row.facts||[]).map(f=>({value:'fact:'+f.id,label:`Aporte de ${f.author} · ${f.observed_at}`,text:f.text})):[])];
+  const options=supportOptions(row,p);
   return {options,html:`<form id="pending-decision-form"><p><strong>${esc(p.description)}</strong></p>
     <p>${action==='not_applicable'?'Explica por qué este pendiente no corresponde a esta respuesta. La decisión no descarta el documento citado ni reescribe la respuesta.':action==='open'?'El punto volverá a aparecer por resolver. Se conserva la decisión anterior en el historial.':'Selecciona el pasaje o aporte que has revisado y explica cómo resuelve este punto.'}</p>
-    ${resolved?`<label class="field">Respaldo<select id="pending-support" required><option value="">Selecciona el respaldo revisado</option>${options.map(o=>`<option value="${esc(o.value)}">${esc(o.label)}</option>`).join('')}</select></label><blockquote id="pending-quote" hidden></blockquote>${!options.length?'<p>No hay soportes disponibles para confirmar este punto.</p>':''}<div class="scope-actions"><button type="button" id="pending-upload">Agregar evidencia</button>${!isDocument&&!row.pre_draft?'<button type="button" id="pending-fact">Aportar información comprobada</button>':''}</div>`:''}
+    ${resolved?`${supportPicker(options)}<div class="scope-actions"><button type="button" id="pending-upload">Agregar evidencia</button>${!isDocument&&!row.pre_draft?'<button type="button" id="pending-fact">Aportar información comprobada</button>':''}</div>`:''}
     ${action!=='open'?'<label class="field">'+(action==='not_applicable'?'Por qué no aplica':'Qué comprobaste y cómo resuelve este punto')+'<textarea id="pending-note" required maxlength="8000" rows="3"></textarea></label>':''}
     <label class="field">Tu nombre<input id="pending-actor" required maxlength="240" autocomplete="name" value="${esc(actor)}"></label>
     <p id="pending-error" role="alert"></p><div class="scope-actions"><button class="primary" type="submit" ${resolved&&!options.length?'disabled':''}>${resolved?'Confirmar y guardar':action==='open'?'Reabrir pendiente':'Guardar que no aplica'}</button><button type="button" id="pending-cancel">Cancelar</button></div>

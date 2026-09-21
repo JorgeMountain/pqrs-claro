@@ -1,9 +1,9 @@
 import {createFinal} from './live-document.js?v=20260916-pages';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
-import {createProposalPanel} from './live-proposal.js?v=20260911-document-tools';
-import {createPendingActions} from './live-pending.js?v=20260911-document-tools';
-import {createResponseEditor} from './live-edit.js?v=20260911-document-tools';
+import {createProposalPanel} from './live-proposal.js?v=20260919-supports';
+import {createPendingActions} from './live-pending.js?v=20260919-supports';
+import {createResponseEditor} from './live-edit.js?v=20260919-supports';
 import {identification,responses,supports} from './live-views.js?v=20260916-discard';
 import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
@@ -15,7 +15,7 @@ async function api(path,body,method='POST'){
   const response=await fetch(path,options);const value=await response.json();
   if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'Revisa los campos y vuelve a intentarlo.');return value;
 }
-export function createLive({open,close,notice,releaseDemo,showMail}){
+export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   let current=null,data=null,job={},mapping={},drafts={},review={},step=1,busy=false,timer,token=0,release=()=>{};
   const state={originalPage:1,originalSelection:null};const view=document.querySelector('#view');
   const identificationActions=createIdentificationActions({api,open,close,notice,getCase:()=>current,onSaved:select});
@@ -106,11 +106,7 @@ export function createLive({open,close,notice,releaseDemo,showMail}){
     await refresh();if(step===3)await final.load();if(!savedStep&&job.status==='running'){step=2;render();}if(current?.id===id&&current.pages.length&&step===1)await loadPage(1);
   }
   async function choose(){
-    open('Mis expedientes','<div id="live-cases" role="status">Cargando expedientes…</div>');const container=document.querySelector('#live-cases');
-    try{const cases=await api('/api/cases');if(!container.isConnected)return;
-      container.innerHTML=cases.map(c=>`<button class="case" data-live-case="${esc(c.id)}"><strong>${esc(c.filename)}</strong><span>${c.request_count||0} solicitudes · ${esc(c.status==='confirmed'?'Identificación confirmada':c.status==='needs_review'?'Por revisar':c.status)}</span></button>`).join('')||'<p>Todavía no hay expedientes. Usa «Cargar petición» para comenzar.</p>';
-      container.querySelectorAll('[data-live-case]').forEach(b=>b.onclick=()=>{close();run(()=>select(b.dataset.liveCase));});
-    }catch(error){if(container.isConnected)container.textContent=error.message;}
+    return onBrowse();
   }
   async function upload(file){
     if(!file)return;
