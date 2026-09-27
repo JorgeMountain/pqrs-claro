@@ -186,6 +186,8 @@ def purge_case(store, case_id, version, lifecycle_revision):
                 conn,
                 (
                     "preparations",
+                    "intake_reviews",
+                    "intake_history",
                     "revisions",
                     "case_lifecycle_events",
                     "case_lifecycle",

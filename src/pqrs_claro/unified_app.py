@@ -19,7 +19,10 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("El puerto debe estar entre 1 y 65535.")
-    settings = replace(Settings.load(), port=args.port)
+    settings = replace(
+        Settings.load(), port=args.port,
+        initial_review_enabled=True, initial_classification_provider="jev",
+    )
     uvicorn.run(create_unified_app(settings), host="127.0.0.1", port=args.port,
                 access_log=False)
 

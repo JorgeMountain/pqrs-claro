@@ -1,15 +1,21 @@
 import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260919-supports';
 import {esc,understanding,sourcesView} from './views.js';
 import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
-export function identification(data,state){
-  let html=understanding(data,state,{reviewable:data.status==='needs_review'});
+export function identification(data,state,{summary='',initial={},requestContent={},confirmation=''}={}){
+  let html=understanding(data,state,{reviewable:data.status==='needs_review'&&initial.status!=='running',processing:data.initial_review_enabled,beforeRequests:summary,requestContent});
   html=html.replace('PETICIÓN DE DEMOSTRACIÓN','PETICIÓN · '+esc(data.subject));
   html=html.replace('Solicitante de demostración · 10 de septiembre de 2026',esc([data.requester,data.document_date].filter(Boolean).join(' · ')||data.filename));
   html=html.replace('3 solicitudes identificadas',data.requests.length===1?'1 solicitud identificada':`${data.requests.length} solicitudes identificadas`);
   const confirmed=data.status==='confirmed';
-  const action=confirmed?'<button class="primary" data-action="live-responses">Ver respuestas →</button>':'<button class="primary" data-action="live-confirm">Confirmar solicitudes →</button>';
-  html=html.replace('<p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button>',`<p>${confirmed?'Identificación confirmada.':'Al confirmar, se buscarán las fuentes. Revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.'}</p>${action}`);
-  if(!confirmed)html+=`<div class="actionbar"><button data-action="live-correct">Corregir una solicitud</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
+  const action=data.initial_review_enabled&&(data.automatic_initial_review!==false||confirmed)
+    ?'<button data-action="live-initial">Ver resumen del trámite ↑</button>'
+    :confirmed?'<button class="primary" data-action="live-responses">Ver respuestas →</button>':'<button class="primary" data-action="live-confirm">Confirmar solicitudes →</button>';
+  const message=data.initial_review_enabled
+    ?data.automatic_initial_review===false&&!confirmed?'Confirma las solicitudes para analizar su trámite en esta instancia.':initial.status==='running'?'Estamos analizando el documento y sus peticiones.':initial.can_prepare?'Decisión guardada. Puedes continuar con las respuestas.':'Revisa el resumen y los tipos sugeridos; confirma todo al terminar.'
+    :confirmed?'Identificación confirmada.':'Al confirmar, se buscarán las fuentes. Revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
+  if(confirmation)html=html.replace('<div class="actionbar"><p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button></div>',confirmation);
+  else html=html.replace('<p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button>',`<p>${message}</p>${action}`);
+  if(!confirmed&&initial.status!=='running')html+=`<div class="actionbar"><button data-action="live-correct">Corregir una solicitud</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
   return html;
 }
 const names={support_found:'Respaldo encontrado',confirmation_pending:'Confirmación pendiente',document_missing:'Documento faltante',analysis_error:'Error de análisis'};

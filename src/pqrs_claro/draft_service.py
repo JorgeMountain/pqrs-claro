@@ -58,8 +58,15 @@ class DraftService:
         self.reviews = None
 
     def _fingerprint(self, case, source_run):
+        intake = getattr(self, 'initial_review', None)
+        initial_inputs = {}
+        if intake and intake.enabled:
+            initial = intake.saved(case['id'])
+            initial_inputs = {'initial_review_revision': initial['revision'],
+                              'initial_review_status': initial['status']}
         return digest(
             {
+                **initial_inputs,
                 "identification": case["identification"],
                 "case_version": case["version"],
                 "case_status": case["status"],
@@ -80,6 +87,8 @@ class DraftService:
                 and source_run["status"] in {"ready", "error"}
                 and not source_run.get("stale")
             )
+            if getattr(self, 'initial_review', None) and self.initial_review.enabled:
+                current = current and self.initial_review.get(case_id)['can_prepare']
             return case, source_run, self._fingerprint(case, source_run), current
 
     def get(self, case_id):
@@ -240,6 +249,8 @@ class DraftService:
 
     def start(self, case_id, version, *, ready_only=False):
         with self.lock:
+            if getattr(self, 'initial_review', None):
+                self.initial_review.assert_allowed(case_id)
             if case_id in self.active:
                 raise Conflict("Los borradores de este expediente ya se están preparando.")
             case, source_run, findings, fingerprint = self._inputs(case_id, version)
@@ -333,6 +344,8 @@ class DraftService:
         return value
 
     def _ensure_current(self, case_id, fingerprint, finding=None, *, full=False):
+        if getattr(self, 'initial_review', None):
+            self.initial_review.assert_allowed(case_id)
         _, source_run, current_fingerprint, current = self._current(case_id)
         if not current or current_fingerprint != fingerprint:
             raise _InputsChanged()

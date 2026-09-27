@@ -4,14 +4,19 @@
 from test_source_service_api import make_case, pdf_bytes, source_app  # noqa: F401
 
 
-def test_home_and_previous_interface_are_both_available(source_app):
+def test_home_and_previous_interface_are_both_available(source_app, request):
     _, client, _, _ = source_app
     new = client.get("/")
     old = client.get("/anterior")
     assert new.status_code == old.status_code == 200
-    assert "/static/workspace/app.js" in new.text
     assert "/static/app.js" in old.text
-    assert "step-upload" in old.text and 'data-stage="3"' in new.text
+    assert "step-upload" in old.text
+    if request.node.callspec.params['source_app'] == 'recorrido':
+        assert 'src="app.js' in new.text and 'data-step="3"' in new.text
+        assert client.get('/app.js').status_code == 200
+        assert client.get('/recorrido-status').json()['mode'] == 'unified'
+    else:
+        assert "/static/workspace/app.js" in new.text and 'data-stage="3"' in new.text
     script = client.get("/static/workspace/app.js").text
     assert "data.json" not in script and "scope-confirm" not in script
     assert "/review/start" in script and "/drafts/generate" in script

@@ -1,14 +1,16 @@
-import {createFinal} from './live-document.js?v=20260916-pages';
+import {createFinal} from './live-document.js?v=fiaga-attribution1';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
 import {createProposalPanel} from './live-proposal.js?v=20260919-supports';
 import {createPendingActions} from './live-pending.js?v=20260919-supports';
 import {createResponseEditor} from './live-edit.js?v=20260919-supports';
-import {identification,responses,supports} from './live-views.js?v=20260916-discard';
+import {identification,responses,supports} from './live-views.js?v=fiaga-attribution1';
 import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=fiaga-attribution1';
+import {confirmAndPrepare} from './initial-confirmation.js?v=fiaga-attribution1';
 
 async function api(path,body,method='POST'){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
@@ -18,6 +20,33 @@ async function api(path,body,method='POST'){
 export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   let current=null,data=null,job={},mapping={},drafts={},review={},step=1,busy=false,timer,token=0,release=()=>{};
   const state={originalPage:1,originalSelection:null};const view=document.querySelector('#view');
+  let initialEnabled=false,automaticInitial=false,initial={},initialForm=null,initialActionError='',configLoaded=false;
+  async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(initialEnabled&&!document.querySelector('.fiaga-environment')){const banner=document.createElement('div');banner.className='fiaga-environment';banner.textContent=settings.environment_label||'PQRS · revisión inicial y confirmación humana';document.querySelector('header').after(banner);}}
+  function initialSteps(){
+    document.querySelector('[data-step="1"]').innerHTML=`<span>1</span> ${initialEnabled&&current?'Procesar solicitud':'Entender la petición'}`;
+  }
+  const initialDirty=()=>Boolean(initialForm&&initialForm.case_id===current?.id&&initialForm.revision===initial.revision);
+  const canPrepare=()=>initialReady(initial)&&initial.can_prepare&&!initialDirty();
+  const rememberDecision=event=>{
+    if(!current||event.target.form?.id!=='initial-decision-form')return;
+    if(event.target.name!=='reviewed-all')view.querySelector('[name="reviewed-all"]').checked=false;
+    initialForm=readInitialDecision(view,current,initial);
+    initialActionError='';
+    view.querySelectorAll('[data-initial-error]').forEach(e=>e.hidden=true);
+    view.querySelectorAll('.initial-unsaved').forEach(e=>e.hidden=!initialDirty());
+    const summaryStatus=view.querySelector('.intake-summary-heading .initial-state'),summaryText=view.querySelector('.intake-summary-content [role="status"]');
+    if(summaryStatus)summaryStatus.textContent='Cambios sin confirmar';
+    if(summaryText)summaryText.textContent='Confirma los cambios al final de la pantalla.';
+    document.querySelectorAll('[data-step="2"],[data-step="3"]').forEach(e=>e.disabled=busy||!canPrepare());
+    updateInitialConfirmation(view,initial,initialForm);
+  };
+  view.addEventListener('input',rememberDecision);
+  view.addEventListener('change',rememberDecision);
+  view.addEventListener('submit',event=>{
+    if(event.target.id!=='initial-decision-form')return;
+    event.preventDefault();
+    view.querySelector('[data-action="live-initial-confirm"]')?.click();
+  });
   const identificationActions=createIdentificationActions({api,open,close,notice,getCase:()=>current,onSaved:select});
   const editor=createResponseEditor({open,close,notice,getCase:()=>current,onSaved:async row=>{
     if(current?.id!==row.case_id)return;
@@ -40,25 +69,27 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       if(row.pre_draft)await refresh();
     }});
   function render(){
-    if(!current)return;const expanded=[...view.querySelectorAll("[data-pending-group][open]")].map(e=>e.dataset.pendingGroup);release();releaseDemo();
+    if(!current)return;const expanded=[...view.querySelectorAll("[data-pending-group][open]")].map(e=>e.dataset.pendingGroup);const initialExpanded=new Map([...view.querySelectorAll('[data-initial-disclosure]')].map(e=>[e.dataset.initialDisclosure,e.open]));release();releaseDemo();initialSteps();
     document.querySelector('.steps').hidden=false;document.querySelector('.prototype').hidden=false;
     const locationState=new URL(location.href);locationState.searchParams.set('step',step);history.replaceState(null,'',locationState);
     document.querySelector('#case').classList.remove('active');
-    document.querySelector('.prototype').textContent='Expediente guardado · revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
+    document.querySelector('.prototype').textContent=initialEnabled?'Expediente guardado · revisa el trámite y las peticiones antes de preparar las respuestas.':'Expediente guardado · revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
     document.querySelector('.prototype-status').textContent='Expediente conectado';
     document.querySelector('.demo-badge').textContent='Gestión de Peticiones';
-    document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed');if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
+    document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed')||(initialEnabled&&[2,3].includes(Number(b.dataset.step))&&!canPrepare());if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
     view.querySelector('.gmail-origin')?.remove();
     if(!current.identification)renderAnalysis(view,current);
-    else if(step===1)view.innerHTML=identificationActions.banner()+identification(data,state);
+    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
     if(step===1&&showMail)view.insertAdjacentHTML('afterbegin',`<div class="gmail-origin">${current.origin?.kind==='gmail'?`<span>Recibida por Gmail${current.origin.reported_case_number?' · Caso '+esc(current.origin.reported_case_number):''}</span>`:''}<button data-action="live-mail-origin">Ver correos del expediente</button></div>`);
     if(current.error&&current.identification)view.insertAdjacentHTML('afterbegin',`<p role="alert" class="alert">${esc(current.error)}</p><button data-action="live-analyze">Reintentar identificación</button>`);
     if(step===1&&data){bindOriginal(state,number=>run(()=>loadPage(number)));release=bindSplitPane();}
     view.querySelectorAll("[data-pending-group]").forEach(e=>e.open=expanded.includes(e.dataset.pendingGroup));
+    view.querySelectorAll('[data-initial-disclosure]').forEach(e=>{if(initialExpanded.has(e.dataset.initialDisclosure))e.open=initialExpanded.get(e.dataset.initialDisclosure);});
+    if(step===1&&initialEnabled&&initialReady(initial)&&!busy)updateInitialConfirmation(view,initial,readInitialDecision(view,current,initial),{saved:canPrepare(),recorded:Boolean(initial.document_decision)&&!initialDirty()});
     updateSourcePanel();
-    if(busy)view.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);
+    if(busy)view.querySelectorAll('button,input,select,textarea').forEach(b=>b.disabled=true);
   }
   function updateSourcePanel(){
     const panel=document.querySelector('#live-source-detail');
@@ -83,27 +114,49 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     if(selected)selected.original_marks=page.marks.map(m=>({...m,page:number}));
     render();if(selected)focusOriginal();
   }
-  function schedule(){clearTimeout(timer);if(current&&(['reading','identifying'].includes(current.status)||job.status==='running'||review.requests?.some(r=>r.status==='checking')))timer=setTimeout(()=>refresh().catch(e=>{notice(e.message);schedule();}),2000);}
+  function schedule(){clearTimeout(timer);if(current&&(current.analysis_running||['reading','identifying'].includes(current.status)||initial.status==='running'||job.status==='running'||review.requests?.some(r=>r.status==='checking')))timer=setTimeout(()=>refresh().catch(e=>{notice(e.message);schedule();}),2000);}
   async function refresh(){
     const id=current.id,sequence=token;
     const next=await api(path(''));if(sequence!==token||current?.id!==id)return;
     if(next.version!==current.version){current=next;adapt();if(step===1&&current.pages.length)await loadPage(state.originalPage);}
+    current.analysis_running=next.analysis_running;
+    if(initialEnabled&&current.identification){
+      const value=await api(path('/initial-review'));if(sequence!==token||current?.id!==id)return;
+      if(value.revision!==initial.revision)initialForm=null;
+      initial=value;if(!canPrepare()&&[2,3].includes(step))step=1;
+    }
     if(current.status==='confirmed'){
       const results=await Promise.all([api(path('/preparation')),api(path('/sources')),api(path('/drafts')),api(path('/review'))]);
       if(sequence!==token||current?.id!==id)return;[job,mapping,drafts,review]=results;
+
     }
     render();schedule();
   }
   async function run(work){
-    if(busy)return;busy=true;render();try{await work();}catch(error){notice(error.message);}finally{busy=false;render();if(step===1&&state.originalSelection!==null)focusOriginal();schedule();}
+    if(busy)return;
+    const documentFocused=document.activeElement?.closest('.original-viewer,[data-action="original"]');
+    const initialAction=document.activeElement?.closest('[data-action^="live-initial"]')?.dataset.action;
+    busy=true;render();
+    try{await work();}catch(error){notice(error.message);}
+    finally{
+      busy=false;render();
+      if(step===1&&documentFocused)focusOriginal();
+      else if(initialAction&&!document.querySelector('#drawer')?.open){
+        const target=step===1?view.querySelector(`[data-action="${initialAction}"]:not([hidden])`):view.querySelector('h1');
+        if(target?.tagName==='H1')target.tabIndex=-1;
+        target?.focus({preventScroll:step===1});
+      }
+      schedule();
+    }
   }
   async function select(id){
+    await config();
     clearTimeout(timer);const sequence=++token;
     const before=new URL(location.href);const savedStep=before.searchParams.get('case')===id?Number(before.searchParams.get('step')):0;
     const value=await api('/api/cases/'+encodeURIComponent(id));if(sequence!==token)return;
-    current=value;final.setCase();job={};mapping={};drafts={};review={};state.originalPage=1;state.originalSelection=null;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:1;adapt();
+    current=value;final.setCase();job={};mapping={};drafts={};review={};initial={};initialForm=null;initialActionError='';state.originalPage=1;state.originalSelection=null;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:1;adapt();
     const url=new URL(location.href);url.searchParams.set('case',id);history.replaceState(null,'',url);render();
-    await refresh();if(step===3)await final.load();if(!savedStep&&job.status==='running'){step=2;render();}if(current?.id===id&&current.pages.length&&step===1)await loadPage(1);
+    await refresh();if(step===3)await final.load();if(!savedStep&&job.status==='running'&&(!initialEnabled||canPrepare())){step=2;render();}if(current?.id===id&&current.pages.length&&step===1)await loadPage(1);
   }
   async function choose(){
     return onBrowse();
@@ -118,7 +171,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     const groups=await api('/api/source-collections?case_id='+caseId);if(!container.isConnected||current?.id!==caseId)return;
     container.innerHTML=`<p>Estas colecciones delimitan los antecedentes que se consultarán para esta petición. Las normas compartidas y los soportes del expediente también se consideran.</p><form id="live-groups-form">${groups.collections.map(c=>`<label class="check"><input type="checkbox" name="collection" value="${esc(c.id)}" ${groups.linked_collection_ids.includes(c.id)?'checked':''}>${esc(c.name||c.id)}</label>`).join('')}<button class="primary">Guardar fuentes de consulta</button></form><p id="live-groups-error" role="alert"></p>`;
     document.querySelector('#live-groups-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('button').disabled=true;
-      try{if(current?.id!==caseId)throw new Error('El expediente cambió.');await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');close();notice('Fuentes de consulta guardadas.');}catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}}
+      try{if(current?.id!==caseId)throw new Error('El expediente cambió.');await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');close();await refresh();notice('Fuentes de consulta guardadas.');}catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}}
     };
   }
   function correct(index=0){
@@ -130,13 +183,48 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     };
   }
   view.addEventListener('click',e=>{if(!current||busy)return;const b=e.target.closest('[data-action]');if(!b)return;const index=Number(b.dataset.index);
+    if(b.dataset.action==='live-initial'){
+      const detail=view.querySelector('#initial-review-details');
+      if(detail)detail.open=true;
+      (detail?.querySelector('summary')||view.querySelector('#intake-summary-title'))?.focus();
+      return;
+    }
+    const decision=b.dataset.action==='live-initial-confirm'?readInitialDecision(view,current,initial):null;
+    if(decision){
+      updateInitialConfirmation(view,initial,decision,{saved:canPrepare()});
+      const form=view.querySelector('#initial-decision-form');
+      for(const field of form.elements){
+        if(field.willValidate&&!field.validity.valid){
+          let detail=field.closest('details');
+          while(detail){detail.open=true;detail=detail.parentElement.closest('details');}
+        }
+      }
+      if(!form.reportValidity())return;
+    }
     run(async()=>{switch(b.dataset.action){
+      case 'live-initial-analyze':{const target=current.id;const next=await api(path('/initial-review/analyze'),{version:current.version,revision:initial.revision||0});if(current?.id!==target)break;initial=next;initialForm=null;await refresh();break;}
+      case 'live-initial-confirm':{
+        if(!decision||!initialReady(initial))break;
+        const caseId=current.id;initialActionError='';
+        try{
+          const result=await confirmAndPrepare({saved:canPrepare()?initial:null,decision,report:initial.report,
+            save:body=>api(`/api/cases/${caseId}/initial-review/decision`,body,'PUT'),
+            onSaved:value=>{if(current?.id===caseId){initial=value;initialForm=null;}},
+            prepare:async()=>{const latest=await api(`/api/cases/${caseId}`);return api(`/api/cases/${caseId}/preparation`,{version:latest.version});}});
+          if(current?.id!==caseId)break;
+          if(result.error){initialActionError=result.error;await refresh();break;}
+          if(result.prepared){step=2;await refresh();}
+          else {await refresh();notice('Decisión guardada. La ruta elegida mantiene el expediente en este paso.');}
+        }catch(error){if(current?.id===caseId)initialActionError=error.message;}
+        break;
+      }
+      case 'live-initial-history':{const result=await api(path('/initial-review/history'));open('Historial del trámite',initialHistory(result.events));break;}
       case 'live-mail-origin':await showMail?.(current.id);break;
-      case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=2;await refresh();break;}
+      case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=initialEnabled?1:2;await refresh();if(initialEnabled)notice('Solicitudes confirmadas. Ya puedes analizar el trámite en el resumen.');break;}
       case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
       case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
       case 'live-analyze':await api(path('/analyze'),{});await refresh();break;
-      case 'live-responses':step=2;await refresh();break;
+      case 'live-responses':step=initialEnabled&&!canPrepare()?1:2;await refresh();break;
       case 'live-final':step=3;await refresh();await final.load();break;
       case 'original':state.originalSelection=index;await loadPage(data.requests[index].source_refs[0].page);break;
       case 'clear-original':state.originalSelection=null;await loadPage(state.originalPage);break;
@@ -153,5 +241,5 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       case 'live-sources':{open('Fuentes de la solicitud '+data.requests[index].label,`<div id="live-source-detail" data-case="${esc(current.id)}" data-request="${esc(data.requests[index].id)}"></div>`);updateSourcePanel();break;}
     }});
   });
-  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=value;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){token++;clearTimeout(timer);release();current=null;data=null;history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},init(){const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
+  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=initialEnabled&&[2,3].includes(value)&&!canPrepare()?1:[1,2,3].includes(value)?value:1;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){token++;clearTimeout(timer);release();current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(){await config();const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
 }

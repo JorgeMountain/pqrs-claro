@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f2ea">
+  <title>Banco de pruebas · Laya para PQRS</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Banco de pruebas de clasificación">
+        <span class="brand-mark" aria-hidden="true">L</span>
+        <span><strong>Laboratorio PQRS</strong><small>LAYA LOCAL · JEV EN LA NUBE</small></span>
+      </a>
+      <div id="modelStatus" class="status" role="status" aria-live="polite">
+        <span class="status-dot"></span><span>Comprobando Laya local…</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div class="eyebrow"><span class="eyebrow-line"></span> ESPACIO DE EXPERIMENTACIÓN</div>
+        <h1>¿Qué está pidiendo<br><em>esta comunicación?</em></h1>
+        <p class="lead">Prueba una petición ficticia o anonimizada. El modelo propone un tipo y revisa si el solicitante dirige insultos, distinguiéndolos de expresiones citadas para relatar hechos.</p>
+        <div class="privacy"><span aria-hidden="true">⌑</span><span><b>Prueba temporal y local.</b> El texto no se guarda ni se agrega a expedientes. Se envía a Laya en este equipo.</span></div>
+      </section>
+
+      <section class="workspace" aria-label="Clasificación de prueba">
+        <div class="panel input-panel">
+          <div class="panel-heading">
+            <div><span class="step">01 / ENTRADA</span><h2>Una comunicación</h2></div>
+            <button id="clearBtn" class="quiet-button" type="button">Limpiar</button>
+          </div>
+
+          <fieldset class="source-switch">
+            <legend>Elige cómo agregarla</legend>
+            <label><input type="radio" name="source" value="text" checked><span>Pegar texto</span></label>
+            <label><input type="radio" name="source" value="pdf"><span>Subir PDF</span></label>
+          </fieldset>
+
+          <div id="textSource" class="source-area">
+            <label class="field-label" for="requestText">Texto de la solicitud</label>
+            <textarea id="requestText" maxlength="3000" placeholder="Pega aquí el texto de una solicitud ficticia o anonimizada…" spellcheck="true"></textarea>
+            <div class="field-foot"><span>Máximo 3.000 caracteres</span><span id="charCount">0 / 3.000</span></div>
+          </div>
+
+          <div id="pdfSource" class="source-area" hidden>
+            <span class="field-label">Archivo PDF</span>
+            <label class="dropzone" for="requestFile">
+              <span class="upload-icon" aria-hidden="true">↑</span>
+              <strong>Selecciona un PDF</strong>
+              <span>Hasta 10 MB y 20 páginas</span>
+              <input id="requestFile" type="file" accept="application/pdf,.pdf">
+            </label>
+            <p id="fileInfo" class="file-info">Se extraerá el texto seleccionable. Este banco no hace OCR.</p>
+          </div>
+
+          <section class="reference-settings">
+            <label class="field-label" for="provider">Dónde analizar</label>
+            <select id="provider"><option value="laya">Laya · en este equipo</option><option value="jev">JEV · nube de Vercel / TypeSafe</option></select>
+          </section>
+          <section id="localModels" class="model-settings" aria-label="Modelos de Laya">
+            <span class="field-label">Modelos para cada revisión</span>
+            <div class="model-grid">
+              <label for="typeModel">Tipo de solicitud
+                <select id="typeModel">
+                  <option value="english" selected>English</option>
+                  <option value="multilingual">Multilingüe</option>
+                  <option value="typed-decisions">Typed decisions</option>
+                </select>
+              </label>
+              <label for="rudeModel">Lenguaje grosero
+                <select id="rudeModel">
+                  <option value="multilingual" selected>Multilingüe</option>
+                  <option value="english">English</option>
+                  <option value="typed-decisions">Typed decisions</option>
+                </select>
+              </label>
+            </div>
+            <p id="modelNote" class="field-help">Se consultan por separado en Laya local.</p>
+          </section>
+
+          <div class="examples">
+            <span>Ejemplos ficticios</span>
+            <button class="example-button" id="neutralExample" type="button">Admisión UdeA · ficticio</button>
+            <button class="example-button" id="rudeExample" type="button">Con insulto</button>
+          </div>
+
+          <button id="classifyBtn" class="primary-button" type="button" disabled>
+            <span>Clasificar con Laya</span><span aria-hidden="true">↗</span>
+          </button>
+          <p class="local-note">Inferencia local en <code>127.0.0.1:8770</code></p>
+        </div>
+
+        <div class="panel results-panel">
+          <div class="panel-heading">
+            <div><span class="step">02 / RESULTADO</span><h2>Lectura orientativa</h2></div>
+            <span id="resultBadge" class="result-badge">SIN PRUEBA</span>
+          </div>
+
+          <div id="emptyState" class="empty-state">
+            <div class="empty-art" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+            <strong>El resultado aparecerá aquí</strong>
+            <p>Agrega una comunicación de prueba y ejecútala para ver la clasificación sugerida y sus puntuaciones.</p>
+          </div>
+          <div id="errorBox" class="error-box" role="alert" hidden></div>
+          <div id="resultBox" hidden aria-live="polite"></div>
+        </div>
+      </section>
+
+      <section class="limits">
+        <div class="limit-icon" aria-hidden="true">i</div>
+        <div><h3>Qué comprobar en esta prueba</h3><p>Con las instrucciones ajustadas, English coincidió con la etiqueta esperada en 6 de 6 ejemplos ficticios de tipo; es una muestra muy pequeña, no una garantía. El tipo es una sugerencia global y el banco no separa varias peticiones. Laya no cita el fragmento que motivó la etiqueta. Una queja firme, crítica o urgencia no equivalen por sí solas a grosería. Revisa cada desacuerdo.</p></div>
+      </section>
+    </main>
+
+    <footer><span>FIAGA · COPIA AISLADA</span><span>Este laboratorio no altera los datos de 8773 o 8774.</span></footer>
+  </div>
+</body>
+</html>
+
+

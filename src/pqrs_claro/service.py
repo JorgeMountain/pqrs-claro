@@ -40,6 +40,7 @@ class CaseService:
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pqrs")
         self.lock = threading.RLock()
         self.active = set()
+        self.initial_review = None
 
     def graph(self, saver):
         extractor = self.extractor or PDFExtractor(
@@ -130,34 +131,43 @@ class CaseService:
                 self.active.discard(case_id)
 
     def project(self, case_id, values, *, confirmed=False):
-        return self.store.update(
-            case_id,
-            pages=values.get("pages", []),
-            identification=values.get("identification"),
-            status="confirmed" if confirmed else "needs_review",
-            error=None,
-            confirmed_at=now() if confirmed else None,
-            event=(
-                "Identificación confirmada. Primera entrega completada."
-                if confirmed
-                else "Lista para contrastar las solicitudes con el documento original."
-            ),
-        )
+        with self.lock:
+            case = self.store.update(
+                case_id,
+                pages=values.get("pages", []),
+                identification=values.get("identification"),
+                status="confirmed" if confirmed else "needs_review",
+                error=None,
+                confirmed_at=now() if confirmed else None,
+                event=(
+                    "Identificación confirmada. Primera entrega completada."
+                    if confirmed
+                    else "Lista para contrastar las solicitudes con el documento original."
+                ),
+            )
+            if not confirmed and self.initial_review is not None:
+                self.initial_review.analyze_identified(case)
+            return case
 
     def save(self, case_id, version, identification):
         with self.lock:
             case = self.store.get(case_id)
             if case["status"] != "needs_review":
                 raise Conflict("Solo puede editar una identificación pendiente de revisión.")
+            if self.initial_review is not None and case_id in self.initial_review.active:
+                raise Conflict("Espera a que termine el análisis del trámite antes de corregir.")
             pages = [Page.model_validate(p) for p in case["pages"]]
             result = Identification.model_validate(identification)
             validate_identification(result, pages)
-            return self.store.update(
+            case = self.store.update(
                 case_id,
                 expected=version,
                 identification=result.model_dump(mode="json"),
                 event="Corrección guardada. Se conserva la versión anterior.",
             )
+            if self.initial_review is not None:
+                self.initial_review.analyze_identified(case)
+            return case
 
     def confirm(self, case_id, version):
         with self.lock:

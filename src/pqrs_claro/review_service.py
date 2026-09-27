@@ -589,6 +589,8 @@ class ReviewService:
                 self.active.discard(key)
 
     def approve(self, case_id, request_id, approval):
+        if getattr(self, 'initial_review', None):
+            self.initial_review.assert_allowed(case_id)
         from .review_graph import build_review_graph
 
         body = approval.model_dump(mode="json") if hasattr(approval, "model_dump") else approval
@@ -688,6 +690,8 @@ class ReviewService:
         return {"revisions": self.store.history(case_id, request_id), "limit": 100}
 
     def approved(self, case_id):
+        if getattr(self, 'initial_review', None):
+            self.initial_review.assert_allowed(case_id)
         with self.lock:
             value = self.get(case_id)
             if value["status"] != "approved" or not value["requests"]:

@@ -4,6 +4,13 @@ Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes 
 
 ## Empezar
 
+**Integración FIAGA (27 de septiembre de 2026):** el arranque unificado activa la revisión
+inicial automática, JEV para el tipo de petición y OpenAI para las demás comprobaciones.
+La confirmación humana conjunta precede a la preparación de respuestas. Las expresiones
+ofensivas citadas se distinguen de los insultos propios del solicitante. Los expedientes
+anteriores se conservan; deben completar la revisión inicial para continuar con el nuevo flujo.
+[Datos, validación y recuperación de la integración](docs/UNIFICACION_FIAGA.md).
+
 **Integración en un puerto activa:** `scripts/start.ps1`, `scripts/start-recorrido.ps1`
 y `scripts/start-unificado.ps1` sirven el recorrido y la API en 8772, sin depender
 de 8770. [Alcance, pruebas y activación](docs/INTEGRACION_UN_PUERTO.md).

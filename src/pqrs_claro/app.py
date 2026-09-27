@@ -20,6 +20,7 @@ from .evidence_api import evidence_router
 from .extraction import OpenAIOCR, PDFExtractor
 from .gmail_api import gmail_router
 from .gmail_service import GmailService
+from .intake_service import IntakeService, intake_router
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
@@ -75,6 +76,7 @@ def create_app(
     office_renderer=None,
     proposal_engine=None,
     gmail_auth=None,
+    intake_engine=None,
     interface="workspace",
 ):
     if interface not in {"workspace", "recorrido"}:
@@ -112,6 +114,15 @@ def create_app(
 
     proposals = ResponseProposalService(settings, reviews_service, engine=proposal_engine)
     gmail = GmailService(settings, store, library, check_pdf, auth=gmail_auth)
+    initial_review = IntakeService(settings, store, library, sources_service, engine=intake_engine)
+    service.initial_review = initial_review
+    initial_review.identification = service
+    initial_review.downstream = (
+        preparation, drafts_service, reviews_service, offices_service, proposals
+    )
+    preparation.initial_review = initial_review
+    drafts_service.initial_review = initial_review
+    reviews_service.initial_review = initial_review
 
     @asynccontextmanager
     async def lifespan(app):
@@ -122,11 +133,13 @@ def create_app(
         offices_service.recover()
         preparation.recover()
         proposals.recover()
+        initial_review.recover()
         yield
+        service.close()
+        initial_review.close()
         gmail.close()
         proposals.close()
         preparation.close()
-        service.close()
         sources_service.close()
         drafts_service.close()
         reviews_service.close()
@@ -145,9 +158,11 @@ def create_app(
     app.include_router(response_proposal_router(proposals))
     app.state.preparation = preparation
     app.state.gmail = gmail
+    app.state.initial_review = initial_review
+    app.include_router(intake_router(initial_review))
     lifecycle_services = (preparation, service, sources_service, drafts_service,
                           proposals, offices_service, reviews_service, gmail, library,
-                          verifications)
+                          verifications, initial_review)
     app.include_router(lifecycle_router(store, lifecycle_services))
     app.include_router(gmail_router(gmail))
     app.include_router(preparation_router(preparation))
@@ -205,6 +220,10 @@ def create_app(
             model=settings.model,
             max_upload_mb=settings.max_upload_mb,
             max_pages=settings.max_pages,
+            initial_review_enabled=settings.initial_review_enabled,
+            automatic_initial_review=settings.initial_review_enabled,
+            initial_classification_provider=settings.initial_classification_provider,
+            environment_label=settings.environment_label,
         )
 
     @app.get("/api/cases")
@@ -242,7 +261,7 @@ def create_app(
 
     @app.get("/api/cases/{case_id}")
     def get_case(case_id: str):
-        return store.get(case_id)
+        return {**store.get(case_id), "analysis_running": case_id in service.active}
 
     @app.post("/api/cases/{case_id}/analyze", status_code=202)
     def analyze(case_id: str):

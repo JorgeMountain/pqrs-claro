@@ -19,6 +19,9 @@ class Settings:
     max_pages: int = 40
     source_concurrency: int = 3
     draft_concurrency: int = 3
+    initial_review_enabled: bool = False
+    initial_classification_provider: str = "openai"
+    environment_label: str = "PQRS · revisión inicial y confirmación humana"
 
     @classmethod
     def load(cls):

@@ -25,6 +25,7 @@ class PreparationService:
         self.stop = threading.Event()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="preparation")
         self.active = set()
+        self.initial_review = None
         self.wake_requested = set()
         with cases.connect() as conn:
             conn.execute(
@@ -60,6 +61,11 @@ class PreparationService:
             ):
                 return {"case": case, "preparation": previous}
             case = self.identification.confirm(case_id, version)
+            if self.initial_review and self.initial_review.enabled:
+                job = self.save(dict(case_id=case_id, version=case['version'],
+                                     confirmed_from=version, status='waiting_initial_review',
+                                     stage='initial_review', error=None))
+                return {'case': case, 'preparation': self.get(case_id)}
             job = self.start(case_id, case["version"], confirmed_from=version)
             return {"case": case, "preparation": job}
 
@@ -67,16 +73,21 @@ class PreparationService:
               retry_failed_only=False):
         with self.lock:
             case = self.cases.get(case_id)
+            if self.initial_review:
+                self.initial_review.assert_allowed(case_id)
             if case["version"] != version or case["status"] != "confirmed":
                 raise Conflict("El expediente cambió. Revisa las solicitudes antes de continuar.")
             previous = self.get(case_id)
             if case_id in self.active:
                 return previous
+            initial_revision = (self.initial_review.saved(case_id)['revision']
+                                if self.initial_review and self.initial_review.enabled else None)
             if retry_failed_only:
                 if retry_analysis:
                     raise Conflict("Elige reintentar los errores o actualizar todo el análisis.")
                 self.sources.validate_failed_retry(case_id, version)
             if (previous["status"] == "ready" and not previous["stale"]
+                    and previous.get('initial_review_revision') == initial_revision
                     and not retry_analysis and not retry_failed_only):
                 mapping = self.sources.get(case_id)
                 if mapping["status"] == "ready" and not mapping["stale"]:
@@ -90,6 +101,7 @@ class PreparationService:
                 error=None,
                 retry_analysis=retry_analysis,
                 retry_failed_only=retry_failed_only,
+                initial_review_revision=initial_revision,
             )
             self.save(job)
             self.active.add(case_id)
@@ -99,6 +111,8 @@ class PreparationService:
     def check(self, job):
         if self.stop.is_set():
             raise InterruptedError()
+        if self.initial_review:
+            self.initial_review.assert_allowed(job['case_id'])
         case = self.cases.get(job["case_id"])
         if case["version"] != job["version"] or case["status"] != "confirmed":
             raise Conflict("Las solicitudes cambiaron. Revisa el expediente antes de continuar.")

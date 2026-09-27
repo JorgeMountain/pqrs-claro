@@ -122,12 +122,13 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back}){
     const needs=rows.filter(r=>!['approved','ready','checking'].includes(r.status)&&r.paragraphs.length&&!r.stale);
     const box=s.node.querySelector('[data-checks]');
     if(box){
-      box.innerHTML=checking?`<span class="source-spinner" aria-hidden="true"></span> Comprobando ${checking} ${checking===1?'respuesta':'respuestas'}… Puedes seguir leyendo el oficio.`:errors.length?`<details><summary>${errors.length} ${errors.length===1?'respuesta requiere un ajuste':'respuestas requieren ajustes'}</summary>${errors.map(r=>`<p><strong>${esc(r.label)}. ${esc(r.title)}</strong></p><ul>${(r.assessment?.issues?.length?r.assessment.issues.map(i=>i.description):[r.error||(r.stale?'Las fuentes cambiaron. Actualiza esta respuesta.':!r.paragraphs.length?'Esta respuesta aún no está preparada.':'Revisa los puntos pendientes de esta respuesta.')]).map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`).join('')}<button data-back>Ir a las respuestas</button></details>`:dirty(s)?'Hay cambios sin guardar. Guarda para comprobar la nueva redacción.':needs.length?'Al guardar se comprobará la redacción pendiente.':'El contenido guardado pasó las comprobaciones. Puedes generar el oficio.';
+      box.innerHTML=!rows.length?'Todavía no hay respuestas preparadas. <button data-back>Ir a las respuestas</button>':checking?`<span class="source-spinner" aria-hidden="true"></span> Comprobando ${checking} ${checking===1?'respuesta':'respuestas'}… Puedes seguir leyendo el oficio.`:errors.length?`<details><summary>${errors.length} ${errors.length===1?'respuesta requiere un ajuste':'respuestas requieren ajustes'}</summary>${errors.map(r=>`<p><strong>${esc(r.label)}. ${esc(r.title)}</strong></p><ul>${(r.assessment?.issues?.length?r.assessment.issues.map(i=>i.description):[r.error||(r.stale?'Las fuentes cambiaron. Actualiza esta respuesta.':!r.paragraphs.length?'Esta respuesta aún no está preparada.':'Revisa los puntos pendientes de esta respuesta.')]).map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`).join('')}<button data-back>Ir a las respuestas</button></details>`:dirty(s)?'Hay cambios sin guardar. Guarda para comprobar la nueva redacción.':needs.length?'Al guardar se comprobará la redacción pendiente.':'El contenido guardado pasó las comprobaciones. Puedes generar el oficio.';
       box.querySelector('[data-back]')?.addEventListener('click',back);
     }
     s.node.querySelector('[data-error]').textContent=s.error;
     s.node.querySelector('[data-operation]').textContent=s.message;
-    s.node.querySelectorAll('[data-command]').forEach(b=>b.disabled=s.busy||(b.dataset.command!=='cancel'&&checking>0));
+    const exportBlocked=dirty(s)||hasChanges(s.id)||!rows.length||errors.length>0||needs.length>0;
+    s.node.querySelectorAll('[data-command]').forEach(b=>b.disabled=s.busy||(b.dataset.command!=='cancel'&&checking>0)||(['docx','pdf'].includes(b.dataset.command)&&exportBlocked));
     s.node.querySelectorAll('[contenteditable]').forEach(e=>e.contentEditable=s.busy?'false':'plaintext-only');
     s.node.querySelectorAll('input').forEach(e=>e.disabled=s.busy);
     s.tools?.refresh();
