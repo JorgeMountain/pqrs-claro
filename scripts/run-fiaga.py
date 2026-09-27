@@ -14,7 +14,7 @@ DATA = EXPECTED / "data"
 if DATA.resolve() != EXPECTED / "data":
     raise RuntimeError("Los datos FIAGA no pueden ser un enlace a otra carpeta.")
 settings = replace(Settings.load(), data_dir=DATA, port=8773, initial_review_enabled=True,
-                   initial_classification_provider="jev", environment_label="Desarrollo FIAGA · datos de prueba independientes")
+                   initial_classification_provider="openai", environment_label="Desarrollo FIAGA · datos de prueba independientes")
 app = create_unified_app(settings)
 
 

@@ -10,13 +10,15 @@ Fecha: 27 de septiembre de 2026. El código parte de `55ed94a` en ambas copias.
 - Los puertos 8773, 8774 y 8776 son vistas de desarrollo y QA, no accesos al expediente principal.
 
 El acceso habitual es `scripts/start-unificado.ps1` (o los accesos que lo delegan).
-Activa la revisión inicial y JEV. La clave de Vercel se conserva en `.env.jev.local`,
-excluido de Git; OpenAI mantiene su configuración previa. No se publican claves ni datos.
+Activa la revisión inicial con OpenAI GPT-6 Luna para clasificación y análisis.
+`PQRS_CLARO_MODEL=gpt-6-luna` se configura en `.env.local` de la principal; se conserva
+la clave existente. JEV queda como integración opcional, fuera del flujo principal.
+No se publican claves ni datos.
 
 ## Comportamiento integrado
 
-Tras identificar solicitudes se analiza automáticamente el trámite. JEV propone el tipo
-de cada petición; OpenAI evalúa datos, lenguaje, antecedentes y tratamiento especial.
+Tras identificar solicitudes se analiza automáticamente el trámite. OpenAI propone el tipo
+de cada petición y evalúa datos, lenguaje, antecedentes y tratamiento especial.
 La revisión de lenguaje identifica al emisor de las expresiones ofensivas y no atribuye
 automáticamente al solicitante un insulto relatado o citado. Los casos mixtos y ambiguos
 requieren valorar el contexto. Se mantiene la revisión humana antes de preparar respuestas.
@@ -53,17 +55,20 @@ antes de cualquier restauración para no perder trabajo posterior a la integraci
 El bundle Git conserva los commits anteriores; el ZIP incluye los cambios que estaban
 sin commit. Las carpetas `.runtime` continúan disponibles en ambos proyectos.
 
-## Estado de activación
+## Activación con OpenAI
 
-La integración está preparada en la rama de desarrollo. La batería general pasó con
-1.244 pruebas aprobadas y una omitida por modelo semántico local no instalado. Además,
-las comprobaciones posteriores de arranque, límite de respuesta y rechazo de proveedor
-pasaron, al igual que las 18 pruebas JavaScript de revisión inicial.
+El usuario autorizó completar la integración principal usando OpenAI el 27 de septiembre.
+Se selecciona GPT-6 Luna, ya probado con la cuenta existente. No se fusionan bases de prueba.
+Se mantiene el acceso principal en 8772 y el aviso de revisión inicial y confirmación humana.
 
-La prueba HTTP real del recorrido encontró una restricción externa de Vercel:
-HTTP 403, `no_providers_available`, indicando que JEV no admite usuarios con créditos
-gratuitos. No se atribuye el fallo a una clave inválida ni a ausencia de texto. El código
-presenta un mensaje concreto y no hace una sustitución automática por OpenAI.
-La activación principal queda pendiente de elegir explícitamente otro clasificador o
-habilitar créditos de pago para JEV. No se han fusionado las bases ni activado cambios
-sobre los expedientes principales. El caso de prueba se conserva solo en `validation-data`.
+Respaldo adicional previo a la activación:
+`../pqrs-claro-fiaga/output/integracion-openai-20260927-164128/`.
+Las 41 bases copiadas pasaron integridad. La validación actual sobre una copia conservó
+los 48 PDF originales y las filas de las 32 tablas anteriores; solo añadió las dos tablas
+para revisión inicial. Las comprobaciones actuales aprobaron 42 pruebas Python y 18 JavaScript.
+La batería general anterior aprobó 1.244 pruebas, con una omitida por modelo semántico ausente.
+
+El caso sintético del flujo completo se ejecuta en `validation-data` mediante el puerto
+provisional 8777; la evidencia se conserva en `smoke-review.json`. No se confirma ni prepara
+una respuesta en nombre de un funcionario. Las comprobaciones del arranque principal quedan
+en `activation.json` junto al respaldo; su existencia y contenido son la evidencia de activación.

@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class Settings:
     data_dir: Path = ROOT / "data"
     api_key: str = field(default="", repr=False)
-    model: str = "gpt-5.6-luna"
+    model: str = "gpt-6-luna"
     port: int = 8770
     max_upload_mb: int = 20
     max_pages: int = 40
@@ -39,7 +39,7 @@ class Settings:
             os.environ.get("PQRS_CLARO_MODEL")
             or local.get("PQRS_CLARO_MODEL")
             or shared.get("PQRS_MODEL_IDENTIFICATION")
-            or "gpt-5.6-luna"
+            or "gpt-6-luna"
         )
         data = Path(os.environ.get("PQRS_CLARO_DATA_DIR", str(ROOT / "data")))
         port = int(os.environ.get("PQRS_CLARO_PORT") or local.get("PQRS_CLARO_PORT") or 8770)

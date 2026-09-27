@@ -5,7 +5,7 @@ Asistente PQRS en LangGraph: **comprender una petición, localizar sus soportes 
 ## Empezar
 
 **Integración FIAGA (27 de septiembre de 2026):** el arranque unificado activa la revisión
-inicial automática, JEV para el tipo de petición y OpenAI para las demás comprobaciones.
+inicial automática con OpenAI GPT-6 Luna para el tipo de petición y las demás comprobaciones.
 La confirmación humana conjunta precede a la preparación de respuestas. Las expresiones
 ofensivas citadas se distinguen de los insultos propios del solicitante. Los expedientes
 anteriores se conservan; deben completar la revisión inicial para continuar con el nuevo flujo.

@@ -11,7 +11,7 @@ DATA = ROOT / "output" / "qa" / "fiaga-auto-analysis" / "data"
 PORT = 8776
 app = create_unified_app(replace(
     Settings.load(), data_dir=DATA, port=PORT, initial_review_enabled=True,
-    initial_classification_provider="jev", environment_label="Desarrollo FIAGA · datos de prueba independientes",
+    initial_classification_provider="openai", environment_label="Desarrollo FIAGA · datos de prueba independientes",
 ))
 
 
