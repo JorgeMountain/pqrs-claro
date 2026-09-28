@@ -22,6 +22,7 @@ def main():
     settings = replace(
         Settings.load(), port=args.port,
         initial_review_enabled=True, initial_classification_provider="openai",
+        management_enabled=True,
     )
     uvicorn.run(create_unified_app(settings), host="127.0.0.1", port=args.port,
                 access_log=False)

@@ -1,0 +1,38 @@
+// Audit-only Node harness; actual case-browser.js and rendered card code, mocked DOM/API.
+import fs from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import * as management from '../src/pqrs_claro/static/recorrido/management-ui.js';
+import * as views from '../src/pqrs_claro/static/recorrido/case-browser-views.js';
+process.on('uncaughtException',error=>{console.error(error.message);process.exitCode=1;});
+const listeners={},nodes=new Map();
+function node(key){if(!nodes.has(key))nodes.set(key,{value:key==='#cases-sort'?'recent':'',innerHTML:'',textContent:'',setAttribute(){},focus(){}});return nodes.get(key);}
+const root={isConnected:true,querySelector:node,querySelectorAll:()=>[],addEventListener:(kind,fn)=>{listeners[kind]=fn;}};
+const container={innerHTML:'',querySelector:()=>root};
+globalThis.localStorage={getItem:()=> 'm1'};globalThis.window={scrollY:420,scrollTo(x,y){this.scrollY=y;}};
+const timers=[];
+globalThis.setTimeout=(fn,ms)=>{timers.push({fn,ms});return timers.length;};
+globalThis.setInterval=(fn,ms)=>{timers.push({fn,ms});return timers.length;};
+let serverProcessing=true,calls=0;
+const example=()=>({id:'audit-case',subject:'Prueba ficticia',filename:'ficticio.pdf',created_at:'2026-09-27',status:'needs_review',processing:serverProcessing,request_count:2,management:{owner_id:'m1',started_at:'2026-09-27',state:'in_progress',received_date:'2026-09-27',updated_at:'2026-09-27'}});
+globalThis.fetch=async url=>{calls++;return {ok:true,json:async()=>url==='/api/managers'?[{id:'m1',name:'Gestor ficticio'}]:url.includes('deleted=true')?[]:[example()]};};
+globalThis.__queueDeps={...management,managementRequest:management.request,...views};
+const source=await fs.readFile(new URL('../src/pqrs_claro/static/recorrido/case-browser.js',import.meta.url),'utf8');
+const executable=source.replace(/^import .*;\r?\n/gm,'');
+const names=['actor','managementRequest','managerOptions','managementDialog','cards','states','shell','rows','confirmation','status','title'];
+const {createCaseBrowser}=await import('data:text/javascript;base64,'+Buffer.from('const {'+names.join(',')+'}=globalThis.__queueDeps;\n'+executable).toString('base64'));
+const browser=createCaseBrowser({container,open(){},close(){},notice(){},onSelect(){},onNew(){}});
+await browser.show();
+const click=async attrs=>{const button={disabled:false,dataset:attrs,hasAttribute:name=>name==='data-cases-tab'?Boolean(attrs.casesTab):name==='data-cases-refresh'?Boolean(attrs.refresh):false};await listeners.click({target:{closest:()=>button}});};
+await click({casesTab:'active'});
+node('#cases-search').value='ficticia';listeners.input({target:{id:'cases-search'}});
+node('#cases-sort').value='name';listeners.change({target:{id:'cases-sort',matches:()=>true}});
+window.scrollY=420;
+await click({casesTab:'mine'});
+assert.match(node('.cases-results').innerHTML,/Prueba ficticia/);
+root.isConnected=false;nodes.clear();root.isConnected=true;
+await browser.show();
+assert.equal(node('#cases-search').value,'ficticia');assert.equal(node('#cases-sort').value,'name');assert.equal(window.scrollY,420);
+assert.match(node('.cases-results').innerHTML,/Prueba ficticia/);
+await click({casesTab:'unassigned'});assert.match(node('.cases-results').innerHTML,/No hay coincidencias/);
+root.isConnected=false;nodes.clear();root.isConnected=true;await browser.show();assert.match(node('.cases-results').innerHTML,/No hay coincidencias/);
+console.log('PASS: queue preserves search, sort, tab and scroll after rebuilding its DOM. Mocked API only.');

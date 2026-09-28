@@ -67,6 +67,9 @@ def document_matches(request: dict[str, Any], source: dict[str, Any], kind: str)
     if kind == "documento":
         return False
     name = _plain(f"{source.get('title', '')} {source.get('filename', '')}").replace("_", " ")
+    kinds = "(?:oficio|respuesta)" if kind == "respuesta" else kind
+    if kind != "correo" and not re.search(rf"\b{kinds}s?(?![a-z])", name):
+        return False
     quote = _plain(str(source.get("quote") or ""))
     email = bool(
         re.search(r"\b(?:gmail|fwd|correo de|correo electronico)\b", name)
@@ -123,6 +126,8 @@ def named_document_candidates(text: str, candidates: list[dict[str, Any]]) -> li
     relaciones de catálogo. Un correo titulado con su adjunto tampoco es el adjunto.
     """
     references = [reference.split(" ", 1) for reference in numbered_document_references(text)]
+    if not references:
+        return []
     located = []
     for source in candidates:
         if source.get("category") not in {
@@ -130,10 +135,7 @@ def named_document_candidates(text: str, candidates: list[dict[str, Any]]) -> li
         }:
             continue
         name = _plain(str(source.get("filename") or source.get("title") or "")).replace("_", " ")
-        quote = _plain(str(source.get("quote") or ""))
-        if re.search(r"\b(?:gmail|fwd|correo|notificacion|remision)\b", name) or re.search(
-            r"gmail\s*[-:]|https?://mail\.google\.com/|(?m:^\s*(?:para|to):)", quote
-        ):
+        if re.search(r"\b(?:gmail|fwd|correo|notificacion|remision)\b", name):
             continue
         for kind, number in references:
             parts = number.split("-")
@@ -148,6 +150,11 @@ def named_document_candidates(text: str, candidates: list[dict[str, Any]]) -> li
             named_years = re.findall(rf"(?<!\d){re.escape(key)}[- ](\d{{4}})(?!\d)", name)
             if year and named_years and year not in named_years:
                 continue
+            quote = _plain(str(source.get("quote") or ""))
+            if re.search(
+                r"gmail\s*[-:]|https?://mail\.google\.com/|(?m:^\s*(?:para|to):)", quote
+            ):
+                break
             located.append(source)
             break
     return located

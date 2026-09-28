@@ -5,6 +5,8 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from copy import deepcopy
+from time import perf_counter
 
 from fastapi import APIRouter
 
@@ -16,7 +18,7 @@ from .jev_client import get_key as get_jev_key
 from .jev_intake import CLASSIFICATION_VERSION, JevIntakeEngine
 from .service import user_error
 from .source_library import digest
-from .source_retrieval import retrieve
+from .source_retrieval import RetrievalIndex, retrieve
 from .storage import Conflict, now
 
 
@@ -36,13 +38,15 @@ class IntakeService:
             )
             conn.execute("CREATE TABLE IF NOT EXISTS intake_history (case_id TEXT, body TEXT)")
 
-    def fingerprint(self, case_id):
+    def fingerprint(self, case_id, *, identification=None):
         case = self.cases.get(case_id)
         return digest(
             {
                 "original": case["sha256"],
                 "pages": case.get("pages"),
-                "identification": case.get("identification"),
+                "identification": (
+                    identification if identification is not None else case.get("identification")
+                ),
                 "catalog": sorted(self.sources.catalog(case_id), key=lambda s: s["id"]),
                 "collections": self.library.linked_collections(case_id),
                 "model": self.settings.model,
@@ -148,6 +152,74 @@ class IntakeService:
                     decisions=None,
                 )
 
+    def reuse_selection(self, case, previous_identification):
+        """Discard/undo changes selection, not the original or surviving content.
+
+        Keep a persisted full report for undo. Its fingerprint must still match
+        sources, model and policy; never bless stale evidence as current.
+        """
+        if not self.enabled:
+            return False
+        with self.lock:
+            row = self.saved(case["id"])
+            current = case["identification"]
+            basis = row.get("selection_basis") or {
+                "identification": previous_identification,
+                "report": row.get("report"),
+                "fingerprint": row.get("fingerprint"),
+            }
+
+            def is_selection_of(selected, original):
+                if not selected or not original:
+                    return False
+                if {k: v for k, v in selected.items() if k != "requests"} != {
+                    k: v for k, v in original.items() if k != "requests"
+                }:
+                    return False
+                originals = {r["id"]: r for r in original["requests"]}
+                ids = {r["id"] for r in selected["requests"]}
+                for request in selected["requests"]:
+                    expected = deepcopy(originals.get(request["id"]))
+                    if expected is None:
+                        return False
+                    # Discard reconnects children to the nearest remaining ancestor.
+                    while expected.get("parent_id") and expected["parent_id"] not in ids:
+                        parent = originals.get(expected["parent_id"])
+                        if parent is None:
+                            return False
+                        expected["parent_id"] = parent.get("parent_id")
+                    if request != expected:
+                        return False
+                return bool(ids)
+
+            selection_change = is_selection_of(current, previous_identification)
+            cached_selection = is_selection_of(current, basis["identification"])
+            if not selection_change and not (row.get("selection_basis") and cached_selection):
+                return False
+            if (
+                not cached_selection
+                or not basis.get("report")
+                or row.get("policy_version") != POLICY_VERSION
+                or row["status"] not in {"needs_review", "approved", "routed"}
+                or basis["fingerprint"] != self.fingerprint(
+                    case["id"], identification=basis["identification"]
+                )
+            ):
+                # Selection alone never launches a paid call; stale stays stale.
+                return True
+            indexed = {r["request_id"]: r for r in basis["report"]["requests"]}
+            if any(r["id"] not in indexed for r in current["requests"]):
+                return True
+            report = deepcopy(basis["report"])
+            report["requests"] = [deepcopy(indexed[r["id"]]) for r in current["requests"]]
+            self.save(
+                row, report=report, selection_basis=basis,
+                fingerprint=self.fingerprint(case["id"]), status="needs_review",
+                decisions=None, document_decision=None, reviewed_by=None,
+                decided_at=None, minimum_reference_days=None, error=None,
+            )
+            return True
+
     def start(self, case_id, body):
         with self.identification.lock if self.identification else nullcontext(), self.lock:
             if not self.enabled:
@@ -185,6 +257,7 @@ class IntakeService:
                 decisions=None,
                 document_decision=None,
                 minimum_reference_days=None,
+                selection_basis=None,
                 reviewed_by=None,
                 decided_at=None,
             )
@@ -199,6 +272,7 @@ class IntakeService:
         sources, chunks = self.library.snapshot(case_id)
         linked = self.library.linked_collections(case_id)
         candidates = {}
+        index = RetrievalIndex(chunks)
         base = {"case_id": case_id, "allowed_collection_ids": linked}
         queries = [
             *case["identification"]["requests"],
@@ -209,14 +283,15 @@ class IntakeService:
                 "reiteración antecedentes clasificación requisitos atención ciudadano",
             },
         ]
-        for query in queries:
-            for candidate in retrieve({**query, **base}, chunks, limit=16):
-                candidates[candidate["chunk_id"]] = candidate
-        # Bound the request explicitly rather than silently dropping the original or requests.
-        if len(candidates) > 96:
-            raise ValueError(
-                "La revisión recuperó demasiados fragmentos. Delimita las fuentes de consulta."
-            )
+        matches = [retrieve({**query, **base}, chunks, limit=16, index=index) for query in queries]
+        # Repartir el contexto entre TODAS las peticiones, sin recortar el original.
+        # Los candidatos son una selección de consulta, nunca prueba de exhaustividad.
+        retrieved_count = len({c["chunk_id"] for group in matches for c in group})
+        for rank in range(16):
+            for group in matches:
+                if rank < len(group) and len(candidates) < 96:
+                    candidate = group[rank]
+                    candidates.setdefault(candidate["chunk_id"], candidate)
         catalog = self.sources.catalog(case_id)
         return {
             "identification": case["identification"],
@@ -235,14 +310,19 @@ class IntakeService:
                     }
                     for s in catalog
                 ],
+                "retrieved_candidates": retrieved_count,
+                "selected_candidates": len(candidates),
+                "candidates_limited": retrieved_count > len(candidates),
                 "note": "Consulta local parcial; no es una búsqueda institucional exhaustiva.",
             },
         }
 
     def run(self, row):
         case_id = row["case_id"]
+        started = perf_counter()
         try:
             payload = self.payload(case_id)
+            retrieval_seconds = round(perf_counter() - started, 3)
             if self.settings.initial_classification_provider not in {"openai", "jev"}:
                 raise ValueError("Proveedor de clasificación no válido.")
             engine = self.engine or (
@@ -251,6 +331,11 @@ class IntakeService:
                 else OpenAIIntakeEngine(self.settings)
             )
             report = materialize(engine.assess(payload), payload)
+            if payload["scope"]["candidates_limited"]:
+                report["warnings"].append(
+                    "La revisión inicial consultó 96 fragmentos priorizados entre las peticiones. "
+                    "La búsqueda es parcial; no demuestra ausencia de antecedentes o documentos."
+                )
             with self.lock:
                 if row["fingerprint"] != self.fingerprint(case_id):
                     raise Conflict("Cambiaron las entradas durante el análisis. Vuelve a analizar.")
@@ -268,6 +353,8 @@ class IntakeService:
                         }.values()
                     ),
                     error=None,
+                    timings={"retrieval_seconds": retrieval_seconds,
+                             "total_seconds": round(perf_counter() - started, 3)},
                 )
         except Exception as exc:
             with self.lock:

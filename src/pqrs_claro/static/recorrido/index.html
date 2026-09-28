@@ -4,20 +4,27 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gestión de Peticiones · Nuevo recorrido</title>
   <link rel="icon" href="data:,"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="original-viewer.css"><link rel="stylesheet" href="workspace-layout.css"><link rel="stylesheet" href="split-pane.css?v=20260911-scroll"><link rel="stylesheet" href="quick-confirmation.css">
-  <link rel="stylesheet" href="evidence-upload.css"><link rel="stylesheet" href="library.css"><link rel="stylesheet" href="live-final.css"><link rel="stylesheet" href="petition-upload.css"><link rel="stylesheet" href="analysis-progress.css?v=20260911-source-spinner"><link rel="stylesheet" href="response-cards.css?v=20260914-passages"><script type="module" src="app.js?v=fiaga-attribution1"></script>
+  <link rel="stylesheet" href="evidence-upload.css"><link rel="stylesheet" href="library.css"><link rel="stylesheet" href="live-final.css"><link rel="stylesheet" href="petition-upload.css"><link rel="stylesheet" href="analysis-progress.css?v=20260911-source-spinner"><link rel="stylesheet" href="response-cards.css?v=20260914-passages"><script type="module" src="app.js?v=drafts1"></script>
 <link rel="stylesheet" href="document-workspace.css?v=20260911-footer-static">
 <link rel="stylesheet" href="gmail.css?v=20260916-mail">
 <link rel="stylesheet" href="identification-actions.css?v=20260916-discard">
 <link rel="stylesheet" href="case-browser.css?v=20260919-supports">
 <link rel="stylesheet" href="pending-supports.css?v=20260919">
-<link rel="stylesheet" href="initial-review.css?v=fiaga-attribution1">
+<link rel="stylesheet" href="initial-review.css?v=management1">
+<link rel="stylesheet" href="receipt-page.css?v=6">
+<link rel="stylesheet" href="workspace-navigation.css?v=1">
 </head>
 <body>
   <a href="#main" class="skip">Ir al contenido</a>
   <header class="institutional-header"><a id="home-logo" class="home-logo" href="/" aria-label="Universidad de Antioquia · Ir al inicio" title="Ir al inicio"><img src="logo.png" alt="Universidad de Antioquia · Facultad de Ingeniería"></a><div class="brand"><strong>Gestión de Peticiones</strong><span>Atención y respuesta institucional</span></div><div class="institutional-status"><span class="demo-badge">Demo</span><span class="prototype-status">Demo + biblioteca</span></div></header>
 
   <div class="shell">
-<aside class="workspace-rail" aria-label="Panel lateral de trabajo"><div class="rail-tools"><button id="workspace-toggle" class="workspace-toggle" aria-label="Abrir espacio de trabajo" aria-controls="workspace-menu" aria-expanded="false" title="Abrir espacio de trabajo"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg></button></div><div id="workspace-menu" hidden><p class="workspace-label">ESPACIO DE TRABAJO</p><div class="sidebar"><button id="live-new" class="primary">Cargar petición</button><button id="gmail-inbox">Peticiones por correo</button><button id="live-open">Mis expedientes</button><button class="case active" id="case"><span class="eyebrow">PETICIÓN DE DEMOSTRACIÓN</span><strong>Mecánica de Máquinas</strong><span>3 solicitudes · Información académica</span></button><button class="library" id="library">Biblioteca de fuentes <span aria-hidden="true">↗</span></button><div class="sidebar-bottom"><strong>Una respuesta, todo su contexto</strong><p>Consulta los antecedentes y resuelve observaciones sin salir de la pregunta.</p><button id="reset" class="text-button">Reiniciar maqueta</button></div></div></div></aside>
+<aside class="workspace-rail" aria-label="Navegación principal"><div class="workspace-sticky"><div class="rail-tools"><span class="rail-title">Espacio de trabajo</span><button id="workspace-toggle" class="workspace-toggle" aria-label="Abrir menú" aria-controls="workspace-menu" aria-expanded="false" title="Abrir menú"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg><span>Menú</span></button><button id="workspace-inbox" class="workspace-quick" title="Bandeja de PQRS" aria-label="Bandeja de PQRS"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 14h5l2 3h2l2-3h5"/></svg><span>Bandeja</span></button></div><div id="workspace-menu" hidden><nav class="sidebar" aria-label="Secciones de trabajo">
+<button id="live-open" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 14h5l2 3h2l2-3h5"/></svg><span>Bandeja de PQRS</span></button>
+<button id="live-new" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Recibir expedientes</span></button>
+<div class="workspace-divider"></div><button id="library" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v15M12 5C8 2 4 4 3 5v14c4-2 7-1 9 1 2-2 5-3 9-1V5c-4-2-7-2-9 0Z"/></svg><span>Biblioteca de fuentes</span></button>
+<div class="workspace-demo-group"><p class="workspace-label">DEMOSTRACIÓN</p><button class="case" id="case"><strong>Mecánica de Máquinas</strong><span>3 solicitudes · Información académica</span></button><button id="reset" class="text-button">Reiniciar maqueta</button></div>
+</nav></div></div></aside>
 
     <main id="main" tabindex="-1">  <div class="prototype">Prueba del nuevo recorrido · usa la demo ya validada. Las acciones son simuladas y no cambian expedientes.</div><nav class="steps" aria-label="Etapas de la petición"><button data-step="1"> <span>1</span> Entender la petición</button><button data-step="2"><span>2</span> Preparar las respuestas</button><button data-step="3"><span>3</span> Revisar el oficio</button></nav><div id="view"><p role="status">Cargando la petición de demostración…</p></div></main>
   </div>

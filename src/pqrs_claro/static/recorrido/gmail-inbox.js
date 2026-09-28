@@ -57,11 +57,10 @@ export function createGmail({open,close,notice,onOpenCase}){
       content.querySelector('[data-mail="back"]').onclick=()=>void show();
       content.querySelector('[data-open-case]')?.addEventListener('click',()=>void action(node,async()=>{await onOpenCase(message.case_id);close();}));
       const form=content.querySelector('#gmail-import');if(!form)return;
-      const update=()=>{const mode=form.elements.mode.value;form.querySelectorAll('[data-mode]').forEach(e=>e.hidden=e.dataset.mode!==mode);form.querySelector('#gmail-import-submit').textContent=mode==='link'?'Vincular correo':'Crear expediente y analizar';};
+      const update=()=>{const mode=form.elements.mode.value;form.querySelectorAll('[data-mode]').forEach(e=>e.hidden=e.dataset.mode!==mode);form.querySelector('#gmail-import-submit').textContent=mode==='link'?'Vincular correo':'Recibir expediente';};
       form.elements.mode.onchange=update;update();
       form.onsubmit=event=>{event.preventDefault();const body={account,mode:form.elements.mode.value,case_number:form.elements.case_number.value,attachment_id:form.elements.attachment_id?.value||null,body_confirmed:form.elements.body_confirmed.checked,target_case_id:form.elements.target_case_id?.value||null};void action(node,async()=>{
         const result=await api(`/messages/${encodeURIComponent(id)}/import`,body);
-        if(!result.duplicate&&!result.linked){const response=await fetch(`/api/cases/${result.case_id}/analyze`,{method:'POST'});if(!response.ok){const error=await response.json();await onOpenCase(result.case_id);close();notice('Expediente guardado. '+(error.detail||'Puedes reintentar el análisis.'));return;}}
         await onOpenCase(result.case_id);close();notice(result.duplicate?'Este correo ya estaba incorporado.':result.linked?'Correo vinculado al expediente.':'Petición incorporada desde Gmail.');
       });};
     });

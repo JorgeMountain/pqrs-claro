@@ -41,6 +41,7 @@ class CaseService:
         self.lock = threading.RLock()
         self.active = set()
         self.initial_review = None
+        self.management = None
 
     def graph(self, saver):
         extractor = self.extractor or PDFExtractor(
@@ -52,6 +53,8 @@ class CaseService:
     def start(self, case_id):
         with self.lock:
             case = self.store.get(case_id)
+            if self.management:
+                self.management.require_started(case_id)
             if case_id in self.active or case["status"] not in {"uploaded", "error"}:
                 raise Conflict("Este expediente ya se está procesando o está listo para revisar.")
             if not self.settings.api_key and self.identifier is None:
@@ -159,6 +162,7 @@ class CaseService:
             pages = [Page.model_validate(p) for p in case["pages"]]
             result = Identification.model_validate(identification)
             validate_identification(result, pages)
+            previous_identification = case["identification"]
             case = self.store.update(
                 case_id,
                 expected=version,
@@ -166,7 +170,8 @@ class CaseService:
                 event="Corrección guardada. Se conserva la versión anterior.",
             )
             if self.initial_review is not None:
-                self.initial_review.analyze_identified(case)
+                if not self.initial_review.reuse_selection(case, previous_identification):
+                    self.initial_review.analyze_identified(case)
             return case
 
     def confirm(self, case_id, version):

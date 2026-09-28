@@ -59,7 +59,7 @@ class CaseStore:
         finally:
             conn.close()
 
-    def create(self, filename: str, pdf: bytes, *, case_id=None, origin=None):
+    def create(self, filename: str, pdf: bytes, *, case_id=None, origin=None, receipt=None):
         case_id = case_id or uuid4().hex
         folder = self.root / "files" / case_id
         folder.mkdir(parents=True, exist_ok=True)
@@ -86,6 +86,8 @@ class CaseStore:
         )
         if origin is not None:
             case["origin"] = origin
+        if receipt is not None:
+            case["receipt"] = receipt
         with self.connect() as conn:
             conn.execute("INSERT INTO cases VALUES (?,?,?)", (case_id, 1, json.dumps(case)))
         return case

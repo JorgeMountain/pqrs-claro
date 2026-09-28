@@ -1,10 +1,20 @@
 // Aceptar la propuesta es una decisión explícita, no una comprobación inventada.
 export const acceptedProposalNote='Confirmación conjunta: se acepta la propuesta de análisis mostrada.';
+export const continuedDecisionNote='Confirmación conjunta: se revisó el análisis mostrado y se decidió continuar a preparar respuestas. Las observaciones del análisis se conservan.';
 
-export function needsDecisionNote(row,decision={},special=false){
-  return special||row.proposed_route!=='continue'||(decision.route||row.proposed_route)!=='continue'
-    ||row.checks.some(c=>['attention','unverified'].includes(c.state))
-    ||Boolean(row.petition_type&&decision.petition_type&&decision.petition_type!==row.petition_type);
+const alternativeNotes={
+  complement:'solicitar complemento',
+  reject:'revisar la propuesta de rechazo',
+  reiterate:'revisar la respuesta por reiteración',
+  specialist:'remitir a revisión especializada',
+};
+export function automaticDecisionNote(route){
+  if(route==='continue')return continuedDecisionNote;
+  if(!Object.hasOwn(alternativeNotes,route))throw new Error('Selecciona una ruta válida.');
+  return `Confirmación conjunta: se eligió ${alternativeNotes[route]}, sin observación adicional.`;
+}
+export function isAutomaticDecisionNote(note){
+  return [acceptedProposalNote,continuedDecisionNote,...Object.keys(alternativeNotes).map(automaticDecisionNote)].includes(note);
 }
 
 export function decisionContinues(decision){
@@ -15,12 +25,11 @@ export function confirmationPayload(decision,report){
   const {case_id,...body}=decision;
   if(!body.reviewed_by.trim())throw new Error('Indica quién revisó el trámite.');
   if(!body.document.reviewed||body.requests.some(r=>!r.reviewed))throw new Error('Confirma la revisión conjunta del resumen y las peticiones.');
-  const fill=(item,row,special=false)=>{
-    if(needsDecisionNote(row,item,special)&&!item.note.trim())throw new Error('Explica cómo atendiste las observaciones o el cambio de decisión.');
+  const fill=item=>{
     if(item.route==='continue'&&item.petition_type==='undetermined')throw new Error('Define el tipo de cada petición antes de continuar.');
-    return {...item,note:item.note.trim()||acceptedProposalNote};
+    return {...item,note:item.note.trim()||automaticDecisionNote(item.route)};
   };
-  return {...body,reviewed_by:body.reviewed_by.trim(),document:fill(body.document,report.document,report.special_treatment?.detected),requests:body.requests.map(item=>fill(item,report.requests.find(r=>r.request_id===item.request_id)))};
+  return {...body,reviewed_by:body.reviewed_by.trim(),document:fill(body.document),requests:body.requests.map(fill)};
 }
 
 // Guardar primero permite reintentar la preparación sin duplicar la decisión.

@@ -1,0 +1,45 @@
+<!-- Prueba aislada: copiar temporalmente a static/recorrido y abrir en el servidor local. No guarda expedientes ni consulta modelos. -->
+<!doctype html><html lang="es"><meta charset="utf-8"><title>Validación aislada del flujo</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="initial-review.css"><body><main><h1>Validación con datos ficticios</h1><pre id="result">Comprobando…</pre><div id="view"></div></main><script type="module">
+import {renderAnalysis} from '/analysis-progress.js';
+import {renderCaseNavigation} from '/live-case-navigation.js';
+import {initialReviewSummary,initialRequestContent,initialConfirmation,updateInitialConfirmation,readInitialDecision} from '/initial-review.js?v=review-flow2';
+import {confirmAndPrepare} from '/initial-confirmation.js?v=review-flow2';
+const view=document.querySelector('#view'),results=[];
+const check=(ok,label)=>{if(!ok)throw new Error(label);results.push('✓ '+label)};
+try{
+ const analysisView=document.createElement('div');view.append(analysisView);
+ const current={id:'ficticio',filename:'Prueba ficticia.pdf',status:'reading',management:{},pages:[]};
+ renderAnalysis(analysisView,current);const preview=analysisView.querySelector('.analysis-document');
+ for(let i=0;i<20;i++){renderAnalysis(analysisView,current);renderCaseNavigation(analysisView,current,{step:1,showMail:true});}
+ check(analysisView.querySelectorAll('[data-action="live-queue"]').length===1,'20 actualizaciones: un solo botón de bandeja');
+ check(analysisView.querySelectorAll('[data-action="live-mail-origin"]').length===1,'Un solo acceso a correos');
+ check(analysisView.querySelector('.analysis-document')===preview,'La vista previa no se reconstruye');
+ analysisView.insertAdjacentHTML('afterbegin','<div class="gmail-origin">Duplicado antiguo</div>');renderCaseNavigation(analysisView,current,{step:1,showMail:true});
+ check(analysisView.querySelectorAll('.gmail-origin').length===1,'Limpia duplicados anteriores');
+ const makeCheck=key=>({key,state:'attention',summary:'Observación ficticia pendiente',reason:'Dato por revisar',original_refs:[],sources:[],pending:[]});
+ const record={id:'ficticio',status:'needs_review',identification:{requests:[{id:'P1',title:'Solicitud ficticia'}]}};
+ const value={revision:2,status:'needs_review',can_prepare:false,report:{document:{proposed_route:'continue',checks:[makeCheck('requirements'),makeCheck('respect')]},requests:[{request_id:'P1',petition_type:'information',proposed_route:'continue',checks:[{...makeCheck('repetition'),state:'unavailable'},makeCheck('classification')]}],special_treatment:{detected:false},warnings:[]}};
+ const request=initialRequestContent(record,value).P1;
+ view.innerHTML=initialReviewSummary(record,value)+request.header+request.details+initialConfirmation(record,value);
+ view.querySelector('[name="reviewed_by"]').value='Gestor ficticio';view.querySelector('[name="reviewed-all"]').checked=true;
+ let decision=readInitialDecision(view,record,value);updateInitialConfirmation(view,value,decision);
+ check(view.querySelector('#initial-decision-form').checkValidity(),'Formulario válido al continuar sin notas, con observaciones');
+ const calls=[];let saved;
+ await confirmAndPrepare({decision,report:value.report,save:async body=>{calls.push('guardar');saved=body;return {can_prepare:true};},onSaved:()=>{},prepare:async()=>calls.push('preparar')});
+ check(calls.join(',')==='guardar,preparar','Confirmación simulada: guarda y luego prepara');
+ check(saved.document.note.includes('observaciones del análisis se conservan'),'No inventa que se resolvieron las observaciones');
+ const route=view.querySelector('[name="route-document"]');route.value='specialist';decision=readInitialDecision(view,record,value);updateInitialConfirmation(view,value,decision);
+ check(view.querySelector('#initial-decision-form').checkValidity(),'Especialista permite guardar sin motivo');
+ calls.length=0;
+ await confirmAndPrepare({decision,report:value.report,save:async body=>{calls.push('guardar');saved=body;return {can_prepare:false};},onSaved:()=>{},prepare:async()=>calls.push('preparar')});
+ check(calls.join(',')==='guardar','La ruta especialista guarda sin iniciar preparación');
+ check(saved.document.route==='specialist'&&saved.document.note.includes('remitir a revisión especializada'),'Conserva la ruta elegida sin inventar justificación');
+ const savedView=initialReviewSummary(record,{...value,document_decision:saved.document});
+ check(!savedView.includes('sin observación adicional'),'El registro automático no rellena la observación opcional');
+ route.value='continue';decision=readInitialDecision(view,record,value);updateInitialConfirmation(view,value,decision);
+ check(view.querySelector('#initial-decision-form').checkValidity(),'Volver a continuar elimina la restricción de nota');
+ route.value='specialist';updateInitialConfirmation(view,value,readInitialDecision(view,record,value));
+ view.querySelector('#initial-review-details').open=true;view.querySelector('[data-initial-disclosure="note-document"]').open=true;
+ document.querySelector('#result').textContent=results.join('\n');
+}catch(error){document.querySelector('#result').textContent=results.join('\n')+'\nFALLO: '+error.message;throw error;}
+</script></body></html>

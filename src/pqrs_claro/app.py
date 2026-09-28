@@ -2,10 +2,11 @@
 
 import os
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 
 import pymupdf
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -21,6 +22,7 @@ from .extraction import OpenAIOCR, PDFExtractor
 from .gmail_api import gmail_router
 from .gmail_service import GmailService
 from .intake_service import IntakeService, intake_router
+from .management import ManagementStore, management_router
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
@@ -84,6 +86,8 @@ def create_app(
     settings = settings or Settings.load()
     store = CaseStore(settings.data_dir)
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
+    management = ManagementStore(store)
+    service.management = management if settings.management_enabled else None
     source_ocr = None
     if source_extractor is None:
         source_ocr = WindowsOCR() if os.name == "nt" else (
@@ -149,6 +153,8 @@ def create_app(
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
+    app.state.management = management
+    app.include_router(management_router(management, service))
     app.state.library, app.state.sources = library, sources_service
     app.state.verifications = verifications
     app.state.drafts = drafts_service
@@ -216,6 +222,7 @@ def create_app(
     def config():
         return dict(
             ready=bool(settings.api_key),
+            management_enabled=settings.management_enabled,
             validation_mode=settings.data_dir.resolve().is_relative_to(ROOT / "output" / "qa"),
             model=settings.model,
             max_upload_mb=settings.max_upload_mb,
@@ -229,20 +236,30 @@ def create_app(
     @app.get("/api/cases")
     def list_cases(deleted: bool = False):
         return [{**case, "processing": case_busy(case["id"], lifecycle_services)}
-                for case in store.list(deleted=deleted)]
+                for case in management.enrich(store.list(deleted=deleted))]
 
-    def create_case(filename, data):
-        case = store.create(filename, data)
+    def create_case(filename, data, receipt=None):
+        case = store.create(filename, data, receipt=receipt)
         library.link_collections(case["id"], [item["id"] for item in library.collections()])
         return case
 
     @app.post("/api/cases", status_code=201)
-    async def upload(file: UploadFile = File(...)):
+    async def upload(
+        file: UploadFile = File(...), subject: str = Form('', max_length=240),
+        reference: str = Form('', max_length=100), received_date: date | None = Form(None),
+        due_date: date | None = Form(None),
+    ):
         try:
             data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
             check_pdf(data, settings)
+            received = received_date or date.today()
+            if due_date and due_date < received:
+                raise ValueError('La fecha límite no puede ser anterior a la recepción.')
             filename = Path((file.filename or "peticion.pdf").replace("\\", "/")).name[:180]
-            return create_case(filename, data)
+            receipt = dict(subject=subject.strip(), reference=reference.strip(),
+                           received_date=received.isoformat(),
+                           due_date=due_date.isoformat() if due_date else None)
+            return create_case(filename, data, receipt)
         finally:
             await file.close()
 
@@ -261,7 +278,8 @@ def create_app(
 
     @app.get("/api/cases/{case_id}")
     def get_case(case_id: str):
-        return {**store.get(case_id), "analysis_running": case_id in service.active}
+        return {**store.get(case_id), "analysis_running": case_id in service.active,
+                **({"management": management.get(case_id)} if settings.management_enabled else {})}
 
     @app.post("/api/cases/{case_id}/analyze", status_code=202)
     def analyze(case_id: str):

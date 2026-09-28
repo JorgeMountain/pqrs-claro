@@ -188,6 +188,8 @@ def purge_case(store, case_id, version, lifecycle_revision):
                     "preparations",
                     "intake_reviews",
                     "intake_history",
+                    "case_management",
+                    "management_events",
                     "revisions",
                     "case_lifecycle_events",
                     "case_lifecycle",

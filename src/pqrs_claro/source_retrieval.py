@@ -6,6 +6,7 @@ import math
 import re
 import unicodedata
 from collections import Counter
+from functools import lru_cache
 from typing import Any
 
 from .source_documents import (
@@ -73,6 +74,7 @@ class RetrievalIndex:
         self.chunks = chunks
         self._statistics = {}
         self._identities = {}
+        self._calendar = {}
 
     def identity(self, request, chunk, kind, number):
         if not kind or kind == "documento":
@@ -486,7 +488,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
             add(row, "lexical")
     # Las preguntas por fechas necesitan pasajes con fechas explícitas, no solo
     # apartados que repitan "presentación", "calendario" o "convocatoria".
-    for row in _date_passages(request, eligible):
+    for row in _date_passages(request, eligible, index=index):
         add(row, "calendar")
     # El asunto ayuda a localizar el documento; la pregunta atómica selecciona
     # su contenido. Una portada coincidente no sustituye el pasaje de respuesta.
@@ -572,7 +574,29 @@ _EXPLICIT_DATE = re.compile(
 )
 
 
-def _date_passages(request, eligible):
+@lru_cache(maxsize=8192)
+def _calendar_word_tokens(word):
+    """Reutiliza palabras, nunca permisos, resultados ni fragmentos de otro caso."""
+    return tuple(tokenize(_search_words(word)))
+
+
+def _calendar_features(quote):
+    features = []
+    for match in _EXPLICIT_DATE.finditer(quote.casefold()):
+        offset = max(0, match.start() - 180)
+        nearby = quote[offset:match.end() + 180]
+        words = []
+        for word in re.finditer(r"\w+", nearby):
+            tokens = _calendar_word_tokens(word[0])
+            if tokens:
+                distance = max(0, match.start() - offset - word.end(),
+                               offset + word.start() - match.end())
+                words.append((tokens, distance))
+        features.append(words)
+    return features
+
+
+def _date_passages(request, eligible, *, index=None):
     """Reserva dos candidatos fechados; no interpreta la fecha ni su vigencia.
 
     Los fragmentos ya están filtrados por permisos. Se exige una coincidencia
@@ -593,25 +617,25 @@ def _date_passages(request, eligible):
         return []
     candidates, originals, proximity = [], {}, {}
     for row in eligible:
-        text = _search_words(row["quote"])
         # Tokenizar toda la página diluye la relación. La ventana admite títulos
         # y celdas consecutivas en calendarios extraídos de PDF.
-        matches = list(_EXPLICIT_DATE.finditer(row["quote"].casefold()))
+        cache_key = (row["chunk_id"], row["quote"])
+        if index is None:
+            features = _calendar_features(row["quote"])
+        else:
+            if cache_key not in index._calendar:
+                index._calendar[cache_key] = _calendar_features(row["quote"])
+            features = index._calendar[cache_key]
         relations = []
-        for match in matches:
-            nearby = row["quote"][max(0, match.start()-180):match.end()+180]
-            hits = []
-            for word in re.finditer(r"\w+", nearby):
-                if event.intersection(tokenize(_search_words(word[0]))):
-                    start = max(0, match.start()-180) + word.start()
-                    end = max(0, match.start()-180) + word.end()
-                    hits.append((next(iter(tokenize(_search_words(word[0])))),
-                                 max(0, match.start()-end, start-match.end())))
+        for words_near_date in features:
+            hits = [(tokens[0], distance) for tokens, distance in words_near_date
+                    if event.intersection(tokens)]
             if hits:
                 relations.append((len({word for word, distance in hits}),
                                   -min(distance for word, distance in hits)))
         if not relations:
             continue
+        text = _search_words(row["quote"])
         proximity[row["chunk_id"]] = max(relations)
         originals[row["chunk_id"]] = row
         candidates.append({**row, "title": "", "quote": text})
@@ -634,9 +658,11 @@ def _document_content(request, eligible):
     subject = str((request.get("context") or {}).get("subject") or "")[:1200]
     metadata = {}
     for row in eligible:
-        metadata.setdefault(row["source_id"], {**row, "title": "", "quote": _search_words(
-            " ".join(str(row.get(k) or "") for k in ("title", "filename", "historical_group"))
-        )})
+        if row["source_id"] not in metadata:
+            metadata[row["source_id"]] = {**row, "title": "", "quote": _search_words(
+                " ".join(str(row.get(k) or "")
+                         for k in ("title", "filename", "historical_group"))
+            )}
     topic = _search_words(subject or query)
     generic = {"universidad", "institucional", "documento", "respuesta", "consulta", "solicita"}
     terms = {w for w in tokenize(topic) if len(w) >= 3 and w not in generic}

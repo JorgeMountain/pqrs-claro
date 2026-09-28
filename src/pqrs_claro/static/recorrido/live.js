@@ -1,6 +1,8 @@
+import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=drafts1';
 import {createFinal} from './live-document.js?v=fiaga-attribution1';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
+import {renderCaseNavigation} from './live-case-navigation.js?v=drafts1';
 import {createProposalPanel} from './live-proposal.js?v=20260919-supports';
 import {createPendingActions} from './live-pending.js?v=20260919-supports';
 import {createResponseEditor} from './live-edit.js?v=20260919-supports';
@@ -9,8 +11,8 @@ import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
-import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=fiaga-attribution1';
-import {confirmAndPrepare} from './initial-confirmation.js?v=fiaga-attribution1';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=drafts1';
+import {confirmAndPrepare} from './initial-confirmation.js?v=drafts1';
 
 async function api(path,body,method='POST'){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
@@ -21,6 +23,19 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   let current=null,data=null,job={},mapping={},drafts={},review={},step=1,busy=false,timer,token=0,release=()=>{};
   const state={originalPage:1,originalSelection:null};const view=document.querySelector('#view');
   let initialEnabled=false,automaticInitial=false,initial={},initialForm=null,initialActionError='',configLoaded=false;
+  const draftStore=createReviewDraftStore(localStorage);
+  let savedDraft=null,draftMessage='',draftProblem=false;
+  function persistDraft(){
+    if(!current||!initialForm)return true;
+    try{savedDraft=draftStore.write(current,initial,initialForm);draftProblem=false;draftMessage='Borrador guardado en este navegador. No inicia IA ni confirma la revisión.';return true;}
+    catch(error){draftProblem=true;draftMessage=['QuotaExceededError','SecurityError'].includes(error.name)?'El navegador no pudo guardar el borrador. Descarga una copia antes de salir.':error.message||'No se pudo guardar el borrador en este navegador.';return false;}
+  }
+  function recoverDraft(){
+    try{savedDraft=draftStore.read(current.id);const result=restoreDraft(savedDraft,current,initial);initialForm=result.draft;draftMessage=result.message;draftProblem=false;}
+    catch{draftProblem=true;draftMessage='No se pudo recuperar el borrador. No se ha eliminado su copia guardada.';}
+  }
+  function draftFeedback(){const status=view.querySelector('[data-draft-status]');if(status){status.textContent=draftMessage;status.setAttribute('role',draftProblem?'alert':'status');}}
+  window.addEventListener('beforeunload',event=>{if(draftProblem&&initialForm){event.preventDefault();event.returnValue='';}});
   async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(initialEnabled&&!document.querySelector('.fiaga-environment')){const banner=document.createElement('div');banner.className='fiaga-environment';banner.textContent=settings.environment_label||'PQRS · revisión inicial y confirmación humana';document.querySelector('header').after(banner);}}
   function initialSteps(){
     document.querySelector('[data-step="1"]').innerHTML=`<span>1</span> ${initialEnabled&&current?'Procesar solicitud':'Entender la petición'}`;
@@ -31,12 +46,13 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     if(!current||event.target.form?.id!=='initial-decision-form')return;
     if(event.target.name!=='reviewed-all')view.querySelector('[name="reviewed-all"]').checked=false;
     initialForm=readInitialDecision(view,current,initial);
+    persistDraft();draftFeedback();
     initialActionError='';
     view.querySelectorAll('[data-initial-error]').forEach(e=>e.hidden=true);
     view.querySelectorAll('.initial-unsaved').forEach(e=>e.hidden=!initialDirty());
     const summaryStatus=view.querySelector('.intake-summary-heading .initial-state'),summaryText=view.querySelector('.intake-summary-content [role="status"]');
     if(summaryStatus)summaryStatus.textContent='Cambios sin confirmar';
-    if(summaryText)summaryText.textContent='Confirma los cambios al final de la pantalla.';
+    if(summaryText)summaryText.textContent=draftProblem?'El borrador no se pudo guardar. Conserva una copia antes de salir.':'Tu borrador está guardado en este navegador; todavía no está confirmado.';
     document.querySelectorAll('[data-step="2"],[data-step="3"]').forEach(e=>e.disabled=busy||!canPrepare());
     updateInitialConfirmation(view,initial,initialForm);
   };
@@ -77,12 +93,11 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     document.querySelector('.prototype-status').textContent='Expediente conectado';
     document.querySelector('.demo-badge').textContent='Gestión de Peticiones';
     document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed')||(initialEnabled&&[2,3].includes(Number(b.dataset.step))&&!canPrepare());if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
-    view.querySelector('.gmail-origin')?.remove();
     if(!current.identification)renderAnalysis(view,current);
-    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
+    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft)}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
-    if(step===1&&showMail)view.insertAdjacentHTML('afterbegin',`<div class="gmail-origin">${current.origin?.kind==='gmail'?`<span>Recibida por Gmail${current.origin.reported_case_number?' · Caso '+esc(current.origin.reported_case_number):''}</span>`:''}<button data-action="live-mail-origin">Ver correos del expediente</button></div>`);
+    renderCaseNavigation(view,current,{step,showMail:Boolean(showMail)});
     if(current.error&&current.identification)view.insertAdjacentHTML('afterbegin',`<p role="alert" class="alert">${esc(current.error)}</p><button data-action="live-analyze">Reintentar identificación</button>`);
     if(step===1&&data){bindOriginal(state,number=>run(()=>loadPage(number)));release=bindSplitPane();}
     view.querySelectorAll("[data-pending-group]").forEach(e=>e.open=expanded.includes(e.dataset.pendingGroup));
@@ -122,8 +137,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     current.analysis_running=next.analysis_running;
     if(initialEnabled&&current.identification){
       const value=await api(path('/initial-review'));if(sequence!==token||current?.id!==id)return;
-      if(value.revision!==initial.revision)initialForm=null;
-      initial=value;if(!canPrepare()&&[2,3].includes(step))step=1;
+      const changed=value.revision!==initial.revision;
+      initial=value;if(changed||!initialForm)recoverDraft();if(!canPrepare()&&[2,3].includes(step))step=1;
     }
     if(current.status==='confirmed'){
       const results=await Promise.all([api(path('/preparation')),api(path('/sources')),api(path('/drafts')),api(path('/review'))]);
@@ -150,11 +165,12 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     }
   }
   async function select(id){
+    if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return;}
     await config();
     clearTimeout(timer);const sequence=++token;
     const before=new URL(location.href);const savedStep=before.searchParams.get('case')===id?Number(before.searchParams.get('step')):0;
     const value=await api('/api/cases/'+encodeURIComponent(id));if(sequence!==token)return;
-    current=value;final.setCase();job={};mapping={};drafts={};review={};initial={};initialForm=null;initialActionError='';state.originalPage=1;state.originalSelection=null;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:1;adapt();
+    if(value.management&&(!value.management.owner_id||!value.management.started_at)){await onBrowse();return;}current=value;final.setCase();job={};mapping={};drafts={};review={};initial={};initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;initialActionError='';state.originalPage=1;state.originalSelection=null;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:1;adapt();
     const url=new URL(location.href);url.searchParams.set('case',id);history.replaceState(null,'',url);render();
     await refresh();if(step===3)await final.load();if(!savedStep&&job.status==='running'&&(!initialEnabled||canPrepare())){step=2;render();}if(current?.id===id&&current.pages.length&&step===1)await loadPage(1);
   }
@@ -163,7 +179,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   }
   async function upload(file){
     if(!file)return;
-    await run(async()=>{const body=new FormData();body.set('file',file);const created=await api('/api/cases',body);await select(created.id);await api(path('/analyze'),{});await refresh();});
+    await run(async()=>{const body=new FormData();body.set('file',file);const created=await api('/api/cases',body);await onBrowse();notice('Expediente recibido. Asígnalo e inicia su gestión desde la bandeja.');});
   }
   async function collections(){
     const caseId=current.id;
@@ -189,6 +205,13 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       (detail?.querySelector('summary')||view.querySelector('#intake-summary-title'))?.focus();
       return;
     }
+    if(b.dataset.action==='live-initial-save'){initialForm=readInitialDecision(view,current,initial);persistDraft();render();draftFeedback();view.querySelector('[data-action="live-initial-save"]')?.focus({preventScroll:true});notice(draftMessage);return;}
+    if(b.dataset.action==='live-initial-draft-preview'){open('Borrador anterior · sin confirmar',draftPreview(savedDraft));return;}
+    if(b.dataset.action==='live-initial-draft-download'){
+      const copy=initialForm?draftEnvelope(current,initial,initialForm,savedDraft):savedDraft||draftEnvelope(current,initial,readInitialDecision(view,current,initial));
+      const url=URL.createObjectURL(new Blob([JSON.stringify(copy,null,2)],{type:'application/json'}));
+      const link=document.createElement('a');link.href=url;link.download=`borrador-${current.id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
+    }
     const decision=b.dataset.action==='live-initial-confirm'?readInitialDecision(view,current,initial):null;
     if(decision){
       updateInitialConfirmation(view,initial,decision,{saved:canPrepare()});
@@ -209,7 +232,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
         try{
           const result=await confirmAndPrepare({saved:canPrepare()?initial:null,decision,report:initial.report,
             save:body=>api(`/api/cases/${caseId}/initial-review/decision`,body,'PUT'),
-            onSaved:value=>{if(current?.id===caseId){initial=value;initialForm=null;}},
+            onSaved:value=>{try{draftStore.clear(caseId);}catch{notice('La revisión quedó confirmada. No se pudo retirar la copia del borrador de este navegador.');}if(current?.id===caseId){initial=value;initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;}},
             prepare:async()=>{const latest=await api(`/api/cases/${caseId}`);return api(`/api/cases/${caseId}/preparation`,{version:latest.version});}});
           if(current?.id!==caseId)break;
           if(result.error){initialActionError=result.error;await refresh();break;}
@@ -219,6 +242,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
         break;
       }
       case 'live-initial-history':{const result=await api(path('/initial-review/history'));open('Historial del trámite',initialHistory(result.events));break;}
+      case 'live-queue':await onBrowse();break;
       case 'live-mail-origin':await showMail?.(current.id);break;
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=initialEnabled?1:2;await refresh();if(initialEnabled)notice('Solicitudes confirmadas. Ya puedes analizar el trámite en el resumen.');break;}
       case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
@@ -241,5 +265,5 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       case 'live-sources':{open('Fuentes de la solicitud '+data.requests[index].label,`<div id="live-source-detail" data-case="${esc(current.id)}" data-request="${esc(data.requests[index].id)}"></div>`);updateSourcePanel();break;}
     }});
   });
-  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=initialEnabled&&[2,3].includes(value)&&!canPrepare()?1:[1,2,3].includes(value)?value:1;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){token++;clearTimeout(timer);release();current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(){await config();const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
+  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=initialEnabled&&[2,3].includes(value)&&!canPrepare()?1:[1,2,3].includes(value)?value:1;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;clearTimeout(timer);release();current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(){await config();const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
 }

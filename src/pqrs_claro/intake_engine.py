@@ -158,8 +158,29 @@ def context_schema(payload):
 
 def numbered_payload(payload):
     """Label the exact splitlines used by source_quote; never mutate shared input."""
+    # No enviar enlaces internos, hashes ni el grafo completo de relaciones por cada cita.
+    # Conservar texto, coordenadas y cautelas probatorias; el expediente local sigue íntegro.
+    fields = {
+        "chunk_id", "source_id", "document_id", "version", "title", "filename",
+        "category", "validity", "verification_status", "verification_note",
+        "review_status", "review_note", "extraction_status", "extraction_note",
+        "document_status", "document_date_text", "page", "line_start", "line_end",
+        "quote", "method", "needs_review", "location_kind", "collection_id",
+    }
+    candidates = [{k: v for k, v in c.items() if k in fields}
+                  for c in payload.get("candidates", [])]
+    selected_sources = {c.get("source_id") for c in candidates}
+    scope = dict(payload.get("scope", {}))
+    if "catalog" in scope:
+        catalog = scope["catalog"]
+        scope["catalog"] = [s for s in catalog if s.get("id") in selected_sources
+                            or s.get("extraction_status") != "ready"]
+        scope["catalog_omitted_readable_sources"] = len(catalog) - len(scope["catalog"])
+        scope["catalog_complete"] = len(catalog) == len(scope["catalog"])
     return {
         **payload,
+        "candidates": candidates,
+        "scope": scope,
         "pages": [
             {
                 **{k: v for k, v in page.items() if k != "text"},
@@ -198,7 +219,16 @@ class OpenAIIntakeEngine:
             raise DomainError(
                 "La revisión inicial devolvió una salida incompleta o inválida. Reintenta."
             ) from None
-        except OpenAIError:
+        except OpenAIError as exc:
+            if getattr(exc, "code", None) == "rate_limit_exceeded":
+                too_large = "request too large" in str(getattr(exc, "body", "")).lower()
+                raise DomainError(
+                    "El contexto de revisión supera el límite de tokens de OpenAI. "
+                    "Es necesario reducir los datos de consulta antes de reintentar."
+                    if too_large else
+                    "OpenAI alcanzó un límite temporal de solicitudes o tokens. "
+                    "El avance está guardado; espera un momento antes de reintentar."
+                ) from None
             raise DomainError(
                 "No se pudo completar la revisión inicial con IA. Reintenta."
             ) from None

@@ -1,5 +1,5 @@
 import {esc} from './views.js';
-import {acceptedProposalNote,needsDecisionNote,decisionContinues} from './initial-confirmation.js?v=fiaga-phase3';
+import {isAutomaticDecisionNote,decisionContinues} from './initial-confirmation.js?v=drafts1';
 
 const names={requirements:'Datos y requisitos del documento',respect:'Lenguaje y atribución al solicitante',repetition:'Antecedentes',classification:'Clasificación'};
 export const initialStatuses={idle:'Pendiente de análisis',running:'Analizando',needs_review:'Pendiente de decisión',approved:'Decisión de continuar',routed:'Ruta alternativa registrada',error:'Error de análisis',interrupted:'Análisis interrumpido'};
@@ -14,9 +14,9 @@ function original(ref,id){return `<blockquote>${esc(ref.quote)}</blockquote><a h
 function source(s,id){return `<div class="initial-source"><strong>${esc(s.title)}</strong><blockquote>${esc(s.quote)}</blockquote><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${encodeURIComponent(id)}#page=${s.page}">${s.location_kind==='section'?'Sección':'Página'} ${s.page} · abrir original</a>${s.needs_review?'<p>Texto obtenido por OCR: cotejar con el original.</p>':''}<p class="muted">Vigencia registrada: ${esc(({unknown:'Por verificar',current:'Vigente según revisión registrada',superseded:'Sustituida',not_applicable:'No aplica'})[s.validity]||'Por verificar')}</p></div>`;}
 function checksView(checks,id,key){return `<div class="initial-checks">${checks.map(c=>`<details data-initial-disclosure="${esc(key+'-'+c.key)}"><summary><span>${names[c.key]}</span><span class="initial-state ${c.state}">${states[c.state]}</span></summary><p><strong>${esc(c.summary)}</strong></p><p>${esc(c.reason)}</p>${list(c.pending)}${c.original_refs.map(r=>original(r,id)).join('')}${c.sources.map(s=>source(s,id)).join('')}</details>`).join('')}</div>`;}
 function communication(row,decision,key){return row.draft?`<details data-initial-disclosure="draft-${key}"><summary>Borrador de comunicación · requiere revisión</summary><label class="field">Texto del borrador<textarea form="initial-decision-form" class="initial-draft" name="draft-${key}" maxlength="12000">${esc(decision?.communication??row.draft)}</textarea></label><p>No se ha enviado esta comunicación.</p></details>`:list(row.draft_missing);}
-function decisionFields(row,decision,key,keys,label,special=false){
-  const required=needsDecisionNote(row,decision||{},special),note=decision?.note===acceptedProposalNote?'':decision?.note||'';
-  return `<div class="initial-decision" data-decision-key="${key}"><label class="field">${label}<select form="initial-decision-form" name="route-${key}">${choices(keys,decision?.route||row.proposed_route)}</select></label><details data-initial-disclosure="note-${key}" ${required||note?'open':''}><summary data-note-label>${required?'Explica la decisión':'Añadir una observación (opcional)'}</summary><label class="field">${key==='document'?'Observación sobre el documento':'Observación sobre esta petición'}<textarea form="initial-decision-form" name="note-${key}" ${required?'required':''} maxlength="5000" placeholder="Explica cómo atendiste las observaciones o por qué cambiaste la propuesta.">${esc(note)}</textarea></label></details></div>`;
+function decisionFields(row,decision,key,keys,label){
+  const note=isAutomaticDecisionNote(decision?.note)?'':decision?.note||'';
+  return `<div class="initial-decision" data-decision-key="${key}"><label class="field">${label}<select form="initial-decision-form" name="route-${key}">${choices(keys,decision?.route||row.proposed_route)}</select></label><details data-initial-disclosure="note-${key}" ${note?'open':''}><summary data-note-label>Añadir una observación (opcional)</summary><label class="field">${key==='document'?'Observación sobre el documento':'Observación sobre esta petición'}<textarea form="initial-decision-form" name="note-${key}" maxlength="5000" placeholder="Añade contexto si lo necesitas. Esta observación es opcional.">${esc(note)}</textarea></label></details></div>`;
 }
 
 export function initialReviewSummary(current,value,draft,{automatic=true}={}){
@@ -34,7 +34,7 @@ export function initialReviewSummary(current,value,draft,{automatic=true}={}){
     else if(report){
       description=`${report.requests.length} ${report.requests.length===1?'petición analizada':'peticiones analizadas'}. Revisa el tipo en cada tarjeta.`;
       if(value.can_prepare&&!form){status='Puedes continuar';description+=' Decisión de continuar guardada.';}
-      else if(form){status='Cambios sin guardar';description='Confirma los cambios al final de la pantalla.';}
+      else if(form){status='Borrador sin confirmar';description='Tus cambios están pendientes de confirmación. Consulta el estado de guardado al final de la pantalla.';}
       else if(value.status==='routed')description+=' Hay una ruta alternativa registrada.';
       if(report.special_treatment?.detected)description+=' Hay un tratamiento especial por revisar.';
     }
@@ -42,7 +42,7 @@ export function initialReviewSummary(current,value,draft,{automatic=true}={}){
   const classifierNote=value.classification_provider==='jev'?'<p class="muted">Clasificación por petición: JEV a través de Vercel. Al analizar, se envían el título, la descripción y sus fragmentos originales a Vercel / TypeSafe.</p>':'';
   const analyze=identified&&value.status&&!running&&(!report||value.stale||value.error)?`<button class="primary" data-action="live-initial-analyze">${value.report?'Actualizar análisis':'Analizar trámite'}</button>`:'';
   const general=report&&!value.stale&&!running&&!value.error?`<div class="intake-global-summary">${report.document.checks.map(c=>`<p class="${c.state==='attention'?'has-observation':''}"><strong>${c.key==='requirements'?'Datos del documento':'Lenguaje'} <span class="initial-state ${c.state}">${states[c.state]}</span></strong><span>${esc(c.summary)}</span></p>`).join('')}</div>${!report.history_available?'<p class="intake-history-note">Antecedentes: consulta no disponible con las fuentes actuales.</p>':''}`:'';
-  return `<section class="intake-summary" aria-labelledby="intake-summary-title"><div class="intake-summary-heading"><h2 id="intake-summary-title" tabindex="-1">Resumen del trámite</h2><span class="initial-state ${value.stale||value.error?'attention':''}">${esc(status)}</span></div><div class="intake-summary-content"><p role="${value.error||value.stale?'alert':'status'}">${esc(description)}</p>${analyze}${classifierNote}</div>${general}${running?'<progress aria-label="Analizando trámite"></progress>':''}<p class="initial-unsaved" role="status" ${form?'':'hidden'}>Hay cambios sin confirmar. Revísalos y confirma al final de la pantalla.</p>${identified?`<details class="intake-details" id="initial-review-details" data-initial-disclosure="review"><summary>Ver detalle${report?' y decisión general':''}</summary>${report?documentDetails(current,value,form):'<p>Los resultados requieren revisión humana. El historial conserva los análisis anteriores.</p><button data-action="live-collections">Fuentes de consulta</button> <button data-action="live-initial-history">Ver historial</button>'}</details>`:''}</section>`;
+  return `<section class="intake-summary" aria-labelledby="intake-summary-title"><div class="intake-summary-heading"><h2 id="intake-summary-title" tabindex="-1">Resumen del trámite</h2><span class="initial-state ${value.stale||value.error?'attention':''}">${esc(status)}</span></div><div class="intake-summary-content"><p role="${value.error||value.stale?'alert':'status'}">${esc(description)}</p>${analyze}${classifierNote}</div>${general}${running?'<progress aria-label="Analizando trámite"></progress>':''}<p class="initial-unsaved" role="status" ${form?'':'hidden'}>Hay cambios sin confirmar. Puedes guardar el borrador y continuar después.</p>${identified?`<details class="intake-details" id="initial-review-details" data-initial-disclosure="review"><summary>Ver detalle${report?' y decisión general':''}</summary>${report?documentDetails(current,value,form):'<p>Los resultados requieren revisión humana. El historial conserva los análisis anteriores.</p><button data-action="live-collections">Fuentes de consulta</button> <button data-action="live-initial-history">Ver historial</button>'}</details>`:''}</section>`;
 }
 function documentDetails(current,value,form){
   const report=value.report,row=report.document,decision=form?.document||value.document_decision;
@@ -50,7 +50,7 @@ function documentDetails(current,value,form){
   const special=report.special_treatment;
   if(special.detected)html+=`<section class="alert"><h3>Tratamiento especial por revisar</h3><p>${esc(special.reason)}</p><dl>${[['Remitente',special.sender],['Asunto',special.subject],['Información solicitada',special.requested_information],['Término escrito',special.stated_term]].map(([k,v])=>`<dt>${k}</dt><dd>${esc(v||'No identificado')}</dd>`).join('')}</dl>${special.original_refs.map(r=>original(r,current.id)).join('')}</section>`;
   if(value.decided_at)html+=`<p class="initial-saved">Decisión guardada por ${esc(value.reviewed_by)} · ${esc(new Date(value.decided_at).toLocaleString('es-CO'))}.</p>`;
-  return html+checksView(row.checks,current.id,'document')+`<fieldset class="intake-request-fields" ${initialReady(value)?'':'disabled'}><legend class="sr-only">Decisión sobre el documento completo</legend>${communication(row,decision,'document')}${decisionFields(row,decision,'document',['continue','complement','reject','specialist'],'Ruta del documento completo',report.special_treatment?.detected)}</fieldset>`;
+  return html+checksView(row.checks,current.id,'document')+`<fieldset class="intake-request-fields" ${initialReady(value)?'':'disabled'}><legend class="sr-only">Decisión sobre el documento completo</legend>${communication(row,decision,'document')}${decisionFields(row,decision,'document',['continue','complement','reject','specialist'],'Ruta del documento completo')}</fieldset>`;
 }
 export function initialRequestContent(current,value,draft){
   const report=value.report,content={};
@@ -70,13 +70,13 @@ export function initialRequestContent(current,value,draft){
   }
   return content;
 }
-export function initialConfirmation(current,value,draft,{busy=false,error=''}={}){
+export function initialConfirmation(current,value,draft,{busy=false,error='',draftMessage='',draftProblem=false,hasPrevious=false}={}){
   if(!initialReady(value))return '';
   const form=currentDraft(current,value,draft),saved=value.can_prepare&&!form,recorded=Boolean(value.document_decision)&&!form;
   const decision=form||{document:value.document_decision,requests:value.decisions};
   const continuing=form||value.document_decision?decisionContinues(decision):value.report.document.proposed_route==='continue'&&value.report.requests.every(r=>r.proposed_route==='continue');
   const checked=form?form.document.reviewed&&form.requests.every(r=>r.reviewed):Boolean(value.document_decision?.reviewed&&value.decisions?.every(r=>r.reviewed));
-  return `<section class="intake-confirmation" aria-labelledby="intake-confirmation-title"><h2 id="intake-confirmation-title">Confirmar revisión</h2><form id="initial-decision-form" novalidate data-revision="${value.revision}" data-case="${esc(current.id)}"><label class="field">Responsable de la revisión<input name="reviewed_by" required maxlength="200" value="${esc(form?.reviewed_by??value.reviewed_by??'')}" autocomplete="name"></label><label class="check"><input type="checkbox" name="reviewed-all" required ${checked?'checked':''}>Revisé las peticiones identificadas, el resumen del trámite y los tipos sugeridos.</label><p class="muted">Sin una observación adicional, se registra que aceptas la propuesta mostrada. Las observaciones anteriores se conservan en el historial.</p><p class="alert" role="alert" data-initial-error ${error?'':'hidden'}>${esc(error)}</p><div class="actionbar"><p data-confirmation-message>${continuing?'La confirmación se guarda y comienza la preparación. No se envía ninguna comunicación.':'Hay una ruta alternativa. Se guardará la decisión y el expediente seguirá en este paso.'}</p><button type="button" class="primary" data-action="live-initial-confirm" ${busy?'disabled':''}>${busy?'Procesando…':saved?'Preparar respuestas →':recorded?'Decisión guardada':continuing?'Confirmar y preparar respuestas →':'Guardar decisión'}</button></div></form></section>`;
+  return `<section class="intake-confirmation" aria-labelledby="intake-confirmation-title"><h2 id="intake-confirmation-title">Confirmar revisión</h2><form id="initial-decision-form" novalidate data-revision="${value.revision}" data-case="${esc(current.id)}"><label class="field">Responsable de la revisión<input name="reviewed_by" required maxlength="200" value="${esc(form?.reviewed_by??value.reviewed_by??'')}" autocomplete="name"></label><label class="check"><input type="checkbox" name="reviewed-all" required ${checked?'checked':''}>Revisé las peticiones identificadas, el resumen del trámite y los tipos sugeridos.</label><p class="muted">La observación es opcional para cualquier ruta. Se registra tu confirmación y se conservan las observaciones del análisis; no se marcan como resueltas automáticamente.</p><p class="muted" role="${draftProblem?'alert':'status'}" data-draft-status>${esc(draftMessage)}</p><div class="dialog-actions"><button type="button" data-action="live-initial-save" ${busy?'disabled':''}>Guardar borrador</button>${hasPrevious?'<button type="button" data-action="live-initial-draft-preview">Ver borrador conservado</button>':''}<button type="button" data-action="live-initial-draft-download">Descargar borrador</button></div><p class="alert" role="alert" data-initial-error ${error?'':'hidden'}>${esc(error)}</p><div class="actionbar"><p data-confirmation-message>${continuing?'La confirmación se guarda y comienza la preparación. No se envía ninguna comunicación.':'Hay una ruta alternativa. Se guardará la decisión y el expediente seguirá en este paso.'}</p><button type="button" class="primary" data-action="live-initial-confirm" ${busy?'disabled':''}>${busy?'Procesando…':saved?'Preparar respuestas →':recorded?'Decisión guardada':continuing?'Confirmar y preparar respuestas →':'Guardar decisión'}</button></div></form></section>`;
 }
 export function updateInitialConfirmation(view,value,decision,{saved=false,recorded=false}={}){
   if(!decision)return;
@@ -85,14 +85,10 @@ export function updateInitialConfirmation(view,value,decision,{saved=false,recor
   if(button)button.disabled=recorded&&!saved;
   const message=view.querySelector('[data-confirmation-message]');
   if(message)message.textContent=continuing?'La confirmación se guarda y comienza la preparación. No se envía ninguna comunicación.':'Hay una ruta alternativa. Se guardará la decisión y el expediente seguirá en este paso.';
-  const rows=[['document',value.report.document,decision.document,value.report.special_treatment?.detected],...value.report.requests.map((r,i)=>[i,r,decision.requests[i],false])];
-  for(const [key,row,item,special] of rows){
-    const field=view.querySelector(`[name="note-${key}"]`),required=needsDecisionNote(row,item,special);
-    if(!field)continue;
-    field.required=required;
-    field.setCustomValidity(required&&!field.value.trim()?'Explica cómo atendiste las observaciones o el cambio de decisión.':'');
-    if(required)field.closest('details').open=true;
-    field.closest('[data-decision-key]').querySelector('[data-note-label]').textContent=required?'Explica la decisión':'Añadir una observación (opcional)';
+  for(const field of view.querySelectorAll('[data-decision-key] textarea[name^="note-"]')){
+    field.required=false;
+    field.setCustomValidity('');
+    field.closest('[data-decision-key]').querySelector('[data-note-label]').textContent='Añadir una observación (opcional)';
   }
   for(const [i,item] of decision.requests.entries())view.querySelector(`[name="type-${i}"]`)?.setCustomValidity(item.route==='continue'&&item.petition_type==='undetermined'?'Define el tipo de esta petición antes de continuar.':'');
   const reviewer=view.querySelector('[name="reviewed_by"]');
