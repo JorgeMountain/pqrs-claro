@@ -52,6 +52,7 @@ class CaseService:
 
     def start(self, case_id):
         with self.lock:
+            self.store.assert_open(case_id)
             case = self.store.get(case_id)
             if self.management:
                 self.management.require_started(case_id)
@@ -154,6 +155,7 @@ class CaseService:
 
     def save(self, case_id, version, identification):
         with self.lock:
+            self.store.assert_open(case_id)
             case = self.store.get(case_id)
             if case["status"] != "needs_review":
                 raise Conflict("Solo puede editar una identificación pendiente de revisión.")
@@ -176,6 +178,7 @@ class CaseService:
 
     def confirm(self, case_id, version):
         with self.lock:
+            self.store.assert_open(case_id)
             case = self.store.get(case_id)
             if case["version"] != version:
                 raise Conflict("El expediente cambió. Recargue antes de confirmar.")

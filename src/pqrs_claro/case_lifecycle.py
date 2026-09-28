@@ -12,6 +12,7 @@ from .storage import Conflict
 class CaseAction(StrictModel):
     version: int = Field(ge=1)
     lifecycle_revision: int = Field(ge=0)
+    management_revision: int = Field(default=0, ge=0)
     confirmed: StrictBool
 
 
@@ -39,9 +40,11 @@ def lifecycle_router(store, services):
             if case_busy(case_id, services):
                 raise Conflict("Este expediente está procesándose. Espera a que termine.")
             if permanent:
-                return purge_case(store, case_id, body.version, body.lifecycle_revision)
+                return purge_case(store, case_id, body.version, body.lifecycle_revision,
+                                  body.management_revision)
             return store.set_deleted(case_id, version=body.version,
-                                     lifecycle_revision=body.lifecycle_revision, deleted=deleted)
+                                     lifecycle_revision=body.lifecycle_revision, deleted=deleted,
+                                     management_revision=body.management_revision)
 
     @router.delete("/api/cases/{case_id}")
     def delete(case_id: str, body: CaseAction):

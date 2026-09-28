@@ -91,6 +91,8 @@ class IntakeService:
         allowed = not self.enabled or (
             row["status"] == "approved" and not stale and case["status"] == "confirmed"
         )
+        if self.cases.management and self.cases.management.get(case_id)["state"] == "closed":
+            allowed = False
         return {
             **row,
             "enabled": self.enabled,
@@ -115,6 +117,7 @@ class IntakeService:
         return result
 
     def assert_allowed(self, case_id):
+        self.cases.assert_open(case_id)
         if self.enabled and not self.get(case_id)["can_prepare"]:
             raise Conflict(
                 "Completa la revisión inicial y confirma continuar en todas las solicitudes."
@@ -222,6 +225,7 @@ class IntakeService:
 
     def start(self, case_id, body):
         with self.identification.lock if self.identification else nullcontext(), self.lock:
+            self.cases.assert_open(case_id)
             if not self.enabled:
                 raise Conflict("La revisión inicial no está habilitada en este entorno.")
             self.assert_idle(case_id)
@@ -369,6 +373,7 @@ class IntakeService:
             self.lock,
             self.library.lock,
         ):
+            self.cases.assert_open(case_id)
             self.assert_idle(case_id)
             row = self.get(case_id)
             if row["status"] not in {"needs_review", "approved", "routed"} or row["stale"]:

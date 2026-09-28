@@ -135,7 +135,7 @@ def release_mail(conn, case_id):
         )
 
 
-def purge_case(store, case_id, version, lifecycle_revision):
+def purge_case(store, case_id, version, lifecycle_revision, management_revision=0):
     """Service admission locks are held by the router throughout this operation.
 
     A durable marker forbids restoring a partially erased case after an I/O error
@@ -151,6 +151,7 @@ def purge_case(store, case_id, version, lifecycle_revision):
         ).fetchone()
         if not row:
             raise KeyError("No se encontró el expediente.")
+        store.check_management_revision(conn, case_id, management_revision)
         if not row[2]:
             raise Conflict("Primero mueve el expediente a la papelera.")
         if row[:2] != (version, lifecycle_revision):

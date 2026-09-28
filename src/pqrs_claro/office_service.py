@@ -307,6 +307,7 @@ class OfficeService:
             return self._project(run, current_hash, letterhead.public() if letterhead else None)
 
     def generate(self, case_id, input_value):
+        self.cases.assert_open(case_id)
         body = (
             input_value.model_dump(mode="json")
             if hasattr(input_value, "model_dump")
@@ -326,6 +327,7 @@ class OfficeService:
             }
         )
         with self.lock, self.reviews_service.lock, self.library.lock:
+            self.cases.assert_open(case_id)
             self._approved(case_id, approved["snapshot_hash"])
             self._letterhead(document.get("letterhead"))
             for previous in self.store.matching_input(case_id, fingerprint):

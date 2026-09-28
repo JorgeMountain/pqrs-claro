@@ -3,7 +3,7 @@
 Inicio: 27 de septiembre de 2026. Primera entrega: fase 1.
 Referencia: `output/qa/audit-20260927/AUDITORIA.md`.
 
-Las fases siguientes son trabajo pendiente, no funciones ya implementadas. La entrega se valida en el servidor local unificado del puerto 8772. No incluye publicación, commit ni push.
+Estado al 28 de septiembre de 2026: fases 1 y 2 implementadas localmente. Fases 3 y 4 pendientes. Antes de iniciar la fase 2 se creó y subió a origin/master el commit 0bb6c0a (bandeja de gestores y fase 1), por solicitud del usuario. Los cambios de fase 2 se incluyen en un commit posterior, por solicitud del usuario; las fases 3 y 4 siguen pendientes. Servidor unificado: puerto 8772.
 
 ## Fase 1 — Conservar el trabajo del gestor — IMPLEMENTADA
 
@@ -27,16 +27,24 @@ Es un borrador **local de este navegador y este origen (host/puerto)**. No está
 - Evidencias: `output/qa/audit-20260927/phase1-tests.txt` y `phase1-draft.png`.
 - No se enviaron solicitudes a proveedores de IA ni se modificaron expedientes reales durante la validación.
 
-## Fase 2 — Estados fiables, fechas y concurrencia — PENDIENTE
+## Fase 2 — Estados fiables, fechas y concurrencia — IMPLEMENTADA
 
-1. Actualizar la bandeja mientras haya trabajos activos y detener la consulta al salir; reintentar errores sin duplicar trabajos.
-2. Usar la fecha original de recepción de Gmail, con conversión de zona horaria, en lugar de la fecha de importación.
-3. Validar la revisión de gestión al eliminar: una pestaña antigua no debe borrar un expediente recién tomado o modificado.
-4. Incluir revisión inicial, preparación y oficio en la última actividad.
-5. Definir y aplicar el cierre/reapertura: una PQRS finalizada no debe iniciar trabajo de IA silenciosamente ni cerrarse mientras está procesando.
-6. Corregir la ruta antigua de búsqueda de fuentes para respetar la decisión inicial y evitar que el endpoint antiguo de demo deje un expediente cuando responde con error.
+1. La bandeja consulta cada dos segundos mientras existen trabajos activos. Al finalizar actualiza las tarjetas y deja de consultar; al salir no realiza más solicitudes. Un error conserva la lista y se reintenta con espera creciente hasta 30 segundos. No repinta mientras está abierto un diálogo; conserva filtros y foco de botones.
+2. Gmail usa la fecha original del correo convertida a Bogotá (UTC−05:00). Una fecha manual explícita tiene prioridad. Se corrigen defaults antiguos sin cambios de metadatos; se conservan las fechas que pudieron haber sido editadas manualmente. No se altera la fecha de incorporación ni se recalculan plazos.
+3. Papelera, restauración y borrado definitivo validan la revisión de gestión dentro de la transacción, además de las versiones anteriores. Una pestaña desactualizada recibe 409 antes de modificar el expediente. Clientes antiguos sin este campo solo funcionan si la gestión sigue en revisión cero.
+4. Última actividad incluye revisión inicial, preparación, fuentes, borradores, revisión de respuestas y oficios. La consulta lee proyecciones de fechas; no ejecuta modelos.
+5. Finalizar requiere que no haya trabajos en curso. Las admisiones de análisis, preparación, redacción, comprobación, propuestas y generación de oficio rechazan expedientes cerrados. La revisión inicial tampoco se confirma sobre un caso cerrado. La tarjeta muestra **Consultar**; para continuar trabajando, el responsable debe cambiar el estado a **En gestión** desde **Detalles y gestión**, dejando el motivo. El cierre es manual y no acredita envío.
+6. La búsqueda antigua de fuentes aplica la misma revisión inicial obligatoria. La antigua API de demostración rechaza el flujo gestionado antes de crear expedientes; la demostración visual estática sigue disponible.
 
-Criterio de salida: pruebas con dos clientes y trabajos simulados, fechas verificadas, rechazo consistente de operaciones obsoletas y ninguna escritura parcial ante error.
+### Validación de fase 2
+
+- 15 nuevas pruebas Python con SQLite temporal, motores ficticios y sin API de IA real: recepción original/manual, defaults antiguos, pestaña obsoleta, cierre/reapertura, todos los trabajadores activos, ruta especializada, demo sin escritura parcial y última actividad.
+- 45 comprobaciones JavaScript aprobadas, incluyendo actualización periódica, parada al salir, reintentos y estado de consulta de expedientes cerrados.
+- Navegador real con módulos de producción y APIs simuladas: Analizando cambia a Continuar sin recargar; Finalizada muestra Consultar; recuperación tras fallo; contador detenido al salir; campos deshabilitados y confirmación ausente en expediente cerrado.
+- Servidor local reiniciado solo tras comprobar que no había trabajos activos. Lectura posterior: 51 expedientes, todos con última actividad, cero en proceso. No se modificaron casos reales como prueba.
+- Evidencias locales: `output/qa/audit-20260927/phase2-queue.png` y fixture reproducible `tests/browser/phase2-queue.js`. Resultado de suite completa registrado en `output/qa/audit-20260927/PHASE2_VALIDACION.md`.
+
+Límites: el selector continúa siendo una simulación local, no autenticación. La bandeja sin trabajos no consulta permanentemente nuevas entradas externas; el botón Actualizar sigue disponible. El cierre no es aprobación institucional ni envío de comunicaciones. No se añadió migración entre las dos copias del proyecto.
 
 ## Fase 3 — Menos esperas y consumo de IA — PENDIENTE
 

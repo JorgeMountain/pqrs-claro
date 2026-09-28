@@ -249,6 +249,7 @@ class DraftService:
 
     def start(self, case_id, version, *, ready_only=False):
         with self.lock:
+            self.cases.assert_open(case_id)
             if getattr(self, 'initial_review', None):
                 self.initial_review.assert_allowed(case_id)
             if case_id in self.active:

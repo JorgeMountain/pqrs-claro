@@ -155,6 +155,9 @@ class SourceService:
 
     def start(self, case_id, version, *, retry_analysis=False, retry_failed_only=False):
         with self.lock:
+            self.cases.assert_open(case_id)
+            if getattr(self, "initial_review", None):
+                self.initial_review.assert_allowed(case_id)
             case, sources, chunks, fingerprint = self.inputs(case_id)
             if case["status"] != "confirmed":
                 raise Conflict("Confirma primero las solicitudes identificadas.")

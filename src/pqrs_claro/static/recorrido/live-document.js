@@ -13,6 +13,7 @@ async function api(url,body,method='POST'){
   return data;
 }
 export function createFinal({getCase,hasChanges,notice,isVisible,back}){
+  const readOnly=()=>getCase()?.management?.state==='closed';
   const states=new Map();
   const state=()=>{
     const id=getCase()?.id;if(!id)return null;
@@ -132,8 +133,14 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back}){
     s.node.querySelectorAll('[contenteditable]').forEach(e=>e.contentEditable=s.busy?'false':'plaintext-only');
     s.node.querySelectorAll('input').forEach(e=>e.disabled=s.busy);
     s.tools?.refresh();
+    if(readOnly()){
+      s.node.querySelectorAll('button:not([data-back]),input,select,textarea').forEach(e=>e.disabled=true);
+      s.node.querySelectorAll('[contenteditable]').forEach(e=>e.contentEditable='false');
+      s.node.querySelector('[data-operation]').textContent='Expediente finalizado · consulta del oficio y descargas disponibles.';
+    }
   }
   async function act(s,work){
+    if(readOnly()){s.error='Reabre la gestión desde la bandeja antes de modificar el oficio.';status(s);return;}
     if(s.busy)return;s.busy=true;s.error='';status(s);
     try{await work();}catch(e){s.error=e.message;}
     finally{s.busy=false;s.message='';status(s);}

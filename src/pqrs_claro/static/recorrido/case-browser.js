@@ -1,5 +1,6 @@
-import {actor,request as managementRequest,managerOptions,managementDialog,cards,states} from './management-ui.js';
-import {shell,rows,confirmation,status,title} from './case-browser-views.js';
+import {actor,request as managementRequest,managerOptions,managementDialog,cards,states} from './management-ui.js?v=phase2';
+import {shell,rows,confirmation,status,title} from './case-browser-views.js?v=phase2';
+import {createQueueRefresh} from './queue-refresh.js?v=phase2';
 
 async function api(path,body,method='POST'){
   const response=await fetch('/api/cases'+path,body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -12,8 +13,12 @@ export function createCaseBrowser({container,open,close,notice,onSelect,onNew}){
   const filterIds=['cases-search','cases-status','cases-origin','cases-sort','cases-manager-filter'];
   const node=selector=>root.querySelector(selector);
   function visible(){return root?.isConnected;}
+  const refresh=createQueueRefresh({load,visible,hasWork:()=>[...active,...trash].some(c=>c.processing),
+    editing:()=>Boolean(document.querySelector('#drawer')?.open)});
   function paint(){
     if(!visible())return;
+    const focused=globalThis.document?.activeElement?.closest?.('.cases-results button');
+    const focusData=focused?{...focused.dataset}:null;
     const query=normalize(node('#cases-search').value),state=node('#cases-status').value,origin=node('#cases-origin').value;
     const source=tab==='trash'?trash:active;
     let items=source.filter(c=>(tab!=='unassigned'||!c.management.owner_id)&&(tab!=='mine'||Boolean(actor())&&c.management.owner_id===actor())&&(!node('#cases-manager-filter').value||c.management.owner_id===node('#cases-manager-filter').value)&&(!query||normalize([title(c),c.filename,c.case_number,c.internal_number].join(' ')).includes(query))&&(!state||c.management.state===state)&&(!origin||(c.origin_kind==='gmail'?'gmail':'pdf')===origin));
@@ -30,17 +35,20 @@ export function createCaseBrowser({container,open,close,notice,onSelect,onNew}){
     node('[data-cases-count]').textContent=items.length?`${(page-1)*size+1}–${Math.min(page*size,items.length)} de ${items.length} expedientes`:'0 expedientes';
     node('[data-cases-page]').textContent=`${page} / ${pages}`;
     node('[data-cases-prev]').disabled=page===1;node('[data-cases-next]').disabled=page===pages;
+    if(focusData)Array.from(root.querySelectorAll('.cases-results button')).find(b=>!b.disabled&&Object.entries(focusData).every(([key,value])=>b.dataset[key]===value))?.focus({preventScroll:true});
   }
-  async function load(){
+  async function load(automatic=false){
+    if(loading)return;
+    refresh.stop();let failed=false;
     const sequence=++request,owner=root;loading=true;node('.cases-error').textContent='';
     node('[data-cases-refresh]').disabled=true;node('.cases-results').setAttribute('aria-busy','true');
     try{const data=await Promise.all([api(''),api('?deleted=true'),managementRequest('/api/managers')]);if(sequence!==request||owner!==root||!visible())return;[active,trash,managers]=data;node('#cases-actor').innerHTML=managerOptions(managers,actor(),'Selecciona tu gestor');const filter=node('#cases-manager-filter').value;node('#cases-manager-filter').innerHTML=managerOptions(managers,filter);paint();}
-    catch(error){if(owner===root&&visible()){node('.cases-error').textContent=error.message;node('.cases-results').innerHTML='<p class="cases-empty">No se pudo actualizar la lista. Pulsa «Actualizar» para reintentar.</p>';}}
-    finally{if(owner===root&&visible()){loading=false;node('[data-cases-refresh]').disabled=false;node('.cases-results').setAttribute('aria-busy','false');}}
+    catch(error){failed=true;if(owner===root&&visible()){node('.cases-error').textContent=error.message+' Se reintentará la actualización automáticamente.';if(!automatic&&!active.length&&!trash.length)node('.cases-results').innerHTML='<p class="cases-empty">No se pudo actualizar la lista. Puedes pulsar «Actualizar» para reintentar.</p>';}}
+    finally{if(sequence===request&&owner===root&&visible()){loading=false;node('[data-cases-refresh]').disabled=false;node('.cases-results').setAttribute('aria-busy','false');refresh.schedule(failed);}}
   }
   async function restore(c,button){
     button.disabled=true;
-    try{await api('/'+c.id+'/restore',{version:c.version,lifecycle_revision:c.lifecycle_revision,confirmed:true});notice('Expediente restaurado. Puedes abrirlo en Todas.');await load();}
+    try{await api('/'+c.id+'/restore',{version:c.version,lifecycle_revision:c.lifecycle_revision,management_revision:c.management.revision,confirmed:true});notice('Expediente restaurado. Puedes abrirlo en Todas.');await load();}
     catch(error){if(visible())node('.cases-error').textContent=error.message;}
     finally{if(button.isConnected)button.disabled=false;}
   }
@@ -51,12 +59,13 @@ export function createCaseBrowser({container,open,close,notice,onSelect,onNew}){
     const button=document.querySelector('#cases-delete-confirm'),cancel=document.querySelector('#cases-delete-cancel'),error=document.querySelector('#cases-delete-error');
     cancel.onclick=close;cancel.focus();
     button.onclick=async()=>{button.disabled=true;cancel.disabled=true;error.textContent='';
-      try{await api('/'+c.id+(permanent?'/permanent':''),{version:c.version,lifecycle_revision:c.lifecycle_revision,confirmed:true},'DELETE');close();notice(permanent?'Expediente eliminado definitivamente. Ya puedes importar el correo de nuevo.':'Expediente movido a la papelera. Puedes restaurarlo desde allí.');await load();}
+      try{await api('/'+c.id+(permanent?'/permanent':''),{version:c.version,lifecycle_revision:c.lifecycle_revision,management_revision:c.management.revision,confirmed:true},'DELETE');close();notice(permanent?'Expediente eliminado definitivamente. Ya puedes importar el correo de nuevo.':'Expediente movido a la papelera. Puedes restaurarlo desde allí.');await load();}
       catch(e){if(error.isConnected)error.textContent=e.message;}
       finally{button.disabled=false;cancel.disabled=false;}
     };
   }
   async function show(){
+    refresh.stop();loading=false;request++;
     container.innerHTML=shell();root=container.querySelector('.case-browser');
     if(filters){node('#cases-manager-filter').innerHTML=managerOptions(managers,filters['cases-manager-filter']);for(const id of filterIds)node('#'+id).value=filters[id];}
     root.addEventListener('input',event=>{if(event.target.id==='cases-search'){page=1;paint();}});

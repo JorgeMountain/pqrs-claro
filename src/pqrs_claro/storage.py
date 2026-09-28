@@ -27,6 +27,28 @@ class Conflict(ValueError):
 
 
 class CaseStore:
+    management = None
+
+    def assert_open(self, case_id):
+        """Call under the admitting service lock; closing acquires all these locks."""
+        if self.management and self.management.get(case_id)["state"] == "closed":
+            raise Conflict("El expediente está finalizado. Reabre su gestión desde la bandeja.")
+
+    @staticmethod
+    def check_management_revision(conn, case_id, expected):
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='case_management'"
+        ).fetchone()
+        row = conn.execute(
+            "SELECT body FROM case_management WHERE case_id=?", (case_id,)
+        ).fetchone() if exists else None
+        revision = json.loads(row[0])["revision"] if row else 0
+        if expected != revision:
+            raise Conflict(
+                "La gestión del expediente cambió. "
+                "Actualiza la bandeja antes de eliminar o restaurar."
+            )
+
     def __init__(self, data_dir: Path):
         self.root = data_dir
         self.root.mkdir(parents=True, exist_ok=True)
@@ -124,13 +146,14 @@ class CaseStore:
                            "lifecycle_revision": revision, "deleted_at": deleted_at})
         return result
 
-    def set_deleted(self, case_id, *, version, lifecycle_revision, deleted):
+    def set_deleted(self, case_id, *, version, lifecycle_revision, deleted, management_revision=0):
         """Soft deletion preserves content versions, approvals and all original files."""
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             case = conn.execute("SELECT version FROM cases WHERE id=?", (case_id,)).fetchone()
             if not case:
                 raise KeyError(case_id)
+            self.check_management_revision(conn, case_id, management_revision)
             row = conn.execute(
                 "SELECT revision,deleted_at FROM case_lifecycle WHERE case_id=?", (case_id,)
             ).fetchone()

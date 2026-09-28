@@ -1,18 +1,18 @@
-import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=drafts1';
-import {createFinal} from './live-document.js?v=fiaga-attribution1';
+import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=phase2';
+import {createFinal} from './live-document.js?v=phase2';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
-import {renderCaseNavigation} from './live-case-navigation.js?v=drafts1';
+import {renderCaseNavigation} from './live-case-navigation.js?v=phase2';
 import {createProposalPanel} from './live-proposal.js?v=20260919-supports';
 import {createPendingActions} from './live-pending.js?v=20260919-supports';
 import {createResponseEditor} from './live-edit.js?v=20260919-supports';
-import {identification,responses,supports} from './live-views.js?v=fiaga-attribution1';
+import {identification,responses,supports} from './live-views.js?v=phase2';
 import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
-import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=drafts1';
-import {confirmAndPrepare} from './initial-confirmation.js?v=drafts1';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase2';
+import {confirmAndPrepare} from './initial-confirmation.js?v=phase2';
 
 async function api(path,body,method='POST'){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
@@ -41,6 +41,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     document.querySelector('[data-step="1"]').innerHTML=`<span>1</span> ${initialEnabled&&current?'Procesar solicitud':'Entender la petición'}`;
   }
   const initialDirty=()=>Boolean(initialForm&&initialForm.case_id===current?.id&&initialForm.revision===initial.revision);
+  const closed=()=>current?.management?.state==='closed';
+  const canNavigate=()=>closed()||canPrepare();
   const canPrepare=()=>initialReady(initial)&&initial.can_prepare&&!initialDirty();
   const rememberDecision=event=>{
     if(!current||event.target.form?.id!=='initial-decision-form')return;
@@ -92,9 +94,9 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     document.querySelector('.prototype').textContent=initialEnabled?'Expediente guardado · revisa el trámite y las peticiones antes de preparar las respuestas.':'Expediente guardado · revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
     document.querySelector('.prototype-status').textContent='Expediente conectado';
     document.querySelector('.demo-badge').textContent='Gestión de Peticiones';
-    document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed')||(initialEnabled&&[2,3].includes(Number(b.dataset.step))&&!canPrepare());if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
+    document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed')||(initialEnabled&&[2,3].includes(Number(b.dataset.step))&&!canNavigate());if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
     if(!current.identification)renderAnalysis(view,current);
-    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft)}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
+    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft)}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
     renderCaseNavigation(view,current,{step,showMail:Boolean(showMail)});
@@ -104,6 +106,12 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     view.querySelectorAll('[data-initial-disclosure]').forEach(e=>{if(initialExpanded.has(e.dataset.initialDisclosure))e.open=initialExpanded.get(e.dataset.initialDisclosure);});
     if(step===1&&initialEnabled&&initialReady(initial)&&!busy)updateInitialConfirmation(view,initial,readInitialDecision(view,current,initial),{saved:canPrepare(),recorded:Boolean(initial.document_decision)&&!initialDirty()});
     updateSourcePanel();
+    if(closed()){
+      view.insertAdjacentHTML('afterbegin','<p class="alert" role="status">Expediente finalizado · consulta disponible. Para editar o iniciar otro análisis, reabre la gestión desde «Detalles y gestión» en la bandeja.</p>');
+      view.querySelectorAll('input,textarea,select:not(#original-page),[data-evidence-add]').forEach(e=>e.disabled=true);
+      const readActions=new Set(['live-queue','live-mail-origin','live-initial','live-initial-history','live-pending-history','live-responses','live-final','live-sources','original','clear-original','back-to-question']);
+      view.querySelectorAll('[data-action]').forEach(e=>{if(!readActions.has(e.dataset.action))e.disabled=true;});
+    }
     if(busy)view.querySelectorAll('button,input,select,textarea').forEach(b=>b.disabled=true);
   }
   function updateSourcePanel(){
@@ -134,11 +142,11 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     const id=current.id,sequence=token;
     const next=await api(path(''));if(sequence!==token||current?.id!==id)return;
     if(next.version!==current.version){current=next;adapt();if(step===1&&current.pages.length)await loadPage(state.originalPage);}
-    current.analysis_running=next.analysis_running;
+    current.analysis_running=next.analysis_running;current.management=next.management;
     if(initialEnabled&&current.identification){
       const value=await api(path('/initial-review'));if(sequence!==token||current?.id!==id)return;
       const changed=value.revision!==initial.revision;
-      initial=value;if(changed||!initialForm)recoverDraft();if(!canPrepare()&&[2,3].includes(step))step=1;
+      initial=value;if(changed||!initialForm)recoverDraft();if(!canNavigate()&&[2,3].includes(step))step=1;
     }
     if(current.status==='confirmed'){
       const results=await Promise.all([api(path('/preparation')),api(path('/sources')),api(path('/drafts')),api(path('/review'))]);
@@ -248,7 +256,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
       case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
       case 'live-analyze':await api(path('/analyze'),{});await refresh();break;
-      case 'live-responses':step=initialEnabled&&!canPrepare()?1:2;await refresh();break;
+      case 'live-responses':step=initialEnabled&&!canNavigate()?1:2;await refresh();break;
       case 'live-final':step=3;await refresh();await final.load();break;
       case 'original':state.originalSelection=index;await loadPage(data.requests[index].source_refs[0].page);break;
       case 'clear-original':state.originalSelection=null;await loadPage(state.originalPage);break;
@@ -265,5 +273,5 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       case 'live-sources':{open('Fuentes de la solicitud '+data.requests[index].label,`<div id="live-source-detail" data-case="${esc(current.id)}" data-request="${esc(data.requests[index].id)}"></div>`);updateSourcePanel();break;}
     }});
   });
-  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=initialEnabled&&[2,3].includes(value)&&!canPrepare()?1:[1,2,3].includes(value)?value:1;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;clearTimeout(timer);release();current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(){await config();const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
+  return {active:()=>Boolean(current),choose,upload,select,go(value){if(busy)return;step=initialEnabled&&[2,3].includes(value)&&!canNavigate()?1:[1,2,3].includes(value)?value:1;render();if(step===3)void run(async()=>{await refresh();await final.load();});},leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;clearTimeout(timer);release();current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(){await config();const id=new URL(location.href).searchParams.get('case');return id?run(()=>select(id)):Promise.resolve();}};
 }

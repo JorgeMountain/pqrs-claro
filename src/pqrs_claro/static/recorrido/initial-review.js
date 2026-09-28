@@ -1,5 +1,5 @@
 import {esc} from './views.js';
-import {isAutomaticDecisionNote,decisionContinues} from './initial-confirmation.js?v=drafts1';
+import {isAutomaticDecisionNote,decisionContinues} from './initial-confirmation.js?v=phase2';
 
 const names={requirements:'Datos y requisitos del documento',respect:'Lenguaje y atribución al solicitante',repetition:'Antecedentes',classification:'Clasificación'};
 export const initialStatuses={idle:'Pendiente de análisis',running:'Analizando',needs_review:'Pendiente de decisión',approved:'Decisión de continuar',routed:'Ruta alternativa registrada',error:'Error de análisis',interrupted:'Análisis interrumpido'};

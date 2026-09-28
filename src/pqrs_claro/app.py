@@ -88,6 +88,7 @@ def create_app(
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
     management = ManagementStore(store)
     service.management = management if settings.management_enabled else None
+    store.management = service.management
     source_ocr = None
     if source_extractor is None:
         source_ocr = WindowsOCR() if os.name == "nt" else (
@@ -127,6 +128,7 @@ def create_app(
     preparation.initial_review = initial_review
     drafts_service.initial_review = initial_review
     reviews_service.initial_review = initial_review
+    sources_service.initial_review = initial_review
 
     @asynccontextmanager
     async def lifespan(app):
@@ -154,7 +156,6 @@ def create_app(
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.service = store, service
     app.state.management = management
-    app.include_router(management_router(management, service))
     app.state.library, app.state.sources = library, sources_service
     app.state.verifications = verifications
     app.state.drafts = drafts_service
@@ -169,6 +170,7 @@ def create_app(
     lifecycle_services = (preparation, service, sources_service, drafts_service,
                           proposals, offices_service, reviews_service, gmail, library,
                           verifications, initial_review)
+    app.include_router(management_router(management, service, lifecycle_services))
     app.include_router(lifecycle_router(store, lifecycle_services))
     app.include_router(gmail_router(gmail))
     app.include_router(preparation_router(preparation))
@@ -271,6 +273,8 @@ def create_app(
 
     @app.post("/api/cases/demo", status_code=201)
     def demo():
+        if service.management:
+            raise Conflict("Usa la demostración del recorrido o recibe el PDF desde la bandeja.")
         data = (ROOT / "examples" / "peticion_ejemplo.pdf").read_bytes()
         check_pdf(data, settings)
         case = create_case("Ejemplo ficticio · tres solicitudes.pdf", data)

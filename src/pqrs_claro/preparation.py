@@ -52,6 +52,7 @@ class PreparationService:
 
     def confirm(self, case_id, version):
         with self.lock:
+            self.cases.assert_open(case_id)
             previous = self.get(case_id)
             case = self.cases.get(case_id)
             if (
@@ -72,6 +73,7 @@ class PreparationService:
     def start(self, case_id, version, confirmed_from=None, *, retry_analysis=False,
               retry_failed_only=False):
         with self.lock:
+            self.cases.assert_open(case_id)
             case = self.cases.get(case_id)
             if self.initial_review:
                 self.initial_review.assert_allowed(case_id)

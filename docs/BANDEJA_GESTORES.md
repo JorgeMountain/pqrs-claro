@@ -24,3 +24,11 @@ Se añaden `managers`, `case_management` y `management_events` a la base de expe
 Pruebas: recepción sin IA, asignación concurrente, inicio por responsable, historial, datos de recepción, versiones obsoletas, expedientes antiguos y papelera. Prueba visual con dos PDF ficticios, selector de gestor, inicio, Mis PQRS y cambio a pendiente; análisis simulado. Se comprobó que la bandeja no desbordara horizontalmente a 320, 768, 1024 y 1440 píxeles. Las pruebas no enviaron PQRS reales a OpenAI.
 
 El respaldo previo se encuentra en `output/backups/bandeja-*/`, con sus bases y documentos. La evidencia `activation.json` en esa carpeta compara las tablas anteriores después del reinicio. El acceso habitual continúa siendo http://127.0.0.1:8772/.
+
+## Actualización de fase 2 (28/09/2026)
+
+Gmail conserva la recepción original del correo en Bogotá, con prioridad para correcciones manuales. La bandeja se actualiza mientras haya procesamiento y la última actividad incluye las demás etapas.
+
+Finalizar exige que terminen los trabajos activos e impide nuevos análisis. La tarjeta ofrece Consultar. Para trabajar de nuevo, el gestor responsable abre Detalles y gestión, elige Cambiar estado y En gestión, e indica el motivo. La consulta y las descargas existentes permanecen disponibles.
+
+La papelera compara también la revisión de gestión. Si otra pestaña tomó, reasignó o modificó el expediente, es necesario cancelar la confirmación antigua, actualizar la bandeja y revisar la acción de nuevo.

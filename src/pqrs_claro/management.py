@@ -1,14 +1,40 @@
 """Pilot work queue: one owner per case, independent of content revisions."""
 
 import json
-from datetime import date
+from contextlib import ExitStack
+from datetime import date, datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter
 from pydantic import Field
 
+from .case_activity import latest_activity
+from .case_lifecycle import case_busy
 from .models import StrictModel
 from .storage import Conflict, now
+
+BOGOTA = timezone(timedelta(hours=-5), "America/Bogota")
+
+
+def receipt_date(case):
+    explicit = (case.get("receipt") or {}).get("received_date")
+    if explicit:
+        return explicit
+    origin = case.get("origin") or {}
+    timestamp = origin.get("email_received_at") if origin.get("kind") == "gmail" else None
+    for value in (timestamp, case.get("received_at"), case["created_at"]):
+        if value:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return (
+                    parsed.replace(tzinfo=parsed.tzinfo or timezone.utc)
+                    .astimezone(BOGOTA)
+                    .date()
+                    .isoformat()
+                )
+            except (ValueError, TypeError):
+                continue
+    raise ValueError("No se encontró una fecha de recepción válida.")
 
 
 class ManagerInput(StrictModel):
@@ -76,8 +102,8 @@ class ManagementStore:
             state="in_progress" if started else "received",
             subject=receipt.get("subject") or origin.get("subject") or "",
             reference=receipt.get("reference") or origin.get("reported_case_number") or "",
-            received_date=receipt.get("received_date")
-            or (case.get("received_at") or case["created_at"])[:10],
+            received_date=receipt_date(case),
+            received_date_source="manual" if receipt.get("received_date") else "origin",
             due_date=receipt.get("due_date"),
             started_at=case["created_at"] if started else None,
             updated_at=case["created_at"],
@@ -90,16 +116,33 @@ class ManagementStore:
             row = db.execute(
                 "SELECT body FROM case_management WHERE case_id=?", (case_id,)
             ).fetchone()
-        return json.loads(row[0]) if row else self.default(case)
+            return (
+                self.normalize_receipt(json.loads(row[0]), case, db) if row else self.default(case)
+            )
+
+    def normalize_receipt(self, record, case, db):
+        if "received_date_source" not in record:
+            # Preserve old manual metadata edits; repair only untouched defaults.
+            edited = db.execute(
+                "SELECT 1 FROM management_events WHERE case_id=? "
+                "AND json_extract(body, '$.action')='metadata' LIMIT 1",
+                (case["id"],),
+            ).fetchone()
+            if not edited:
+                record["received_date"] = receipt_date(case)
+            record["received_date_source"] = "manual" if edited else "origin"
+        return record
 
     def enrich(self, items):
         names = {m["id"]: m["name"] for m in self.managers()}
+        activity = latest_activity(self.store)
         for item in items:
             management = self.get(item["id"], include_deleted=bool(item.get("deleted_at")))
             case = self.store.get(item["id"], include_deleted=bool(item.get("deleted_at")))
             item["last_activity"] = max(
                 [
                     management["updated_at"],
+                    activity.get(item["id"], ""),
                     *[
                         event["created_at"]
                         for event in case.get("events", [])
@@ -135,7 +178,9 @@ class ManagementStore:
             row = db.execute(
                 "SELECT body FROM case_management WHERE case_id=?", (case_id,)
             ).fetchone()
-            record = json.loads(row[0]) if row else self.default(case)
+            record = (
+                self.normalize_receipt(json.loads(row[0]), case, db) if row else self.default(case)
+            )
             if record["revision"] != action.revision:
                 raise Conflict("Otro gestor modificó el expediente. Actualiza la bandeja.")
             names = dict(db.execute("SELECT id,name FROM managers"))
@@ -163,6 +208,8 @@ class ManagementStore:
                     raise Conflict("La gestión ya se inició. Usa Continuar.")
                 record.update(state="in_progress", started_at=now())
             elif action.action == "metadata":
+                if "received_date" in action.model_fields_set:
+                    record["received_date_source"] = "manual"
                 for key in ("subject", "reference", "received_date", "due_date"):
                     value = getattr(action, key)
                     if key in action.model_fields_set:
@@ -218,7 +265,7 @@ class ManagementStore:
             ]
 
 
-def management_router(management, service):
+def management_router(management, service, services=()):
     router = APIRouter()
 
     @router.get("/api/managers")
@@ -239,7 +286,17 @@ def management_router(management, service):
 
     @router.post("/api/cases/{case_id}/management")
     def change(case_id: str, body: ManagementAction):
-        with service.lock:
+        with ExitStack() as stack:
+            # Match lifecycle admission: nonblocking avoids cross-service lock inversion.
+            locks = services if body.action == "state" and body.state == "closed" else (service,)
+            for worker in locks:
+                if not worker.lock.acquire(blocking=False):
+                    raise Conflict("Hay una operación en curso. Espera un momento y reintenta.")
+                stack.callback(worker.lock.release)
+            if body.action == "state" and body.state == "closed" and case_busy(case_id, services):
+                raise Conflict(
+                    "Espera a que termine el procesamiento antes de finalizar el expediente."
+                )
             if case_id in service.active:
                 raise Conflict("Espera a que termine el análisis antes de cambiar la gestión.")
             if (

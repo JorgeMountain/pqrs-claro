@@ -119,7 +119,8 @@ def test_legacy_cases_keep_analysis_and_trash_rejects_assignment(unified, pdf_by
     response = client.request(
         "DELETE",
         f"/api/cases/{cid}",
-        json={"version": case["version"], "lifecycle_revision": 0, "confirmed": True},
+        json={"version": case["version"], "lifecycle_revision": 0, "management_revision": 1,
+              "confirmed": True},
     )
     assert response.status_code == 200
     assert action(client, cid, 1, "assign", manager_id="gestor-2", note="test").status_code == 409

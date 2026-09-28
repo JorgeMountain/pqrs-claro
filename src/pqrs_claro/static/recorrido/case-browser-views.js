@@ -11,6 +11,7 @@ export const icons={
 export const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icons[name]||icons.file}</svg>`;
 export function status(c){
   if(c.processing)return ['processing','En proceso'];
+  if(c.management?.state==='closed')return ['confirmed','Finalizada'];
   return ({uploaded:['uploaded','Sin analizar'],reading:['processing','Leyendo documento'],identifying:['processing','Identificando'],confirming:['processing','Confirmando'],needs_review:['review','Por revisar'],confirmed:['confirmed','Solicitudes confirmadas'],error:['error','Requiere atención']})[c.status]||['uploaded','Por revisar'];
 }
 export const title=c=>c.subject||c.filename;

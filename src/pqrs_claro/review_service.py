@@ -259,6 +259,7 @@ class ReviewService:
 
     def start(self, case_id, version, *, before_draft=False):
         with self.lock, self.library.lock:
+            self.cases.assert_open(case_id)
             if any(key[0] == case_id for key in self.active):
                 raise Conflict("Espera a que termine la comprobación antes de sincronizar fuentes.")
             case, _, findings, chunks, fingerprint = self._inputs(case_id, version)
@@ -406,6 +407,7 @@ class ReviewService:
 
         body["paragraphs"] = canonical_paragraphs(body["paragraphs"])
         with self.lock:
+            self.cases.assert_open(case_id)
             row = self._row(case_id, request_id, body["revision"], fresh=False)
             if row["stale"] and any(
                 item["action"] != "open" for item in body["pending_resolutions"]
@@ -473,6 +475,7 @@ class ReviewService:
     def add_fact(self, case_id, request_id, fact):
         body = fact.model_dump(mode="json") if hasattr(fact, "model_dump") else fact
         with self.lock:
+            self.cases.assert_open(case_id)
             row = self._row(case_id, request_id, body["revision"], fresh=False)
             if len(row["facts"]) >= 30:
                 raise ValueError("Esta solicitud admite hasta 30 declaraciones activas.")
@@ -490,6 +493,7 @@ class ReviewService:
 
     def remove_fact(self, case_id, request_id, fact_id, revision, edited_by):
         with self.lock:
+            self.cases.assert_open(case_id)
             row = self._row(case_id, request_id, revision, fresh=False)
             if fact_id not in {fact["id"] for fact in row["facts"]}:
                 raise KeyError("No existe la declaración activa.")
@@ -500,6 +504,7 @@ class ReviewService:
 
     def assess(self, case_id, request_id, revision):
         with self.lock:
+            self.cases.assert_open(case_id)
             row = self._row(case_id, request_id, revision)
             key = (case_id, request_id)
             if key in self.active:
@@ -595,6 +600,7 @@ class ReviewService:
 
         body = approval.model_dump(mode="json") if hasattr(approval, "model_dump") else approval
         with self.lock, self.library.lock:
+            self.cases.assert_open(case_id)
             row = self._row(case_id, request_id, body["revision"])
             assessment, fingerprint = row["assessment"], input_hash(row)
             if (

@@ -78,6 +78,7 @@ class ResponseProposalService:
 
     def start(self, case_id, request_id, revision):
         with self.lock, self.reviews.lock:
+            self.reviews.cases.assert_open(case_id)
             row = self.reviews._row(case_id, request_id, revision)
             key = (case_id, request_id)
             if key in self.active:
@@ -151,6 +152,7 @@ class ResponseProposalService:
 
     def apply(self, case_id, request_id, proposal_id, revision, actor):
         with self.lock, self.reviews.lock:
+            self.reviews.cases.assert_open(case_id)
             job = self.read(case_id, request_id, proposal_id)
             if job["status"] != "ready" or revision != job["base_revision"]:
                 raise Conflict("La propuesta ya no está disponible para aplicar.")

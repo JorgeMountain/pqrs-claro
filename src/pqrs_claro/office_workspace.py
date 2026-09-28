@@ -145,6 +145,7 @@ def get_workspace(service, case_id):
 def save_workspace(service, case_id, body):
     reviews = service.reviews_service
     with reviews.lock, service.library.lock:
+        service.cases.assert_open(case_id)
         service.cases.get(case_id)
         ids = [r.request_id for r in body.requests]
         if len(ids) != len(set(ids)):
