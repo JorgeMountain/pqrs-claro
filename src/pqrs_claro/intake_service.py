@@ -11,12 +11,14 @@ from time import perf_counter
 from fastapi import APIRouter
 
 from .classification_questions import QUESTIONS
+from .intake_cache import CACHE_VERSION, reuse_plan
 from .intake_engine import INSTRUCTIONS, OpenAIIntakeEngine, materialize
 from .intake_models import POLICY_VERSION, TERM_REFERENCE, IntakeDecision, IntakeStart
 from .jev_client import MODEL as JEV_MODEL
 from .jev_client import get_key as get_jev_key
 from .jev_intake import CLASSIFICATION_VERSION, JevIntakeEngine
 from .service import user_error
+from .source_context import build_source_requests
 from .source_library import digest
 from .source_retrieval import RetrievalIndex, retrieve
 from .storage import Conflict, now
@@ -63,6 +65,13 @@ class IntakeService:
             }
         )
 
+    def analysis_plan(self, case_id, row, *, full=False):
+        identification = self.cases.get(case_id)["identification"]
+        context = self.fingerprint(case_id, identification={
+            k: v for k, v in identification.items() if k != "requests"
+        })
+        return context, reuse_plan(row.get("analysis_cache"), context, identification, full=full)
+
     def saved(self, case_id):
         with self.cases.connect() as conn:
             row = conn.execute(
@@ -93,13 +102,19 @@ class IntakeService:
         )
         if self.cases.management and self.cases.management.get(case_id)["state"] == "closed":
             allowed = False
+        work = row.get("analysis_work")
+        if case.get("identification") and row["status"] != "running":
+            _, plan = self.analysis_plan(case_id, row)
+            work = {"pending": plan["pending"], "reused": list(plan["reused"]),
+                    "reason": plan["reason"]}
         return {
-            **row,
+            **{k: v for k, v in row.items() if k != "analysis_cache"},
             "enabled": self.enabled,
             "stale": stale,
             "legacy_report": legacy,
             "can_prepare": allowed,
             "classification_provider": self.settings.initial_classification_provider,
+            "next_analysis": work,
         }
 
     def save(self, row, **changes):
@@ -143,7 +158,8 @@ class IntakeService:
                 return
             try:
                 self.start(
-                    case["id"], IntakeStart(version=case["version"], revision=previous["revision"])
+                    case["id"], IntakeStart(version=case["version"], revision=previous["revision"],
+                                            mode="incremental")
                 )
             except Exception as exc:
                 self.save(
@@ -166,6 +182,21 @@ class IntakeService:
         with self.lock:
             row = self.saved(case["id"])
             current = case["identification"]
+            # Upgrade a valid persisted pre-cache report before a content edit.
+            if (not row.get("analysis_cache") and row.get("report")
+                    and row.get("policy_version") == POLICY_VERSION
+                    and row.get("fingerprint") == self.fingerprint(
+                        case["id"], identification=previous_identification)):
+                context = self.fingerprint(case["id"], identification={
+                    k: v for k, v in previous_identification.items() if k != "requests"
+                })
+                keys = reuse_plan(None, context, previous_identification)["keys"]
+                row = self.save(row, analysis_cache={
+                    "version": CACHE_VERSION, "context": context,
+                    "report": deepcopy(row["report"]),
+                    "entries": {r["request_id"]: {"key": keys[r["request_id"]], "report": r}
+                                for r in row["report"]["requests"]},
+                })
             basis = row.get("selection_basis") or {
                 "identification": previous_identification,
                 "report": row.get("report"),
@@ -220,6 +251,10 @@ class IntakeService:
                 fingerprint=self.fingerprint(case["id"]), status="needs_review",
                 decisions=None, document_decision=None, reviewed_by=None,
                 decided_at=None, minimum_reference_days=None, error=None,
+                analysis_work={"pending": [], "reused": [r["id"] for r in current["requests"]],
+                               "reason": "selection", "mode": "incremental"},
+                timings={"assessment_calls": 0, "evaluated_requests": 0,
+                         "reused_requests": len(current["requests"]), "total_seconds": 0},
             )
             return True
 
@@ -251,8 +286,15 @@ class IntakeService:
                 raise ValueError(
                     "Configura AI_GATEWAY_API_KEY en .env.jev.local para clasificar con JEV."
                 )
+            _, plan = self.analysis_plan(case_id, previous, full=body.mode == "full")
+            if (not plan["pending"] and previous.get("fingerprint") == self.fingerprint(case_id)
+                    and previous["status"] in {"needs_review", "approved", "routed"}):
+                return self.get(case_id)
             row = self.save(
                 previous,
+                analysis_cache=None if body.mode == "full" else previous.get("analysis_cache"),
+                analysis_work={"pending": plan["pending"], "reused": list(plan["reused"]),
+                               "reason": plan["reason"], "mode": body.mode},
                 status="running",
                 policy_version=POLICY_VERSION,
                 fingerprint=self.fingerprint(case_id),
@@ -325,7 +367,15 @@ class IntakeService:
         case_id = row["case_id"]
         started = perf_counter()
         try:
+            context, plan = self.analysis_plan(case_id, row,
+                                               full=row["analysis_work"]["mode"] == "full")
             payload = self.payload(case_id)
+            full_identification = deepcopy(payload["identification"])
+            enriched = build_source_requests({"id": case_id,
+                                               "identification": full_identification})
+            payload["identification"] = {**full_identification, "requests": [
+                r for r in enriched if r["id"] in plan["pending"]
+            ]}
             retrieval_seconds = round(perf_counter() - started, 3)
             if self.settings.initial_classification_provider not in {"openai", "jev"}:
                 raise ValueError("Proveedor de clasificación no válido.")
@@ -334,7 +384,21 @@ class IntakeService:
                 if self.settings.initial_classification_provider == "jev"
                 else OpenAIIntakeEngine(self.settings)
             )
-            report = materialize(engine.assess(payload), payload)
+            if plan["pending"]:
+                report = materialize(engine.assess(payload), payload)
+            else:
+                report = deepcopy(row["analysis_cache"]["report"])
+            fresh = {r["request_id"]: r for r in report["requests"]}
+            for key in plan["pending"]:
+                plan["entries"][key] = {"key": plan["keys"][key], "report": fresh[key]}
+            report["requests"] = [deepcopy(plan["reused"].get(key, fresh.get(key)))
+                                  for key in plan["keys"]]
+            if plan["reused"]:
+                report["warnings"] = list(dict.fromkeys([
+                    *row["analysis_cache"]["report"]["warnings"], *report["warnings"]
+                ]))
+            cache = {"version": CACHE_VERSION, "context": context,
+                     "entries": plan["entries"], "report": deepcopy(report)}
             if payload["scope"]["candidates_limited"]:
                 report["warnings"].append(
                     "La revisión inicial consultó 96 fragmentos priorizados entre las peticiones. "
@@ -347,6 +411,7 @@ class IntakeService:
                     row,
                     status="needs_review",
                     report=report,
+                    analysis_cache=cache,
                     scope=payload["scope"],
                     consulted_sources=list(
                         {
@@ -357,7 +422,10 @@ class IntakeService:
                         }.values()
                     ),
                     error=None,
-                    timings={"retrieval_seconds": retrieval_seconds,
+                    timings={"assessment_calls": int(bool(plan["pending"])),
+                             "evaluated_requests": len(plan["pending"]),
+                             "reused_requests": len(plan["reused"]),
+                             "retrieval_seconds": retrieval_seconds,
                              "total_seconds": round(perf_counter() - started, 3)},
                 )
         except Exception as exc:
@@ -424,7 +492,8 @@ class IntakeService:
                 raise Conflict("La identificación aún no está disponible para confirmar.")
             self.save(
                 {
-                    k: v
+                    **self.saved(case_id),
+                    **{k: v
                     for k, v in row.items()
                     if k
                     not in {
@@ -433,7 +502,9 @@ class IntakeService:
                         "legacy_report",
                         "can_prepare",
                         "classification_provider",
+                        "next_analysis",
                     }
+                    },
                 },
                 status="approved" if can_continue else "routed",
                 decisions=decisions,
@@ -451,7 +522,7 @@ class IntakeService:
         self.cases.get(case_id)
         with self.cases.connect() as conn:
             return [
-                json.loads(r[0])
+                {k: v for k, v in json.loads(r[0]).items() if k != "analysis_cache"}
                 for r in conn.execute(
                     "SELECT body FROM intake_history WHERE case_id=? ORDER BY rowid", (case_id,)
                 )

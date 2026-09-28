@@ -42,3 +42,15 @@ test('un servidor anterior conserva su botón de confirmación hasta reiniciarse
   assert.match(identification(data,{originalPage:1},{initial:{status:'idle'}}),/data-action="live-confirm"/);
   assert.match(initialReviewSummary(current,{status:'idle'},null,{automatic:false}),/flujo anterior/);
 });
+
+test('distingue peticiones conservadas, reintento y análisis completo',()=>{
+  const record={...current,identification:{requests:[{id:'P1',title:'Una'},{id:'P2',title:'Otra'}]}};
+  const analysis_work={pending:['P1'],reused:['P2']};
+  const running={status:'running',analysis_work};
+  assert.match(initialReviewSummary(record,running),/1 petición por analizar y 1 resultado conservado/);
+  assert.match(initialRequestContent(record,running).P1.header,/Clasificando/);
+  assert.match(initialRequestContent(record,running).P2.header,/Resultado conservado/);
+  assert.match(initialReviewSummary(current,{...ready,status:'error',error:'Fallo simulado',next_analysis:analysis_work}),/Reintentar pendientes/);
+  assert.match(initialReviewSummary(current,ready),/live-initial-full/);
+  assert.match(initialReviewSummary(current,ready),/Reanalizar todo con IA/);
+});

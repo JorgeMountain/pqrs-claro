@@ -122,6 +122,7 @@ class IntakeContextAssessment(StrictModel):
 
 
 class IntakeStart(StrictModel):
+    mode: Literal["incremental", "full"] = "full"
     version: int = Field(ge=1)
     revision: int = Field(ge=0)
 

@@ -3,7 +3,7 @@
 Inicio: 27 de septiembre de 2026. Primera entrega: fase 1.
 Referencia: `output/qa/audit-20260927/AUDITORIA.md`.
 
-Estado al 28 de septiembre de 2026: fases 1 y 2 implementadas localmente. Fases 3 y 4 pendientes. Antes de iniciar la fase 2 se creó y subió a origin/master el commit 0bb6c0a (bandeja de gestores y fase 1), por solicitud del usuario. Los cambios de fase 2 se incluyen en un commit posterior, por solicitud del usuario; las fases 3 y 4 siguen pendientes. Servidor unificado: puerto 8772.
+Estado al 28 de septiembre de 2026: fases 1, 2 y 3 implementadas localmente. Fase 4 pendiente. Antes de iniciar la fase 2 se creó y subió a origin/master el commit 0bb6c0a (bandeja de gestores y fase 1), por solicitud del usuario. La fase 2 está en el commit 611ce39, subido a origin/master. La fase 3 permanece local, pendiente de commit y push. Servidor unificado: puerto 8772.
 
 ## Fase 1 — Conservar el trabajo del gestor — IMPLEMENTADA
 
@@ -46,14 +46,22 @@ Es un borrador **local de este navegador y este origen (host/puerto)**. No está
 
 Límites: el selector continúa siendo una simulación local, no autenticación. La bandeja sin trabajos no consulta permanentemente nuevas entradas externas; el botón Actualizar sigue disponible. El cierre no es aprobación institucional ni envío de comunicaciones. No se añadió migración entre las dos copias del proyecto.
 
-## Fase 3 — Menos esperas y consumo de IA — PENDIENTE
+## Fase 3 — Menos esperas y consumo de IA — IMPLEMENTADA
 
-- Reanalizar solo las peticiones cuyo contenido cambió cuando sea técnicamente válido; conservar los resultados de las demás.
-- Distinguir cambios de título, contenido, selección, fuentes y configuración para invalidar únicamente lo que corresponda.
-- Mostrar qué se va a actualizar y separar reintento de errores de nuevo análisis completo.
-- Medir duración y número de llamadas en pruebas, comprobando que descartar, deshacer o guardar correcciones de revisión no vuelven a analizar todo.
+- Revisión inicial persistente por petición: una corrección de contenido, título o referencias reevalúa esa petición y las dependencias identificadas, conservando las independientes. La numeración sin efecto en referencias no consulta IA.
+- Descartar/deshacer conserva el mecanismo existente de reutilización sin llamadas; guardar el borrador sigue siendo local. Ninguna reutilización confirma automáticamente la revisión humana.
+- Original, metadatos generales, fuentes, colecciones, modelo o instrucciones distintos invalidan los resultados dependientes. Un informe antiguo vigente puede incorporarse a la caché al editar, sin repetir todas las peticiones.
+- El reintento incremental conserva resultados válidos incluso tras un fallo. La opción explícita **Reanalizar todo con IA** descarta la reutilización para ese análisis. El cliente indica qué modo solicita; la API antigua conserva el modo completo por compatibilidad.
+- La pantalla muestra peticiones por analizar y resultados conservados. El servidor registra llamadas al motor, peticiones evaluadas/reutilizadas y duración; estas llamadas no equivalen necesariamente a solicitudes HTTP del proveedor.
+- Los checkpoints de fuentes dependen del contexto común y de la petición enriquecida, no de toda la identificación. Los de redacción dependen de la petición, hallazgo, modelo, versión de reglas y original; un mero cambio de versión del caso no fuerza la redacción de lo idéntico.
 
-Criterio de salida: modificar una petición no genera evaluaciones del resto; un cambio global de fuentes/modelo sí invalida los resultados que dependan de él. Confirmación humana siempre asociada a la revisión vigente.
+### Validación y alcance
+
+536 pruebas Python de fuentes, borradores, revisión inicial y preparación aprobadas; 46 JavaScript aprobadas. Pruebas con motores ficticios: corregir P1 evalúa solo P1 y conserva P2; cambiar fuentes/modelo evalúa ambas; en fuentes y borradores no se repite P2. Se validan referencias entre peticiones, descarte/deshacer, reintento, compatibilidad e imposibilidad de confirmar una revisión antigua.
+
+Navegador real con controlador de producción y APIs ficticias: Reintentar pendientes envía incremental; Reanalizar todo envía full; el progreso diferencia los resultados conservados. Fixture: `tests/browser/phase3-intake.js`. Evidencia local: `output/qa/audit-20260927/phase3-incremental.png`.
+
+Límites: el documento original se sigue enviando completo cuando hace falta una evaluación, y se revisan nuevamente sus comprobaciones generales en esa llamada. No se promete un porcentaje de ahorro ni una latencia del proveedor: las medidas son de pruebas locales sin IA real. Los checkpoints anteriores de fuentes/redacción pueden requerir una primera actualización con las nuevas claves. La confirmación humana y los controles de vigencia siguen obligatorios. Detalle en `docs/ANALISIS_INCREMENTAL.md`.
 
 ## Fase 4 — Revisión más intuitiva — PENDIENTE
 

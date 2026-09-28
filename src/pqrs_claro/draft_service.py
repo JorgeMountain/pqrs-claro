@@ -429,7 +429,7 @@ class DraftService:
                     with SqliteSaver.from_conn_string(str(self.settings.data_dir / "draft_checkpoints.sqlite")) as saver:
                         graph = build_draft_graph(guarded, saver)
                         key = digest({"request": request, "finding": finding, "model": self.settings.model,
-                                      "version": DRAFT_VERSION, "case_version": case["version"]})
+                                      "version": DRAFT_VERSION, "original": case["sha256"]})
                         config = {"configurable": {"thread_id": f"{case['id']}:{request['id']}:{key}"}}
                         progress(request["id"], "planificar")
                         checkpoint = graph.get_state(config)

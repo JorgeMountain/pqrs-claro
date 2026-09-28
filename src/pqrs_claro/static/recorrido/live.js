@@ -11,7 +11,7 @@ import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
-import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase2';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase3';
 import {confirmAndPrepare} from './initial-confirmation.js?v=phase2';
 
 async function api(path,body,method='POST'){
@@ -233,7 +233,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       if(!form.reportValidity())return;
     }
     run(async()=>{switch(b.dataset.action){
-      case 'live-initial-analyze':{const target=current.id;const next=await api(path('/initial-review/analyze'),{version:current.version,revision:initial.revision||0});if(current?.id!==target)break;initial=next;initialForm=null;await refresh();break;}
+      case 'live-initial-full':
+      case 'live-initial-analyze':{const target=current.id;const next=await api(path('/initial-review/analyze'),{version:current.version,revision:initial.revision||0,mode:b.dataset.action==='live-initial-full'?'full':'incremental'});if(current?.id!==target)break;initial=next;initialForm=null;await refresh();break;}
       case 'live-initial-confirm':{
         if(!decision||!initialReady(initial))break;
         const caseId=current.id;initialActionError='';

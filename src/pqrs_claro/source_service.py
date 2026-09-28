@@ -207,7 +207,9 @@ class SourceService:
             # no exige repetir recuperación/IA de fuentes idénticas.
             analysis_fingerprint = digest({
                 "analysis_version": SOURCE_ANALYSIS_VERSION,
-                "identification": case["identification"], "sources": sources,
+                "original": case["sha256"], "pages": case.get("pages"),
+                "metadata": {k: v for k, v in case["identification"].items()
+                             if k != "requests"}, "sources": sources,
                 "catalog": self.catalog(case_id), "model": self.settings.model,
                 "retrieval": retrieval_signature(self.settings.data_dir),
                 "collections": case["allowed_collection_ids"],
@@ -288,7 +290,10 @@ class SourceService:
                 ) as saver:
                     graph = build_source_graph(locate, assessor, saver)
                     request["request_intent"] = classify_request_intent(request)
-                    analysis_key = run.get("analysis_fingerprint", run["fingerprint"])
+                    analysis_key = digest({
+                        "context": run.get("analysis_fingerprint", run["fingerprint"]),
+                        "request": request, "request_cache_version": 1,
+                    })
                     thread_id = f"{case['id']}:{request['id']}:{analysis_key}"
                     if run.get("retrieval_attempt"):
                         thread_id += f":{run['retrieval_attempt']}"
