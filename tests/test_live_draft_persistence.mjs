@@ -2,6 +2,7 @@
 // No network, files/cases, or model requests are changed.
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
+import * as navigationTools from '../src/pqrs_claro/static/recorrido/review-navigation.js';
 import * as draftTools from '../src/pqrs_claro/static/recorrido/review-drafts.js';
 const stored=new Map();globalThis.localStorage={getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)};globalThis.window={addEventListener(){}};
 process.on('uncaughtException',error=>{console.error(error.message);process.exitCode=1;});
@@ -30,7 +31,7 @@ globalThis.fetch=async (url,options)=>{assert.ok(!options?.method,'Draft actions
   return {ok:true,json:async()=>structuredClone(data)};
 };
 let afterIdentificationSave;
-globalThis.__deps={...draftTools,
+globalThis.__deps={...draftTools,...navigationTools,
   createFinal:()=>({setCase(){}}),renderAnalysis(){},esc:x=>x,renderCaseNavigation(){},
   createProposalPanel:()=>({}),createPendingActions:()=>({}),createResponseEditor:()=>({hasChanges:()=>false}),
   identification:()=>'',responses:()=>'',supports:()=>'',

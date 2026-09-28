@@ -42,4 +42,4 @@ Con dos peticiones ficticias, la evaluación inicial recibe ambas; corregir P1 e
 
 Navegador real: controlador `createLive`, datos y API ficticios. Reintentar envió `incremental`; reanálisis completo envió `full`; la vista distinguió progreso y conservación. Sin errores de consola. Fixture en `tests/browser/phase3-intake.js`; captura local en `output/qa/audit-20260927/phase3-incremental.png`.
 
-Las pruebas no consumieron API de IA ni cambiaron expedientes reales. Se reinició el servidor local después de verificar 51 expedientes sin procesamiento activo. Los cambios de esta fase quedan locales, pendientes de commit/push. La fase 4 de simplificación de la revisión sigue pendiente.
+Las pruebas no consumieron API de IA ni cambiaron expedientes reales. Se reinició el servidor local después de verificar 51 expedientes sin procesamiento activo. Los cambios de esta fase se subieron en el commit b9e36d7. La fase 4 de simplificación de la revisión se documenta como implementada en PLAN_MEJORAS_AUDITORIA.md.

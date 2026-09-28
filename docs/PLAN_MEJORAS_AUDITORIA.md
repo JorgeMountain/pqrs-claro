@@ -3,7 +3,7 @@
 Inicio: 27 de septiembre de 2026. Primera entrega: fase 1.
 Referencia: `output/qa/audit-20260927/AUDITORIA.md`.
 
-Estado al 28 de septiembre de 2026: fases 1, 2 y 3 implementadas localmente. Fase 4 pendiente. Antes de iniciar la fase 2 se creó y subió a origin/master el commit 0bb6c0a (bandeja de gestores y fase 1), por solicitud del usuario. La fase 2 está en el commit 611ce39, subido a origin/master. La fase 3 permanece local, pendiente de commit y push. Servidor unificado: puerto 8772.
+Estado al 28 de septiembre de 2026: las cuatro fases implementadas y validadas localmente. Antes de iniciar la fase 2 se creó y subió a origin/master el commit 0bb6c0a (bandeja de gestores y fase 1), por solicitud del usuario. La fase 2 está en el commit 611ce39, subido a origin/master. La fase 3 se subió en b9e36d7. La fase 4 se entrega en el commit de cierre de esta auditoría. Servidor unificado: puerto 8772.
 
 ## Fase 1 — Conservar el trabajo del gestor — IMPLEMENTADA
 
@@ -63,13 +63,19 @@ Navegador real con controlador de producción y APIs ficticias: Reintentar pendi
 
 Límites: el documento original se sigue enviando completo cuando hace falta una evaluación, y se revisan nuevamente sus comprobaciones generales en esa llamada. No se promete un porcentaje de ahorro ni una latencia del proveedor: las medidas son de pruebas locales sin IA real. Los checkpoints anteriores de fuentes/redacción pueden requerir una primera actualización con las nuevas claves. La confirmación humana y los controles de vigencia siguen obligatorios. Detalle en `docs/ANALISIS_INCREMENTAL.md`.
 
-## Fase 4 — Revisión más intuitiva — PENDIENTE
+## Fase 4 — Revisión más intuitiva — IMPLEMENTADA
 
-- Mostrar la ruta general y el siguiente paso sin tener que abrir varios detalles.
-- Reducir la información repetida; separar resultado, motivo y evidencia.
-- Añadir índice de peticiones y acceso al siguiente punto pendiente.
-- Acercar guardar/confirmar al trabajo del gestor sin ocultar avisos relevantes.
-- Proponer el gestor seleccionado como responsable cuando corresponda, permitiendo corregirlo.
-- Validar teclado, pantalla estrecha y expedientes largos.
+- Ruta propuesta o registrada y siguiente paso visibles junto al resumen. Una modificación humana actualiza la ruta visible sin confundirse con una decisión guardada.
+- Índice de todas las peticiones y navegación por teclado. El botón Siguiente con observaciones recorre los puntos señalados y abre su motivo. Visitar una petición no la marca como revisada ni resuelve alertas.
+- Barra de navegación que permanece disponible durante el desplazamiento: Guardar borrador e Ir a confirmar. El segundo acceso lleva al formulario; no confirma ni inicia IA.
+- Responsable sugerido a partir del gestor seleccionado del piloto, editable y sin sustituir nombres ya guardados. La casilla de revisión sigue desmarcada hasta la acción humana.
+- Detalles organizados en Resultado, Motivo y Evidencia consultada; se conservan enlaces y citas originales. Se oculta el contador técnico de actualización cuando ya no hay un análisis pendiente.
+- Expedientes finalizados conservan navegación de consulta y no ofrecen estos accesos de escritura. No se modificaron las validaciones del backend.
 
-Criterio de salida: completar un expediente largo con menos desplazamiento, sin perder el acceso a la evidencia ni confundir guardar borrador, confirmar y preparar.
+### Validación de cierre
+
+52 pruebas JavaScript aprobadas, incluidas persistencia de borradores, confirmación, bandeja e índice largo. Navegador real con controlador de producción y API ficticia: 30 peticiones, saltos a P3/P17/P30, apertura de observaciones, corrección conservada, guardado rápido, gestor sugerido, confirmación desmarcada y cambio visible de ruta. Teclado y tamaños 390×844 y 1366×900 comprobados sin desbordamiento horizontal; consola sin errores.
+
+Fixture reproducible: `tests/browser/phase4-review.js` y `tests/browser/PHASE4.md`. Capturas locales: `output/qa/audit-20260927/phase4-review.png` y `phase4-mobile.png`. No se consumió API de IA ni se alteraron expedientes reales en esta validación.
+
+Las cuatro fases acordadas quedan implementadas. El selector de gestores sigue siendo una simulación del piloto y el guardado de borradores sigue siendo local al navegador. Esta entrega no representa despliegue institucional ni elimina la revisión humana.

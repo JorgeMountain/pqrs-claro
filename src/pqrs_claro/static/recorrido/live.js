@@ -1,3 +1,4 @@
+import {reviewNavigation,reviewItems,nextReviewIndex,focusReviewPetition,syncReviewNavigation,suggestedReviewer} from './review-navigation.js?v=phase4';
 import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=phase2';
 import {createFinal} from './live-document.js?v=phase2';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
@@ -11,7 +12,7 @@ import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
-import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase3';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase4';
 import {confirmAndPrepare} from './initial-confirmation.js?v=phase2';
 
 async function api(path,body,method='POST'){
@@ -24,6 +25,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   const state={originalPage:1,originalSelection:null};const view=document.querySelector('#view');
   let initialEnabled=false,automaticInitial=false,initial={},initialForm=null,initialActionError='',configLoaded=false;
   const draftStore=createReviewDraftStore(localStorage);
+  let reviewCursor=-1,reviewManagers=[];
   let savedDraft=null,draftMessage='',draftProblem=false;
   function persistDraft(){
     if(!current||!initialForm)return true;
@@ -36,7 +38,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   }
   function draftFeedback(){const status=view.querySelector('[data-draft-status]');if(status){status.textContent=draftMessage;status.setAttribute('role',draftProblem?'alert':'status');}}
   window.addEventListener('beforeunload',event=>{if(draftProblem&&initialForm){event.preventDefault();event.returnValue='';}});
-  async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(initialEnabled&&!document.querySelector('.fiaga-environment')){const banner=document.createElement('div');banner.className='fiaga-environment';banner.textContent=settings.environment_label||'PQRS · revisión inicial y confirmación humana';document.querySelector('header').after(banner);}}
+  async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(settings.management_enabled){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}}if(initialEnabled&&!document.querySelector('.fiaga-environment')){const banner=document.createElement('div');banner.className='fiaga-environment';banner.textContent=settings.environment_label||'PQRS · revisión inicial y confirmación humana';document.querySelector('header').after(banner);}}
   function initialSteps(){
     document.querySelector('[data-step="1"]').innerHTML=`<span>1</span> ${initialEnabled&&current?'Procesar solicitud':'Entender la petición'}`;
   }
@@ -56,7 +58,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     if(summaryStatus)summaryStatus.textContent='Cambios sin confirmar';
     if(summaryText)summaryText.textContent=draftProblem?'El borrador no se pudo guardar. Conserva una copia antes de salir.':'Tu borrador está guardado en este navegador; todavía no está confirmado.';
     document.querySelectorAll('[data-step="2"],[data-step="3"]').forEach(e=>e.disabled=busy||!canPrepare());
-    updateInitialConfirmation(view,initial,initialForm);
+    updateInitialConfirmation(view,initial,initialForm);syncReviewNavigation(view,current,initial,initialForm);
   };
   view.addEventListener('input',rememberDecision);
   view.addEventListener('change',rememberDecision);
@@ -96,7 +98,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     document.querySelector('.demo-badge').textContent='Gestión de Peticiones';
     document.querySelectorAll('[data-step]').forEach(b=>{b.disabled=busy||(Number(b.dataset.step)>1&&current.status!=='confirmed')||(initialEnabled&&[2,3].includes(Number(b.dataset.step))&&!canNavigate());if(Number(b.dataset.step)===step)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
     if(!current.identification)renderAnalysis(view,current);
-    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft)}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
+    else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial})+reviewNavigation(current,initial,initialForm,{cursor:reviewCursor,busy}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
     renderCaseNavigation(view,current,{step,showMail:Boolean(showMail)});
@@ -108,8 +110,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     updateSourcePanel();
     if(closed()){
       view.insertAdjacentHTML('afterbegin','<p class="alert" role="status">Expediente finalizado · consulta disponible. Para editar o iniciar otro análisis, reabre la gestión desde «Detalles y gestión» en la bandeja.</p>');
-      view.querySelectorAll('input,textarea,select:not(#original-page),[data-evidence-add]').forEach(e=>e.disabled=true);
-      const readActions=new Set(['live-queue','live-mail-origin','live-initial','live-initial-history','live-pending-history','live-responses','live-final','live-sources','original','clear-original','back-to-question']);
+      view.querySelectorAll('input,textarea,select:not(#original-page):not([data-review-index]),[data-evidence-add]').forEach(e=>e.disabled=true);
+      const readActions=new Set(['live-queue','live-mail-origin','live-initial','live-initial-history','live-pending-history','live-responses','live-final','live-sources','original','clear-original','back-to-question','live-review-next']);
       view.querySelectorAll('[data-action]').forEach(e=>{if(!readActions.has(e.dataset.action))e.disabled=true;});
     }
     if(busy)view.querySelectorAll('button,input,select,textarea').forEach(b=>b.disabled=true);
@@ -174,10 +176,13 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   }
   async function select(id){
     if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return;}
+    if(current?.id!==id)reviewCursor=-1;
     await config();
     clearTimeout(timer);const sequence=++token;
     const before=new URL(location.href);const savedStep=before.searchParams.get('case')===id?Number(before.searchParams.get('step')):0;
     const value=await api('/api/cases/'+encodeURIComponent(id));if(sequence!==token)return;
+    const selectedManager=localStorage.getItem('pqrs-pilot-manager');
+    if(value.management&&selectedManager&&!reviewManagers.some(m=>m.id===selectedManager)){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}if(sequence!==token)return;}
     if(value.management&&(!value.management.owner_id||!value.management.started_at)){await onBrowse();return;}current=value;final.setCase();job={};mapping={};drafts={};review={};initial={};initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;initialActionError='';state.originalPage=1;state.originalSelection=null;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:1;adapt();
     const url=new URL(location.href);url.searchParams.set('case',id);history.replaceState(null,'',url);render();
     await refresh();if(step===3)await final.load();if(!savedStep&&job.status==='running'&&(!initialEnabled||canPrepare())){step=2;render();}if(current?.id===id&&current.pages.length&&step===1)await loadPage(1);
@@ -206,7 +211,20 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       try{const identification=structuredClone(current.identification);const row=identification.requests[Number(selector.value)];row.title=document.querySelector('#live-title').value;row.description=document.querySelector('#live-description').value;await api(`/api/cases/${caseId}/identification`,{version,identification},'PUT');close();await select(caseId);}catch(e){if(form.isConnected){document.querySelector('#live-correction-error').textContent=e.message;form.querySelector('button').disabled=false;}}
     };
   }
+  view.addEventListener('change',event=>{
+    if(!event.target.matches?.('[data-review-index]')||event.target.value==='')return;
+    reviewCursor=Number(event.target.value);focusReviewPetition(view,reviewCursor);
+  });
   view.addEventListener('click',e=>{if(!current||busy)return;const b=e.target.closest('[data-action]');if(!b)return;const index=Number(b.dataset.index);
+    if(b.dataset.action==='live-review-next'){
+      const items=reviewItems(current,initial,initialForm);
+      reviewCursor=nextReviewIndex(items,reviewCursor);
+      focusReviewPetition(view,reviewCursor,{reveal:items[reviewCursor]?.attention});return;
+    }
+    if(b.dataset.action==='live-review-confirm'){
+      const title=view.querySelector('#intake-confirmation-title');
+      if(title){title.tabIndex=-1;title.focus({preventScroll:true});title.scrollIntoView({block:'center'});}return;
+    }
     if(b.dataset.action==='live-initial'){
       const detail=view.querySelector('#initial-review-details');
       if(detail)detail.open=true;
