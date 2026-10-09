@@ -13,7 +13,7 @@ const blank=()=>({innerHTML:'',textContent:'',hidden:false,disabled:false,checke
   querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}});
 const nodes=new Map();
 const node=key=>{if(!nodes.has(key))nodes.set(key,blank());return nodes.get(key);};
-const view={...blank(),addEventListener:(kind,fn)=>{listeners[kind]=fn;},
+const view={...blank(),insertAdjacentHTML(){},addEventListener:(kind,fn)=>{listeners[kind]=fn;},
   querySelector:key=>key==='#initial-decision-form'?null:node('view:'+key)};
 globalThis.document={querySelector:key=>key==='#view'?view:node(key),querySelectorAll:()=>[],activeElement:null};
 globalThis.location={href:'http://example.invalid/',pathname:'/'};
@@ -27,11 +27,11 @@ const calls=[];
 globalThis.fetch=async (url,options)=>{assert.ok(!options?.method,'Draft actions must not call mutation APIs');
   calls.push(url);
   const data=url==='/api/config'?{initial_review_enabled:true,automatic_initial_review:true}:
-    url.endsWith('/initial-review')?intake:record;
+    url.endsWith('/initial-review?compact=true')?intake:record;
   return {ok:true,json:async()=>structuredClone(data)};
 };
 let afterIdentificationSave;
-globalThis.__deps={...draftTools,...navigationTools,
+globalThis.__deps={...draftTools,...navigationTools,pilotReviewControls:()=>'',
   createFinal:()=>({setCase(){}}),renderAnalysis(){},esc:x=>x,renderCaseNavigation(){},
   createProposalPanel:()=>({}),createPendingActions:()=>({}),createResponseEditor:()=>({hasChanges:()=>false}),
   identification:()=>'',responses:()=>'',supports:()=>'',

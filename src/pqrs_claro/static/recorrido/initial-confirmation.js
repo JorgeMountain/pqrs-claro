@@ -36,7 +36,7 @@ export function confirmationPayload(decision,report){
 export async function confirmAndPrepare({saved,decision,report,save,onSaved,prepare}){
   let value=saved;
   if(!value){value=await save(confirmationPayload(decision,report));onSaved(value);}
-  if(!value.can_prepare)return {prepared:false};
+  if(!value.can_prepare||!decisionContinues(decision))return {prepared:false};
   try{await prepare();return {prepared:true};}
   catch(error){return {prepared:false,error:'La revisión quedó guardada, pero no se pudo iniciar la preparación. Puedes reintentar. '+error.message};}
 }

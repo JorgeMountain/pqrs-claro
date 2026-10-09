@@ -52,7 +52,9 @@ class PendingResolutionInput(StrictModel):
             if self.action != "resolved" or not self.document_source_id:
                 raise ValueError("La decisión documental requiere confirmar una fuente concreta.")
             if self.cited_fact_ids or self.cited_chunk_ids or self.note.strip():
-                raise ValueError("La confirmación rápida utiliza la fuente y el texto fijados por el servidor.")
+                raise ValueError(
+                    "La confirmación rápida utiliza la fuente y el texto fijados por el servidor."
+                )
             return self
         if self.document_source_id:
             raise ValueError("Indica la decisión sobre ese documento.")

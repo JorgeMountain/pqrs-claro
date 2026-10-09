@@ -4,6 +4,7 @@ import threading
 import time
 from collections import Counter
 from copy import deepcopy
+from dataclasses import replace
 from uuid import uuid4
 
 import pymupdf
@@ -193,6 +194,61 @@ def test_requires_confirmed_current_case_and_complete_current_source_map(draft_a
     assert client.get("/api/cases/missing/drafts").status_code == 404
 
 
+@pytest.mark.parametrize("configured,expected", [(1, 1), (5, 5), (99, 6)])
+def test_configured_concurrency_is_bounded_and_keeps_every_check(
+    draft_app, configured, expected
+):
+    app, client, engine, settings = draft_app
+    app.state.drafts.settings = replace(settings, draft_concurrency=configured)
+    case, _ = prepared_case(app, count=7)
+    entered, release, lock = threading.Event(), threading.Event(), threading.Lock()
+    active = maximum = 0
+    visit = engine.visit
+
+    def blocking_visit(phase, request):
+        nonlocal active, maximum
+        if phase == "plan":
+            with lock:
+                active += 1
+                maximum = max(maximum, active)
+                if active == expected:
+                    entered.set()
+            try:
+                assert release.wait(10), "No se liberaron las redacciones de prueba"
+            finally:
+                with lock:
+                    active -= 1
+        return visit(phase, request)
+
+    engine.visit = blocking_visit
+    try:
+        assert generate(client, case).status_code == 202
+        assert entered.wait(5), "No se alcanzó la concurrencia configurada"
+    finally:
+        release.set()
+    run = wait_drafts(app, client, case)
+    assert maximum == run["concurrency"] == expected
+    assert run["status"] == "ready" and len(run["results"]) == 7
+    assert len(engine.calls) == 21 and set(engine.calls.values()) == {1}
+
+
+def test_prompt_change_drops_failed_checkpoint_but_keeps_completed_drafts(draft_app):
+    app, client, engine, _ = draft_app
+    engine.cache_key = "instructions-v1"
+    engine.fail_once = ("P1", "write")
+    case, _ = prepared_case(app, count=1)
+    assert generate(client, case).status_code == 202
+    assert wait_drafts(app, client, case)["status"] == "failed"
+    engine.cache_key = "instructions-v2"
+    assert generate(client, case).status_code == 202
+    complete = wait_drafts(app, client, case)
+    assert complete["status"] == "ready"
+    assert engine.calls == {("P1", "plan"): 2, ("P1", "write"): 2, ("P1", "check"): 1}
+    engine.cache_key = "instructions-v3"
+    assert generate(client, case).json()["id"] == complete["id"]
+    assert engine.calls[("P1", "plan")] == 2
+
+
 def test_completed_drafts_are_cached_exact_citations_and_case_unchanged(draft_app):
     app, client, engine, settings = draft_app
     case, _ = prepared_case(app)
@@ -207,6 +263,10 @@ def test_completed_drafts_are_cached_exact_citations_and_case_unchanged(draft_ap
     assert len(engine.calls) == 6 and set(engine.calls.values()) == {1}
     for result in run["results"]:
         assert result["status"] == "needs_review"
+        assert result["timings"]["validation_calls"] > 0
+        assert result["timings"]["total_seconds"] >= result["timings"]["validation_seconds"]
+        assert {k: v["calls"] for k, v in result["timings"]["engine"].items()} == {
+            "plan": 1, "write": 1, "check": 1}
         assert result["supports"][0]["quote"].startswith("Norma ficticia:")
         assert result["draft"]["paragraphs"][0]["cited_chunk_ids"] == [
             result["supports"][0]["chunk_id"]
@@ -215,6 +275,36 @@ def test_completed_drafts_are_cached_exact_citations_and_case_unchanged(draft_ap
     assert app.state.store.get(case["id"]) == before
     assert (settings.data_dir / "borradores.sqlite").is_file()
     assert (settings.data_dir / "draft_checkpoints.sqlite").is_file()
+
+
+def test_performance_endpoint_tracks_provider_calls_inside_parallel_graphs(draft_app, monkeypatch):
+    from types import SimpleNamespace
+
+    from pqrs_claro.performance_metrics import provider_call
+
+    app, client, engine, settings = draft_app
+    case, _ = prepared_case(app, count=3)
+    visit = engine.visit
+
+    def metered_visit(phase, request):
+        visit(phase, request)
+        provider_call(f"draft.{phase}", lambda **_: SimpleNamespace(
+            status="completed", model="test-model",
+            usage={"input_tokens": 100, "output_tokens": 20}), model="test-model")
+
+    monkeypatch.setattr(engine, "visit", metered_visit)
+    assert client.get("/api/cases/missing/performance").status_code == 404
+    assert generate(client, case).status_code == 202
+    assert wait_drafts(app, client, case)["status"] == "ready"
+    data = client.get(f"/api/cases/{case['id']}/performance").json()
+    assert data["provider_calls"] == 9
+    assert data["recorded_input_tokens"] == 900
+    assert data["estimated_cost_usd"] is None
+    assert {e["request_id"] for e in data["events"] if e["kind"] == "provider"} == {
+        "P1", "P2", "P3"}
+    # Reading or reopening a saved result cannot add provider consumption.
+    assert generate(client, case).status_code == 202
+    assert client.get(f"/api/cases/{case['id']}/performance").json()["provider_calls"] == 9
 
 
 @pytest.mark.parametrize("mode", ["pending", "bad_checks"])
@@ -239,6 +329,7 @@ def test_failed_request_retries_only_failed_step_preserving_completed_history(dr
     first = wait_drafts(app, client, case)
     assert first["status"] == "partial", first
     assert [result["status"] for result in first["results"]] == ["needs_review", "error"]
+    assert first["results"][1]["timings"]["engine"]["write"]["calls"] == 1
     assert generate(client, case).status_code == 202
     second = wait_drafts(app, client, case)
     assert second["status"] == "ready", second

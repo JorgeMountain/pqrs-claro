@@ -1,4 +1,5 @@
 """Arranque exclusivo de la copia FIAGA; no usa datos de presentación."""
+
 from dataclasses import replace
 from pathlib import Path
 
@@ -13,15 +14,25 @@ if ROOT.resolve() != EXPECTED or EXPECTED.name != "pqrs-claro-fiaga":
 DATA = EXPECTED / "data"
 if DATA.resolve() != EXPECTED / "data":
     raise RuntimeError("Los datos FIAGA no pueden ser un enlace a otra carpeta.")
-settings = replace(Settings.load(), data_dir=DATA, port=8773, initial_review_enabled=True,
-                   initial_classification_provider="openai", environment_label="Desarrollo FIAGA · datos de prueba independientes")
+settings = replace(
+    Settings.load(),
+    data_dir=DATA,
+    port=8773,
+    initial_review_enabled=True,
+    initial_classification_provider="openai",
+    environment_label="Desarrollo FIAGA · datos de prueba independientes",
+)
 app = create_unified_app(settings)
 
 
 @app.get("/fiaga-environment")
 def environment():
-    return {"environment": "desarrollo-fiaga", "code_root": str(EXPECTED),
-            "data_root": str(DATA), "port": 8773}
+    return {
+        "environment": "desarrollo-fiaga",
+        "code_root": str(EXPECTED),
+        "data_root": str(DATA),
+        "port": 8773,
+    }
 
 
 # La aplicación ya monta los archivos estáticos en /; esta ruta va antes.

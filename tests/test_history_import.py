@@ -279,9 +279,7 @@ def test_api_keeps_unsupported_original_downloadable_and_uses_collection_summary
     assert detail["pages"] == []
     assert detail["source"]["extraction_status"] == "unsupported"
     result = client.get("/api/source-collections").json()
-    assert result["collections"] == [
-        {**collection(), "extraction_counts": {"unsupported": 1}}
-    ]
+    assert result["collections"] == [{**collection(), "extraction_counts": {"unsupported": 1}}]
     assert result["linked_collection_ids"] == []
 
 
@@ -349,14 +347,23 @@ def test_uploaded_case_defaults_to_all_collections_and_keeps_manual_selection(hi
 
     path = f"/api/cases/{case_id}/source-collections"
     assert client.put(path, json={"collection_ids": []}).status_code == 200
-    assert client.get("/api/source-collections", params={"case_id": case_id}).json()["linked_collection_ids"] == []
+    assert (
+        client.get("/api/source-collections", params={"case_id": case_id}).json()[
+            "linked_collection_ids"
+        ]
+        == []
+    )
     assert library.eligible(case_id) == []
 
     # Newly available collections apply to the next upload, without resetting a saved choice.
     library.save_collection(collection("historia-c"))
     newer = client.post("/api/cases", files={"file": ("otra.pdf", pdf, "application/pdf")})
     assert newer.status_code == 201
-    assert library.linked_collections(newer.json()["id"]) == ["historia-a", "historia-b", "historia-c"]
+    assert library.linked_collections(newer.json()["id"]) == [
+        "historia-a",
+        "historia-b",
+        "historia-c",
+    ]
     assert library.linked_collections(case_id) == []
 
 

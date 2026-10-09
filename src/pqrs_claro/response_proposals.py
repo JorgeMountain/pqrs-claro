@@ -12,6 +12,7 @@ from langgraph.graph import END, START, StateGraph
 from pydantic import Field
 
 from .models import StrictModel
+from .performance_metrics import track_case
 from .response_proposal_engine import OpenAIResponseProposalEngine, validate_proposal
 from .review_models import Actor, ReviewEdit
 from .review_service import input_hash
@@ -114,6 +115,7 @@ class ResponseProposalService:
             raise Conflict("La respuesta cambió. Solicita una propuesta sobre la versión actual.")
         return row
 
+    @track_case("proposal", "job")
     def run(self, job, row):
         try:
             engine = self.engine or OpenAIResponseProposalEngine(

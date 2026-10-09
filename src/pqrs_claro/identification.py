@@ -18,6 +18,8 @@ from .models import (
     validate_identification,
     validate_pages,
 )
+from .performance_metrics import metrics_http_client, provider_call
+from .provider_errors import IdentificationProviderError
 
 
 class _LineSelection(StrictModel):
@@ -69,7 +71,8 @@ class OpenAIIdentifier:
 
     def __init__(self, api_key: str, model: str) -> None:
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=120.0, max_retries=2)
+        self.client = OpenAI(api_key=api_key, timeout=120.0, max_retries=2,
+                             http_client=metrics_http_client())
 
     def identify(self, pages: list[Page]) -> Identification:
         validate_pages(pages)
@@ -88,7 +91,7 @@ class OpenAIIdentifier:
             ]
         }
         try:
-            response = self.client.responses.parse(
+            response = provider_call("identification", self.client.responses.parse,
                 model=self.model,
                 instructions=INSTRUCTIONS,
                 input=json.dumps(payload, ensure_ascii=False),
@@ -97,11 +100,8 @@ class OpenAIIdentifier:
                 truncation="disabled",
                 max_output_tokens=16000,
             )
-        except OpenAIError:
-            raise DomainError(
-                "No se pudo identificar las solicitudes con OpenAI. "
-                "Revisa la conexión y la configuración antes de reintentar."
-            ) from None
+        except OpenAIError as exc:
+            raise IdentificationProviderError(exc) from None
         except ValidationError:
             raise DomainError(
                 "OpenAI devolvió datos incompletos. Reintenta la identificación."

@@ -3,19 +3,22 @@
 import threading
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
+from time import perf_counter
 from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .draft_repair import repair_targets
 from .draft_store import DraftStore
+from .intake_drafting import drafting_context
 from .models import DomainError
+from .performance_metrics import operation, submit_context, track_case
 from .service import user_error
 from .source_context import build_source_requests
 from .source_library import digest
 from .storage import Conflict, now
 
-DRAFT_VERSION = 11
+DRAFT_VERSION = 12
 
 
 class _InputsChanged(Exception):
@@ -25,26 +28,33 @@ class _InputsChanged(Exception):
 class _GuardedEngine:
     def __init__(self, engine, check):
         self.engine, self.check_inputs = engine, check
+        self.timings = {}
+
+    def _call(self, method, args):
+        self.check_inputs()
+        started = perf_counter()
+        try:
+            return getattr(self.engine, method)(*args)
+        finally:
+            timing = self.timings.setdefault(method, {"calls": 0, "seconds": 0.0})
+            timing["calls"] += 1
+            timing["seconds"] = round(timing["seconds"] + perf_counter() - started, 3)
 
     def plan(self, *args):
-        self.check_inputs()
-        return self.engine.plan(*args)
+        return self._call("plan", args)
 
     def write(self, *args):
-        self.check_inputs()
-        return self.engine.write(*args)
+        return self._call("write", args)
 
     def check(self, *args):
-        self.check_inputs()
-        return self.engine.check(*args)
+        return self._call("check", args)
 
     @property
     def can_repair(self):
         return callable(getattr(self.engine, "repair", None))
 
     def repair(self, *args):
-        self.check_inputs()
-        return self.engine.repair(*args)
+        return self._call("repair", args)
 
 
 class DraftService:
@@ -58,12 +68,14 @@ class DraftService:
         self.reviews = None
 
     def _fingerprint(self, case, source_run):
-        intake = getattr(self, 'initial_review', None)
+        intake = getattr(self, "initial_review", None)
         initial_inputs = {}
         if intake and intake.enabled:
-            initial = intake.saved(case['id'])
-            initial_inputs = {'initial_review_revision': initial['revision'],
-                              'initial_review_status': initial['status']}
+            initial = intake.saved(case["id"])
+            initial_inputs = {
+                "initial_review_revision": initial["revision"],
+                "initial_review_status": initial["status"],
+            }
         return digest(
             {
                 **initial_inputs,
@@ -87,8 +99,8 @@ class DraftService:
                 and source_run["status"] in {"ready", "error"}
                 and not source_run.get("stale")
             )
-            if getattr(self, 'initial_review', None) and self.initial_review.enabled:
-                current = current and self.initial_review.get(case_id)['can_prepare']
+            if getattr(self, "initial_review", None) and self.initial_review.enabled:
+                current = current and self.initial_review.get(case_id)["can_prepare"]
             return case, source_run, self._fingerprint(case, source_run), current
 
     def get(self, case_id):
@@ -140,10 +152,9 @@ class DraftService:
             by_chunk = {chunk["chunk_id"]: chunk for chunk in chunks}
             findings = source_run.get("results", [])
             request_ids = [request["id"] for request in case["identification"]["requests"]]
-            if (
-                len(findings) != len(request_ids)
-                or {finding.get("request_id") for finding in findings} != set(request_ids)
-            ):
+            if len(findings) != len(request_ids) or {
+                finding.get("request_id") for finding in findings
+            } != set(request_ids):
                 raise Conflict("El mapa no contiene una evaluación completa de cada solicitud.")
             reconciled = {}
             for finding in findings:
@@ -250,19 +261,23 @@ class DraftService:
     def start(self, case_id, version, *, ready_only=False):
         with self.lock:
             self.cases.assert_open(case_id)
-            if getattr(self, 'initial_review', None):
+            if getattr(self, "initial_review", None):
                 self.initial_review.assert_allowed(case_id)
             if case_id in self.active:
                 raise Conflict("Los borradores de este expediente ya se están preparando.")
             case, source_run, findings, fingerprint = self._inputs(case_id, version)
             if not findings and not ready_only:
-                raise Conflict("No hay solicitudes con un análisis de fuentes válido para redactar.")
+                raise Conflict(
+                    "No hay solicitudes con un análisis de fuentes válido para redactar."
+                )
             review_snapshots = {}
             if ready_only:
                 rows = {r["request_id"]: r for r in self.reviews.get(case_id)["requests"]}
-                findings = {rid: self._reviewed_finding(finding, rows[rid])
-                            for rid, finding in findings.items()
-                            if rid in rows and self._ready_for_draft(rows[rid], finding)}
+                findings = {
+                    rid: self._reviewed_finding(finding, rows[rid])
+                    for rid, finding in findings.items()
+                    if rid in rows and self._ready_for_draft(rows[rid], finding)
+                }
                 review_snapshots = {rid: self._review_input(rows[rid]) for rid in findings}
                 if not findings:
                     return self.get(case_id)
@@ -270,7 +285,8 @@ class DraftService:
                 raise ValueError("Falta configurar OpenAI para preparar los borradores.")
             previous = self.store.latest(case_id)
             if (
-                not ready_only and previous
+                not ready_only
+                and previous
                 and previous["fingerprint"] == fingerprint
                 and previous["status"] in {"ready", "partial"}
                 and not previous.get("stale")
@@ -288,9 +304,13 @@ class DraftService:
                 case_version=case["version"],
                 model=self.settings.model,
                 draft_version=DRAFT_VERSION,
-                results=[r for r in (previous or {}).get("results", [])
-                         if ready_only and previous["fingerprint"] == fingerprint
-                         and r["request_id"] not in findings],
+                results=[
+                    r
+                    for r in (previous or {}).get("results", [])
+                    if ready_only
+                    and previous["fingerprint"] == fingerprint
+                    and r["request_id"] not in findings
+                ],
                 completed_count=0,
                 total_count=case["request_count"],
                 selected_request_ids=list(findings),
@@ -310,16 +330,23 @@ class DraftService:
 
     @staticmethod
     def _review_input(row):
-        return digest({key: row.get(key) for key in ("pending", "facts", "paragraphs", "base_fingerprint")})
+        return digest(
+            {key: row.get(key) for key in ("pending", "facts", "paragraphs", "base_fingerprint")}
+        )
 
     @staticmethod
     def _ready_for_draft(row, finding):
-        return (not row.get("stale") and not row.get("paragraphs")
-                and finding.get("status") != "error"
-                and "analysis_error" not in finding.get("evidence_states", [])
-                and not any(p.get("blocks_approval", True)
-                            and (not p.get("resolution") or p["resolution"].get("action") == "open")
-                            for p in row.get("pending", [])))
+        return (
+            not row.get("stale")
+            and not row.get("paragraphs")
+            and finding.get("status") != "error"
+            and "analysis_error" not in finding.get("evidence_states", [])
+            and not any(
+                p.get("blocks_approval", True)
+                and (not p.get("resolution") or p["resolution"].get("action") == "open")
+                for p in row.get("pending", [])
+            )
+        )
 
     @staticmethod
     def _reviewed_finding(finding, row):
@@ -332,9 +359,17 @@ class DraftService:
             else:
                 opened.append(deepcopy(pending))
         # Keep decisions and their attribution as inputs, never as final approval.
-        closed_checks = [{**p, "resolution": {"status": "resolved", "kind": "human_decision",
-                                               "decision": deepcopy(p["resolution"])}}
-                         for p in decisions]
+        closed_checks = [
+            {
+                **p,
+                "resolution": {
+                    "status": "resolved",
+                    "kind": "human_decision",
+                    "decision": deepcopy(p["resolution"]),
+                },
+            }
+            for p in decisions
+        ]
         value.update(missing=opened, actions=[], checks=closed_checks, human_decisions=decisions)
         selected = {s["chunk_id"]: s for s in value["supports"]}
         cited = {cid for p in decisions for cid in p["resolution"].get("cited_chunk_ids", [])}
@@ -345,7 +380,7 @@ class DraftService:
         return value
 
     def _ensure_current(self, case_id, fingerprint, finding=None, *, full=False):
-        if getattr(self, 'initial_review', None):
+        if getattr(self, "initial_review", None):
             self.initial_review.assert_allowed(case_id)
         _, source_run, current_fingerprint, current = self._current(case_id)
         if not current or current_fingerprint != fingerprint:
@@ -394,19 +429,36 @@ class DraftService:
             error=None,
         )
 
+    @track_case("draft", "case")
     def run(self, case, findings, run):
         try:
             from .draft_engine import OpenAIDraftEngine
             from .draft_graph import build_draft_graph
 
             engine = self.engine or OpenAIDraftEngine(self.settings.api_key, self.settings.model)
-            with SqliteSaver.from_conn_string(str(self.settings.data_dir / "draft_checkpoints.sqlite")) as warmup:
+            with SqliteSaver.from_conn_string(
+                str(self.settings.data_dir / "draft_checkpoints.sqlite")
+            ) as warmup:
                 warmup.get_tuple({"configurable": {"thread_id": "__schema_initialization__"}})
-            requests = [r for r in build_source_requests(case, allowed_collection_ids=case["allowed_collection_ids"])
-                        if r["id"] in findings]
+            requests = [
+                r
+                for r in build_source_requests(
+                    case, allowed_collection_ids=case["allowed_collection_ids"]
+                )
+                if r["id"] in findings
+            ]
+            intake = getattr(self, "initial_review", None)
+            if intake and intake.enabled and not intake.pilot_bypassed(case["id"]):
+                initial_review = intake.saved(case["id"])
+                requests = [
+                    {**request, "initial_review": drafting_context(initial_review, request["id"])}
+                    for request in requests
+                ]
             order = {r["id"]: i for i, r in enumerate(case["identification"]["requests"])}
-            concurrency = min(3, max(1, self.settings.draft_concurrency))
-            run.update(concurrency=concurrency, request_states={r["id"]: "queued" for r in requests})
+            concurrency = min(6, max(1, self.settings.draft_concurrency))
+            run.update(
+                concurrency=concurrency, request_states={r["id"]: "queued" for r in requests}
+            )
             progress_lock = threading.RLock()
 
             def progress(request_id, step):
@@ -416,21 +468,71 @@ class DraftService:
                     self.store.save(run)
 
             def evaluate(request):
-                finding = findings[request["id"]]
+                with operation("draft.request", request_id=request["id"]):
+                    return evaluate_request(request)
+
+            def evaluate_request(request):
+                started = perf_counter()
+                validation_seconds = 0.0
+                validation_calls = 0
+                finding = deepcopy(findings[request["id"]])
+                # Absent and empty decisions have identical meaning in both draft modes.
+                finding.setdefault("human_decisions", [])
                 state = {}
-                def check_inputs():
+
+                def validate_inputs():
                     self._ensure_current(case["id"], run["fingerprint"], finding)
                     expected = run.get("review_snapshots", {}).get(request["id"])
-                    if expected and self._review_input(self.reviews.store.get(case["id"], request["id"])) != expected:
-                        raise DomainError("Los puntos de esta solicitud cambiaron durante la redacción. Se conserva el avance; vuelve a prepararla.")
+                    if (
+                        expected
+                        and self._review_input(self.reviews.store.get(case["id"], request["id"]))
+                        != expected
+                    ):
+                        raise DomainError(
+                            "Los puntos de esta solicitud cambiaron durante la redacción. "
+                            "Se conserva el avance; vuelve a prepararla."
+                        )
+
+                def check_inputs():
+                    nonlocal validation_seconds, validation_calls
+                    before = perf_counter()
+                    try:
+                        validate_inputs()
+                    finally:
+                        validation_seconds += perf_counter() - before
+                        validation_calls += 1
+
+                guarded = _GuardedEngine(engine, check_inputs)
+
+                def result_with_timings():
+                    result = self._result(request, finding, state)
+                    result["timings"] = {
+                        "total_seconds": round(perf_counter() - started, 3),
+                        "validation_seconds": round(validation_seconds, 3),
+                        "validation_calls": validation_calls,
+                        "engine": deepcopy(guarded.timings),
+                    }
+                    return result
+
                 try:
                     check_inputs()
-                    guarded = _GuardedEngine(engine, check_inputs)
-                    with SqliteSaver.from_conn_string(str(self.settings.data_dir / "draft_checkpoints.sqlite")) as saver:
+                    with SqliteSaver.from_conn_string(
+                        str(self.settings.data_dir / "draft_checkpoints.sqlite")
+                    ) as saver:
                         graph = build_draft_graph(guarded, saver)
-                        key = digest({"request": request, "finding": finding, "model": self.settings.model,
-                                      "version": DRAFT_VERSION, "original": case["sha256"]})
-                        config = {"configurable": {"thread_id": f"{case['id']}:{request['id']}:{key}"}}
+                        key = digest(
+                            {
+                                "request": request,
+                                "finding": finding,
+                                "model": self.settings.model,
+                                "version": DRAFT_VERSION,
+                                "engine_policy": getattr(engine, "cache_key", None),
+                                "original": case["sha256"],
+                            }
+                        )
+                        config = {
+                            "configurable": {"thread_id": f"{case['id']}:{request['id']}:{key}"}
+                        }
                         progress(request["id"], "planificar")
                         checkpoint = graph.get_state(config)
                         state = deepcopy(checkpoint.values)
@@ -439,33 +541,49 @@ class DraftService:
                             for update in graph.stream(initial, config, stream_mode="updates"):
                                 for node, values in update.items():
                                     state.update(values)
-                                    step = {"planificar": "redactar", "redactar": "comprobar",
-                                            "comprobar": None, "ajustar_citas": "recomprobar",
-                                            "recomprobar": None}.get(node)
-                                    if node == "comprobar" and guarded.can_repair and repair_targets(state["checks"], state["draft"]):
+                                    step = {
+                                        "planificar": "redactar",
+                                        "redactar": "comprobar",
+                                        "comprobar": None,
+                                        "ajustar_citas": "recomprobar",
+                                        "recomprobar": None,
+                                    }.get(node)
+                                    if (
+                                        node == "comprobar"
+                                        and guarded.can_repair
+                                        and repair_targets(state["checks"], state["draft"])
+                                    ):
                                         step = "ajustar_citas"
                                     progress(request["id"], step)
                                 check_inputs()
                         check_inputs()
-                        return self._result(request, finding, state)
+                        return result_with_timings()
                 except _InputsChanged:
                     # Retain any text already produced; the run is marked stale below.
-                    return self._result(request, finding, state)
+                    return result_with_timings()
                 except Exception as exc:
-                    error = user_error(exc if not isinstance(exc, ValueError) or isinstance(exc, DomainError) else RuntimeError())
-                    result = self._result(request, finding, state)
+                    error = user_error(
+                        exc
+                        if not isinstance(exc, ValueError) or isinstance(exc, DomainError)
+                        else RuntimeError()
+                    )
+                    result = result_with_timings()
                     result.update(status="error", error=error)
                     return result
 
-            with ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="draft-request") as workers:
+            with ThreadPoolExecutor(
+                max_workers=concurrency, thread_name_prefix="draft-request"
+            ) as workers:
                 pending = {}
                 remaining = iter(requests)
+
                 def fill_slots():
                     while len(pending) < concurrency:
                         request = next(remaining, None)
                         if request is None:
                             break
-                        pending[workers.submit(evaluate, request)] = request
+                        pending[submit_context(workers, evaluate, request)] = request
+
                 fill_slots()
                 while pending:
                     finished, _ = wait(pending, return_when=FIRST_COMPLETED)
@@ -475,14 +593,17 @@ class DraftService:
                         with progress_lock:
                             run["results"].append(result)
                             run["results"].sort(key=lambda item: order[item["request_id"]])
-                            run["request_states"][request["id"]] = "error" if result["status"] == "error" else "completed"
+                            run["request_states"][request["id"]] = (
+                                "error" if result["status"] == "error" else "completed"
+                            )
                             run["completed_count"] = len(run["results"])
                             self.store.save(run)
                     fill_slots()
             self._ensure_current(case["id"], run["fingerprint"], full=True)
             errors = sum(result["status"] == "error" for result in run["results"])
-            pending = (len(run["results"]) < run["total_count"]
-                       or any(result["status"] != "needs_review" for result in run["results"]))
+            pending = len(run["results"]) < run["total_count"] or any(
+                result["status"] != "needs_review" for result in run["results"]
+            )
             run.update(
                 status="failed"
                 if errors == run["total_count"]

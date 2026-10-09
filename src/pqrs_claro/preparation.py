@@ -63,15 +63,29 @@ class PreparationService:
                 return {"case": case, "preparation": previous}
             case = self.identification.confirm(case_id, version)
             if self.initial_review and self.initial_review.enabled:
-                job = self.save(dict(case_id=case_id, version=case['version'],
-                                     confirmed_from=version, status='waiting_initial_review',
-                                     stage='initial_review', error=None))
-                return {'case': case, 'preparation': self.get(case_id)}
+                job = self.save(
+                    dict(
+                        case_id=case_id,
+                        version=case["version"],
+                        confirmed_from=version,
+                        status="waiting_initial_review",
+                        stage="initial_review",
+                        error=None,
+                    )
+                )
+                return {"case": case, "preparation": self.get(case_id)}
             job = self.start(case_id, case["version"], confirmed_from=version)
             return {"case": case, "preparation": job}
 
-    def start(self, case_id, version, confirmed_from=None, *, retry_analysis=False,
-              retry_failed_only=False):
+    def start(
+        self,
+        case_id,
+        version,
+        confirmed_from=None,
+        *,
+        retry_analysis=False,
+        retry_failed_only=False,
+    ):
         with self.lock:
             self.cases.assert_open(case_id)
             case = self.cases.get(case_id)
@@ -82,15 +96,22 @@ class PreparationService:
             previous = self.get(case_id)
             if case_id in self.active:
                 return previous
-            initial_revision = (self.initial_review.saved(case_id)['revision']
-                                if self.initial_review and self.initial_review.enabled else None)
+            initial_revision = (
+                self.initial_review.saved(case_id)["revision"]
+                if self.initial_review and self.initial_review.enabled
+                else None
+            )
             if retry_failed_only:
                 if retry_analysis:
                     raise Conflict("Elige reintentar los errores o actualizar todo el análisis.")
                 self.sources.validate_failed_retry(case_id, version)
-            if (previous["status"] == "ready" and not previous["stale"]
-                    and previous.get('initial_review_revision') == initial_revision
-                    and not retry_analysis and not retry_failed_only):
+            if (
+                previous["status"] == "ready"
+                and not previous["stale"]
+                and previous.get("initial_review_revision") == initial_revision
+                and not retry_analysis
+                and not retry_failed_only
+            ):
                 mapping = self.sources.get(case_id)
                 if mapping["status"] == "ready" and not mapping["stale"]:
                     return previous
@@ -114,7 +135,7 @@ class PreparationService:
         if self.stop.is_set():
             raise InterruptedError()
         if self.initial_review:
-            self.initial_review.assert_allowed(job['case_id'])
+            self.initial_review.assert_allowed(job["case_id"])
         case = self.cases.get(job["case_id"])
         if case["version"] != job["version"] or case["status"] != "confirmed":
             raise Conflict("Las solicitudes cambiaron. Revisa el expediente antes de continuar.")
@@ -142,8 +163,12 @@ class PreparationService:
             if mapping["status"] == "running" and job.get("retry_failed_only"):
                 raise Conflict("Ya hay otra búsqueda en curso. Espera a que termine.")
             if mapping["status"] != "running":
-                self.sources.start(case_id, version, retry_analysis=job.get("retry_analysis", False),
-                                   retry_failed_only=job.get("retry_failed_only", False))
+                self.sources.start(
+                    case_id,
+                    version,
+                    retry_analysis=job.get("retry_analysis", False),
+                    retry_failed_only=job.get("retry_failed_only", False),
+                )
             mapping = self.wait(self.sources, job)
             if mapping.get("stale") or mapping["status"] not in {"ready", "error"}:
                 raise ValueError(mapping.get("error") or "Actualiza la búsqueda de fuentes.")
@@ -155,9 +180,17 @@ class PreparationService:
                 self.check(job)
                 rows = self.reviews.get(case_id)["requests"]
                 findings = {r["request_id"]: r for r in mapping.get("results", [])}
-                eligible = [r for r in rows if r["request_id"] in findings
-                            and self.drafts._ready_for_draft(r, findings[r["request_id"]])]
-                fresh = [r for r in eligible if (r["request_id"], self.drafts._review_input(r)) not in attempted]
+                eligible = [
+                    r
+                    for r in rows
+                    if r["request_id"] in findings
+                    and self.drafts._ready_for_draft(r, findings[r["request_id"]])
+                ]
+                fresh = [
+                    r
+                    for r in eligible
+                    if (r["request_id"], self.drafts._review_input(r)) not in attempted
+                ]
                 if not fresh:
                     break
                 attempted.update((r["request_id"], self.drafts._review_input(r)) for r in eligible)
@@ -165,15 +198,24 @@ class PreparationService:
                 self.drafts.start(case_id, version, ready_only=True)
                 draft = self.wait(self.drafts, job)
                 if draft.get("stale"):
-                    raise ValueError(draft.get("error") or "La preparación cambió durante la redacción.")
+                    raise ValueError(
+                        draft.get("error") or "La preparación cambió durante la redacción."
+                    )
                 self.save(job, stage="review")
                 self.reviews.start(case_id, version, before_draft=True)
             rows = self.reviews.get(case_id)["requests"]
             waiting = [r["request_id"] for r in rows if not r["paragraphs"]]
-            errors = [r["request_id"] for r in mapping.get("results", []) if r.get("status") == "error"]
-            self.save(job, status="waiting_review" if waiting or errors else "ready",
-                      stage="points" if waiting or errors else "review", error=None,
-                      waiting_request_ids=waiting, analysis_error_ids=errors)
+            errors = [
+                r["request_id"] for r in mapping.get("results", []) if r.get("status") == "error"
+            ]
+            self.save(
+                job,
+                status="waiting_review" if waiting or errors else "ready",
+                stage="points" if waiting or errors else "review",
+                error=None,
+                waiting_request_ids=waiting,
+                analysis_error_ids=errors,
+            )
         except InterruptedError:
             self.save(
                 job,
@@ -220,7 +262,11 @@ def preparation_router(service):
 
     @router.post("/api/cases/{case_id}/preparation", status_code=202)
     def resume(case_id: str, body: PreparationVersion):
-        return service.start(case_id, body.version, retry_analysis=body.retry_analysis,
-                             retry_failed_only=body.retry_failed_only)
+        return service.start(
+            case_id,
+            body.version,
+            retry_analysis=body.retry_analysis,
+            retry_failed_only=body.retry_failed_only,
+        )
 
     return router

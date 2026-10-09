@@ -13,16 +13,24 @@ DATA = ROOT / "output" / "qa" / "fiaga-phase2" / "data"
 if DATA.resolve() != DATA or not (DATA / "expedientes.sqlite").is_file():
     raise RuntimeError("Primero debe existir la copia independiente de datos de prueba.")
 app = create_unified_app(
-    replace(Settings.load(), data_dir=DATA, port=8774, initial_review_enabled=True,
-            initial_classification_provider="jev", environment_label="Desarrollo FIAGA · datos de prueba independientes")
+    replace(
+        Settings.load(),
+        data_dir=DATA,
+        port=8774,
+        initial_review_enabled=True,
+        initial_classification_provider="jev",
+        environment_label="Desarrollo FIAGA · datos de prueba independientes",
+    )
 )
 
 
 @app.get("/fiaga-environment")
 def environment():
     return {
-        "environment": "desarrollo-fiaga-fase2", "code_root": str(ROOT),
-        "data_root": str(DATA), "port": 8774,
+        "environment": "desarrollo-fiaga-fase2",
+        "code_root": str(ROOT),
+        "data_root": str(DATA),
+        "port": 8774,
     }
 
 

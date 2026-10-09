@@ -12,4 +12,12 @@ try {
     uv pip install --python $BasePython --target $SitePackages --requirements '.runtime\requirements.txt'
     if ($LASTEXITCODE -ne 0) { throw 'No fue posible instalar dependencias.' }
 } finally { Pop-Location }
+# PYTHONPATH entries do not process .pth files. Load the project's site-packages
+# as a site directory so pywin32's bootstrap and DLL paths are initialized.
+$BootstrapPath = Join-Path $SitePackages 'sitecustomize.py'
+@'
+from pathlib import Path
+import site
+site.addsitedir(str(Path(__file__).resolve().parent))
+'@ | Set-Content -LiteralPath $BootstrapPath -Encoding ascii
 Write-Host 'Dependencias listas. Inicie con .\scripts\start.ps1'

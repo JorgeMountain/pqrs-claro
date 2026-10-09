@@ -9,6 +9,7 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .evidence_contract import apply_evidence_contract, catalog_audit, group_checks
+from .performance_metrics import operation, submit_context, track_case
 from .request_intent import classify_request_intent
 from .service import user_error
 from .source_assessment import OpenAISourceAssessor
@@ -50,11 +51,7 @@ class SourceService:
         self.active = set()
 
     def catalog(self, case_id):
-        linked = set(self.library.linked_collections(case_id))
-        return [source for source in self.library.list(case_id)
-                if source.get("is_latest", True) and source.get("validity") != "superseded"
-                and (not source.get("collection_id") or source["collection_id"] in linked)
-                and source.get("category") != "previous_response"]
+        return self.library.scoped(case_id)
 
     def verification_fingerprint(self, case_id, sources):
         return self.verifications.fingerprint(case_id, sources) if self.verifications else None
@@ -244,6 +241,7 @@ class SourceService:
             self.pool.submit(self.run, case, chunks, run)
             return self.get(case_id)
 
+    @track_case("sources", "case")
     def run(self, case, chunks, run):
         try:
             assessor = self.assessor or OpenAISourceAssessor(
@@ -252,7 +250,7 @@ class SourceService:
             catalog = self.catalog(case["id"])
             applications = (self.verifications.active_applications(case)
                             if self.verifications else [])
-            lexical = RetrievalIndex(chunks)
+            lexical = RetrievalIndex(chunks, prepared_terms=self.library.prepared_terms(chunks))
             semantic = SemanticIndex(self.settings.data_dir / "semantic")
             last_progress_save = 0.0
 
@@ -263,7 +261,8 @@ class SourceService:
                     self.library.save_run(run)
                     last_progress_save = time.monotonic()
 
-            semantic.prepare(chunks, progress=index_progress)
+            with operation("library.semantic_prepare"):
+                semantic.prepare(chunks, progress=index_progress)
             run["retrieval_warning"] = semantic.warning
             run["retrieval_progress"] = {"phase": "searching", **semantic.diagnostics}
             requests = build_source_requests(
@@ -282,9 +281,14 @@ class SourceService:
 
             def locate(request, _):
                 with retrieval_lock:
-                    return retrieve(request, chunks, index=lexical, semantic=semantic)
+                    with operation("library.retrieve", request_id=request["id"]):
+                        return retrieve(request, chunks, index=lexical, semantic=semantic)
 
             def evaluate(request):
+                with operation("sources.request", request_id=request["id"]):
+                    return evaluate_request(request)
+
+            def evaluate_request(request):
                 with SqliteSaver.from_conn_string(
                     str(self.settings.data_dir / "source_checkpoints.sqlite")
                 ) as saver:
@@ -341,7 +345,7 @@ class SourceService:
                         if request is None:
                             break
                         run["request_states"][request["id"]] = "searching"
-                        pending[workers.submit(evaluate, request)] = request
+                        pending[submit_context(workers, evaluate, request)] = request
                     self.library.save_run(run)
 
                 fill_slots()

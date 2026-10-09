@@ -12,6 +12,7 @@ from pydantic import Field, ValidationError
 
 from .evidence_contract import apply_evidence_contract
 from .models import DomainError, StrictModel
+from .performance_metrics import metrics_http_client, provider_call
 from .source_documents import (
     document_matches,
     named_document_candidates,
@@ -38,15 +39,30 @@ from .source_sufficiency import (
 class _Missing(StrictModel):
     kind: Literal["document", "fact", "norm", "clarification"]
     description: str = Field(min_length=1, max_length=2000)
-    reason_code: Literal["specific_gap", "applicability", "fact_confirmation", "source_identity",
-                         "provenance", "issued_version", "transcription", "extraction_error",
-                         "document_search", "validity"] = "specific_gap"
+    reason_code: Literal[
+        "specific_gap",
+        "applicability",
+        "fact_confirmation",
+        "source_identity",
+        "provenance",
+        "issued_version",
+        "transcription",
+        "extraction_error",
+        "document_search",
+        "validity",
+    ] = "specific_gap"
     source_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
     stage: Literal["evidence", "fulfillment"] = "evidence"
     affected_claim: str = Field(default="", max_length=3000)
     why_unresolved: str = Field(default="", max_length=3000)
-    basis: Literal["metadata_only", "content_gap", "contradiction", "unavailable_document",
-                   "unreadable", "unspecified"] = "unspecified"
+    basis: Literal[
+        "metadata_only",
+        "content_gap",
+        "contradiction",
+        "unavailable_document",
+        "unreadable",
+        "unspecified",
+    ] = "unspecified"
 
 
 class _CoverageCitation(StrictModel):
@@ -290,8 +306,9 @@ def _declaration_passage(proposed: str, original: str) -> tuple[bool, bool]:
     No publica una cita ensamblada. Sólo permite completar contexto omitido si
     cada bloque numerado coincide, en orden, dentro del mismo fragmento original.
     """
-    wanted, actual = (" ".join(unicodedata.normalize("NFC", value).split())
-                      for value in (proposed, original))
+    wanted, actual = (
+        " ".join(unicodedata.normalize("NFC", value).split()) for value in (proposed, original)
+    )
     if wanted and wanted in actual:
         return True, False
     parts = re.split(r"(?<!\S)(?=\d{1,2}[.)]\s)", wanted)
@@ -322,14 +339,22 @@ def declaration_citation_errors(selection, candidates):
     errors = []
     for i, check in enumerate(selection.declared_checks):
         source = index.get(check.chunk_id)
-        if (source and check.chunk_id in selected
-                and source.get("category") == "historical_response"
-                and _declaration_passage(check.declaration_quote, source["quote"])[0]):
+        if (
+            source
+            and check.chunk_id in selected
+            and source.get("category") == "historical_response"
+            and _declaration_passage(check.declaration_quote, source["quote"])[0]
+        ):
             continue
-        errors.append({"declaration_index": i, "chunk_id": check.chunk_id,
-                       "reason": "declaration_quote_not_literal_in_selected_response",
-                       "submitted_quote": check.declaration_quote,
-                       "candidate_quote": source.get("quote", "") if source else ""})
+        errors.append(
+            {
+                "declaration_index": i,
+                "chunk_id": check.chunk_id,
+                "reason": "declaration_quote_not_literal_in_selected_response",
+                "submitted_quote": check.declaration_quote,
+                "candidate_quote": source.get("quote", "") if source else "",
+            }
+        )
     return errors
 
 
@@ -355,7 +380,8 @@ class OpenAISourceAssessor:
 
     def __init__(self, api_key: str, model: str) -> None:
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2)
+        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
+                             http_client=metrics_http_client())
 
     def assess(self, request: dict[str, Any], candidates: list[dict[str, Any]]) -> dict:
         # Defensa previa a la llamada: una falla del filtro de recuperación no debe
@@ -376,36 +402,57 @@ class OpenAISourceAssessor:
         document_kind = requested_document(request)
         api_candidates = [
             {
-                **{key: value for key, value in candidate.items() if key not in {
-                    "related_source_ids", "aliases", "historical_groups", "import_notes",
-                    "matched_terms", "retrieval_queries", "score", "adjacent_to"
-                }},
+                **{
+                    key: value
+                    for key, value in candidate.items()
+                    if key
+                    not in {
+                        "related_source_ids",
+                        "aliases",
+                        "historical_groups",
+                        "import_notes",
+                        "matched_terms",
+                        "retrieval_queries",
+                        "score",
+                        "adjacent_to",
+                    }
+                },
                 "chunk_id": alias,
                 "allowed_roles": list(_allowed_roles(candidate.get("category"), document_kind)),
-
             }
             for alias, candidate in candidates_by_alias.items()
         ]
-        payload = {"request": request, "candidates": [
-            {**{k: v for k, v in c.items() if k != "quote"},
-             "numbered_lines": numbered_lines(c["quote"])} for c in api_candidates],
-                   "coverage_uses_by_role": COVERAGE_USES_BY_ROLE}
+        payload = {
+            "request": request,
+            "candidates": [
+                {
+                    **{k: v for k, v in c.items() if k != "quote"},
+                    "numbered_lines": numbered_lines(c["quote"]),
+                }
+                for c in api_candidates
+            ],
+            "coverage_uses_by_role": COVERAGE_USES_BY_ROLE,
+        }
         repair_errors = []
         history = []
         for attempt in range(2):
             try:
-                response = self.client.responses.parse(
-                    model=self.model, instructions=INSTRUCTIONS,
+                response = provider_call("sources.assess", self.client.responses.parse,
+                    model=self.model,
+                    instructions=INSTRUCTIONS,
                     input=json.dumps(payload, ensure_ascii=False),
-                    text_format=_LocatedSourceSelection, store=False, truncation="disabled",
+                    text_format=_LocatedSourceSelection,
+                    store=False,
+                    truncation="disabled",
                     max_output_tokens=11000,
                 )
             except OpenAIError as exc:
-                code = {"AuthenticationError": "provider_authentication",
-                        "RateLimitError": "provider_rate_limit",
-                        "APITimeoutError": "provider_timeout",
-                        "APIConnectionError": "provider_connection"}.get(
-                            type(exc).__name__, "provider_error")
+                code = {
+                    "AuthenticationError": "provider_authentication",
+                    "RateLimitError": "provider_rate_limit",
+                    "APITimeoutError": "provider_timeout",
+                    "APIConnectionError": "provider_connection",
+                }.get(type(exc).__name__, "provider_error")
                 raise SourceAnalysisError(
                     "No se pudo evaluar las fuentes con OpenAI. "
                     "Revisa la conexión y reintenta; los resultados anteriores se conservan.",
@@ -429,8 +476,9 @@ class OpenAISourceAssessor:
                 if not location_errors:
                     parsed = _SourceSelection.model_validate(values)
             errors = location_errors or coverage_citation_errors(parsed, api_candidates)
-            declaration_errors = ([] if location_errors else
-                                  declaration_citation_errors(parsed, api_candidates))
+            declaration_errors = (
+                [] if location_errors else declaration_citation_errors(parsed, api_candidates)
+            )
             errors.extend(declaration_errors)
             selected = {item.chunk_id: item for item in parsed.supports}
             for aspect_index, coverage in enumerate([] if location_errors else parsed.coverage):
@@ -440,61 +488,99 @@ class OpenAISourceAssessor:
                     if not chosen or not source:
                         continue
                     role = chosen.role
-                    if role == "document" and document_kind and not document_matches(
-                        request, source, document_kind
+                    if (
+                        role == "document"
+                        and document_kind
+                        and not document_matches(request, source, document_kind)
                     ):
-                        role = {"historical_response": "antecedent",
-                                "historical_attachment": "historical_evidence"}.get(source.get("category"))
+                        role = {
+                            "historical_response": "antecedent",
+                            "historical_attachment": "historical_evidence",
+                        }.get(source.get("category"))
                     if coverage.use not in COVERAGE_USES_BY_ROLE.get(role, []):
-                        errors.append({"aspect_index": aspect_index, "chunk_id": citation.chunk_id,
-                                       "reason": "incompatible_coverage_use", "use": coverage.use,
-                                       "selected_role": chosen.role, "effective_role": role,
-                                       "allowed_uses": COVERAGE_USES_BY_ROLE.get(role, [])})
+                        errors.append(
+                            {
+                                "aspect_index": aspect_index,
+                                "chunk_id": citation.chunk_id,
+                                "reason": "incompatible_coverage_use",
+                                "use": coverage.use,
+                                "selected_role": chosen.role,
+                                "effective_role": role,
+                                "allowed_uses": COVERAGE_USES_BY_ROLE.get(role, []),
+                            }
+                        )
             try:
                 if location_errors:
-                    raise DomainError("La IA seleccionó una ubicación de cita no válida. "
-                                      "No se aceptó el pasaje propuesto.")
+                    raise DomainError(
+                        "La IA seleccionó una ubicación de cita no válida. "
+                        "No se aceptó el pasaje propuesto."
+                    )
                 if declaration_errors and not attempt:
                     raise DomainError("La declaración propuesta requiere corregir su cita literal.")
-                result = self._materialize_response(parsed, request, candidates, candidates_by_alias)
+                result = self._materialize_response(
+                    parsed, request, candidates, candidates_by_alias
+                )
             except DomainError as exc:
-                current_errors = errors or [{"reason": "invalid_evidence_contract",
-                                             "message": str(exc)}]
+                current_errors = errors or [
+                    {"reason": "invalid_evidence_contract", "message": str(exc)}
+                ]
                 history.append({"attempt": attempt + 1, "errors": current_errors})
                 if attempt:
-                    raise SourceAnalysisError(str(exc), diagnostic(
-                        "citation_validation_failed", attempts=attempt + 1,
-                        errors=current_errors, history=history)) from None
+                    raise SourceAnalysisError(
+                        str(exc),
+                        diagnostic(
+                            "citation_validation_failed",
+                            attempts=attempt + 1,
+                            errors=current_errors,
+                            history=history,
+                        ),
+                    ) from None
                 repair_errors = current_errors
-                payload = {**payload, "citation_repair": {
-                    "errors": repair_errors,
-                    "previous_selection": remote_selection,
-                    "instruction": "Corrige la evaluación con los mismos candidatos. Respeta allowed_roles "
-                    "y los usos de cobertura. Conserva los rangos que ya son válidos. "
-                    "Selecciona line_start y line_end dentro de numbered_lines del candidato elegido, "
-                    "con inicio menor o igual al final. No escribas citas: Python copia las líneas. "
-                    "Si una declaración opcional no está acreditada, retírala. "
-                    "No conviertas un fallo de cita generado por ti en un documento faltante o una "
-                    "comprobación humana; conserva las brechas de contenido que sí existan. "
-                    "Si una afirmación no puede "
-                    "respaldarse, conserva la brecha concreta en missing, fuera de coverage; "
-                    "no inventes evidencia ni cambies su alcance. Un diagnóstico de documento no "
-                    "localizado pertenece a missing, no a coverage con use document_delivery.",
-                }}
+                payload = {
+                    **payload,
+                    "citation_repair": {
+                        "errors": repair_errors,
+                        "previous_selection": remote_selection,
+                        "instruction": "Corrige la evaluación con los mismos candidatos. "
+                        "Respeta allowed_roles "
+                        "y los usos de cobertura. Conserva los rangos que ya son válidos. "
+                        "Selecciona line_start y line_end dentro de numbered_lines "
+                        "del candidato elegido, con inicio menor o igual al final. "
+                        "No escribas citas: Python copia las líneas. "
+                        "Si una declaración opcional no está acreditada, retírala. "
+                        "No conviertas un fallo de cita generado por ti "
+                        "en un documento faltante o una "
+                        "comprobación humana; conserva las brechas de contenido que sí existan. "
+                        "Si una afirmación no puede "
+                        "respaldarse, conserva la brecha concreta en missing, fuera de coverage; "
+                        "no inventes evidencia ni cambies su alcance. "
+                        "Un diagnóstico de documento no "
+                        "localizado pertenece a missing, no a coverage con use document_delivery.",
+                    },
+                }
                 continue
             if repair_errors:
-                result["citation_validation"] = {"repair_attempts": 1,
-                    "initial_errors": repair_errors, "status": (
-                        "optional_declaration_omitted" if declaration_errors else "validated_after_repair")}
+                result["citation_validation"] = {
+                    "repair_attempts": 1,
+                    "initial_errors": repair_errors,
+                    "status": (
+                        "optional_declaration_omitted"
+                        if declaration_errors
+                        else "validated_after_repair"
+                    ),
+                }
             result["analysis_diagnostic"] = diagnostic(
                 "validated_after_repair" if repair_errors else "validated",
-                attempts=attempt + 1, history=history)
+                attempts=attempt + 1,
+                history=history,
+            )
             if locations:
                 result["citation_locations"] = locations
             return result
 
     def _materialize_response(self, parsed, request, candidates, candidates_by_alias):
         try:
+
             def readable_reference(match: re.Match) -> str:
                 source = candidates_by_alias.get(match.group())
                 if source is None:
@@ -523,42 +609,77 @@ class OpenAISourceAssessor:
                         }
                     )
                 )
-            selection = parsed.model_copy(update={
-                "supports": supports,
-                "summary": readable(parsed.summary),
-                "missing": [item.model_copy(update={
-                    "description": readable(item.description),
-                    "affected_claim": readable(item.affected_claim),
-                    "why_unresolved": readable(item.why_unresolved),
-                    "source_chunk_ids": [candidates_by_alias[value]["chunk_id"]
-                        if value in candidates_by_alias else "INVALID"
-                        for value in item.source_chunk_ids],
-                }) for item in parsed.missing],
-                "declared_checks": [item.model_copy(update={
-                    "chunk_id": candidates_by_alias[item.chunk_id]["chunk_id"]
-                        if item.chunk_id in candidates_by_alias else "INVALID",
-                    "fact": readable(item.fact), "basis": readable(item.basis),
-                }) for item in parsed.declared_checks],
-                "coverage": [item.model_copy(update={
-                    "aspect": readable(item.aspect), "claim": readable(item.claim),
-                    "explanation": readable(item.explanation),
-                    "citations": [citation.model_copy(update={
-                        "chunk_id": candidates_by_alias[citation.chunk_id]["chunk_id"]
-                            if citation.chunk_id in candidates_by_alias else "INVALID",
-                    }) for citation in item.citations],
-                }) for item in parsed.coverage],
-                "warnings": [readable(value) for value in parsed.warnings],
-            })
+            selection = parsed.model_copy(
+                update={
+                    "supports": supports,
+                    "summary": readable(parsed.summary),
+                    "missing": [
+                        item.model_copy(
+                            update={
+                                "description": readable(item.description),
+                                "affected_claim": readable(item.affected_claim),
+                                "why_unresolved": readable(item.why_unresolved),
+                                "source_chunk_ids": [
+                                    candidates_by_alias[value]["chunk_id"]
+                                    if value in candidates_by_alias
+                                    else "INVALID"
+                                    for value in item.source_chunk_ids
+                                ],
+                            }
+                        )
+                        for item in parsed.missing
+                    ],
+                    "declared_checks": [
+                        item.model_copy(
+                            update={
+                                "chunk_id": candidates_by_alias[item.chunk_id]["chunk_id"]
+                                if item.chunk_id in candidates_by_alias
+                                else "INVALID",
+                                "fact": readable(item.fact),
+                                "basis": readable(item.basis),
+                            }
+                        )
+                        for item in parsed.declared_checks
+                    ],
+                    "coverage": [
+                        item.model_copy(
+                            update={
+                                "aspect": readable(item.aspect),
+                                "claim": readable(item.claim),
+                                "explanation": readable(item.explanation),
+                                "citations": [
+                                    citation.model_copy(
+                                        update={
+                                            "chunk_id": candidates_by_alias[citation.chunk_id][
+                                                "chunk_id"
+                                            ]
+                                            if citation.chunk_id in candidates_by_alias
+                                            else "INVALID",
+                                        }
+                                    )
+                                    for citation in item.citations
+                                ],
+                            }
+                        )
+                        for item in parsed.coverage
+                    ],
+                    "warnings": [readable(value) for value in parsed.warnings],
+                }
+            )
             result = self._materialize(selection, request, candidates)
             if selection.supports and not selection.coverage and not selection.missing:
                 raise DomainError("La evaluación no explicó qué contenido respaldan las fuentes.")
             if not selection.coverage_complete and not selection.missing:
                 raise DomainError(
-                    "La evaluación indicó cobertura incompleta sin explicar la brecha.")
-            if any(not item.affected_claim.strip() or not item.why_unresolved.strip()
-                   for item in selection.missing):
+                    "La evaluación indicó cobertura incompleta sin explicar la brecha."
+                )
+            if any(
+                not item.affected_claim.strip() or not item.why_unresolved.strip()
+                for item in selection.missing
+            ):
                 raise DomainError(
-                    "La evaluación propuso un pendiente sin explicar qué falta y por qué.")
+                    "La evaluación propuso un pendiente sin explicar qué falta y por qué."
+                )
             return result
         except ValidationError:
             raise DomainError("La evaluación de fuentes contiene campos inválidos.") from None
@@ -580,8 +701,9 @@ class OpenAISourceAssessor:
                 raise DomainError("Una comprobación referencia un fragmento desconocido.")
             item = proposed.model_dump()
             item["linked_chunk_ids"] = item.pop("source_chunk_ids")
-            item["linked_source_ids"] = list(dict.fromkeys(
-                index[chunk_id]["source_id"] for chunk_id in item["linked_chunk_ids"]))
+            item["linked_source_ids"] = list(
+                dict.fromkeys(index[chunk_id]["source_id"] for chunk_id in item["linked_chunk_ids"])
+            )
             missing.append(item)
         proposed_missing_count = len(missing)
         warnings = [warning.strip() for warning in selection.warnings if warning.strip()]
@@ -593,10 +715,21 @@ class OpenAISourceAssessor:
 
         active_source = None
 
-        def add_missing(kind: str, description: str, *, reason_code="specific_gap",
-                        stage="evidence", basis="unspecified") -> None:
-            item = {"kind": kind, "description": description,
-                    "reason_code": reason_code, "stage": stage, "basis": basis}
+        def add_missing(
+            kind: str,
+            description: str,
+            *,
+            reason_code="specific_gap",
+            stage="evidence",
+            basis="unspecified",
+        ) -> None:
+            item = {
+                "kind": kind,
+                "description": description,
+                "reason_code": reason_code,
+                "stage": stage,
+                "basis": basis,
+            }
             if active_source:
                 item["linked_source_ids"] = [active_source["source_id"]]
                 item["linked_chunk_ids"] = [active_source["chunk_id"]]
@@ -638,12 +771,18 @@ class OpenAISourceAssessor:
             if not str(source.get("quote") or "").strip():
                 raise DomainError("La fuente seleccionada no contiene una cita verificable.")
             if source.get("extraction_status") in {"error", "failed", "pending", "unsupported"}:
-                add_missing("clarification", "Completar la lectura del archivo seleccionado; "
-                            "el estado de extracción no permite dar su contenido por cotejado.",
-                            reason_code="extraction_error", basis="unreadable")
+                add_missing(
+                    "clarification",
+                    "Completar la lectura del archivo seleccionado; "
+                    "el estado de extracción no permite dar su contenido por cotejado.",
+                    reason_code="extraction_error",
+                    basis="unreadable",
+                )
             role, reason = chosen.role, chosen.reason.strip()
-            if role == "document" and document_kind and not document_matches(
-                request, source, document_kind
+            if (
+                role == "document"
+                and document_kind
+                and not document_matches(request, source, document_kind)
             ):
                 unconfirmed_document = True
                 add_warning(
@@ -687,8 +826,11 @@ class OpenAISourceAssessor:
                     )
                     add_warning(message)
                     add_missing(
-                        "clarification", message, reason_code="issued_version",
-                        basis="content_gap" if document_status == "draft" else "metadata_only")
+                        "clarification",
+                        message,
+                        reason_code="issued_version",
+                        basis="content_gap" if document_status == "draft" else "metadata_only",
+                    )
                 verification = source.get("verification_status")
                 if verification == "reported_by_user":
                     add_warning(
@@ -702,8 +844,9 @@ class OpenAISourceAssessor:
             ):
                 message = f"Revisar la procedencia y el contenido de «{title}»."
                 add_warning(message)
-                add_missing("clarification", message, reason_code="provenance",
-                            basis="metadata_only")
+                add_missing(
+                    "clarification", message, reason_code="provenance", basis="metadata_only"
+                )
             if is_norm and source.get("validity") != "current":
                 message = f"Comprobar la vigencia aplicable de «{title}»."
                 add_warning(message)
@@ -727,8 +870,7 @@ class OpenAISourceAssessor:
         active_source = None
         if document_kind:
             located = any(
-                support["role"] == "document"
-                and document_matches(request, support, document_kind)
+                support["role"] == "document" and document_matches(request, support, document_kind)
                 for support in supports
             )
             if not located:
@@ -737,21 +879,27 @@ class OpenAISourceAssessor:
                         str(request.get("description") or request.get("title") or ""), candidates
                     )
                     if file_candidates:
-                        titles = list(dict.fromkeys(
-                            str(source.get("filename") or source.get("title"))
-                            for source in file_candidates
-                        ))
-                        missing.append({
-                            "kind": "clarification",
-                            "description": "Cotejar la identidad e integridad del archivo "
-                            "candidato ya localizado: "
-                            + "; ".join(f"«{title}»" for title in titles)
-                            + ". Su localización no acredita sus anexos ni su entrega.",
-                            "linked_source_ids": list(dict.fromkeys(
-                                source["source_id"] for source in file_candidates
-                            )),
-                            "linked_chunk_ids": [source["chunk_id"] for source in file_candidates],
-                        })
+                        titles = list(
+                            dict.fromkeys(
+                                str(source.get("filename") or source.get("title"))
+                                for source in file_candidates
+                            )
+                        )
+                        missing.append(
+                            {
+                                "kind": "clarification",
+                                "description": "Cotejar la identidad e integridad del archivo "
+                                "candidato ya localizado: "
+                                + "; ".join(f"«{title}»" for title in titles)
+                                + ". Su localización no acredita sus anexos ni su entrega.",
+                                "linked_source_ids": list(
+                                    dict.fromkeys(source["source_id"] for source in file_candidates)
+                                ),
+                                "linked_chunk_ids": [
+                                    source["chunk_id"] for source in file_candidates
+                                ],
+                            }
+                        )
                     else:
                         add_missing(
                             "document",
@@ -786,17 +934,38 @@ class OpenAISourceAssessor:
             if not source_in_scope(request, source):
                 raise DomainError("Una fuente candidata pertenece a un ámbito no vinculado.")
             identifier = source["source_id"]
-            document = candidate_documents.setdefault(identifier, {
-                **{key: source.get(key) for key in (
-                    "source_id", "document_id", "version", "title", "filename", "category"
-                )},
-                "location_status": "candidate_located",
-                "selected_as_support": identifier in support_source_ids,
-                "chunks": [],
-            })
-            document["chunks"].append({key: source.get(key) for key in (
-                "chunk_id", "page", "line_start", "line_end", "quote", "location_kind"
-            )})
+            document = candidate_documents.setdefault(
+                identifier,
+                {
+                    **{
+                        key: source.get(key)
+                        for key in (
+                            "source_id",
+                            "document_id",
+                            "version",
+                            "title",
+                            "filename",
+                            "category",
+                        )
+                    },
+                    "location_status": "candidate_located",
+                    "selected_as_support": identifier in support_source_ids,
+                    "chunks": [],
+                },
+            )
+            document["chunks"].append(
+                {
+                    key: source.get(key)
+                    for key in (
+                        "chunk_id",
+                        "page",
+                        "line_start",
+                        "line_end",
+                        "quote",
+                        "location_kind",
+                    )
+                }
+            )
         additional = any(not item["selected_as_support"] for item in candidate_documents.values())
         if additional:
             add_warning(
@@ -818,41 +987,51 @@ class OpenAISourceAssessor:
                 _plain(item["description"]),
             )
             if (
-                position < proposed_missing_count and located and not needs_issued_version
+                position < proposed_missing_count
+                and located
+                and not needs_issued_version
                 and item.get("reason_code") in {None, "specific_gap", "document_search"}
                 and item.get("basis") in {None, "unspecified", "unavailable_document"}
                 and (item["kind"] == "document" or absence.search(_plain(item["description"])))
             ):
-                titles = list(dict.fromkeys(
-                    str(source.get("filename") or source.get("title") or source["source_id"])
-                    for source in located
-                ))
-                reconciled_missing.append({
-                    "kind": "clarification",
-                    "description": (
-                        "Ya están localizados como candidatos: "
-                        + "; ".join(f"«{title}»" for title in titles)
-                        + ". Cotejar su identidad, integridad y relación con lo solicitado "
-                        "en los fragmentos disponibles; no es necesario aportar otra copia "
-                        "por una supuesta ausencia en esta búsqueda. Esto no acredita sus anexos "
-                        "ni su entrega."
-                    ),
-                    "linked_source_ids": list(dict.fromkeys(
-                        source["source_id"] for source in located
-                    )),
-                    "linked_chunk_ids": [source["chunk_id"] for source in located],
-                })
+                titles = list(
+                    dict.fromkeys(
+                        str(source.get("filename") or source.get("title") or source["source_id"])
+                        for source in located
+                    )
+                )
+                reconciled_missing.append(
+                    {
+                        "kind": "clarification",
+                        "description": (
+                            "Ya están localizados como candidatos: "
+                            + "; ".join(f"«{title}»" for title in titles)
+                            + ". Cotejar su identidad, integridad y relación con lo solicitado "
+                            "en los fragmentos disponibles; no es necesario aportar otra copia "
+                            "por una supuesta ausencia en esta búsqueda. "
+                            "Esto no acredita sus anexos "
+                            "ni su entrega."
+                        ),
+                        "linked_source_ids": list(
+                            dict.fromkeys(source["source_id"] for source in located)
+                        ),
+                        "linked_chunk_ids": [source["chunk_id"] for source in located],
+                    }
+                )
                 remaining_references = [
-                    reference for reference in numbered_document_references(item["description"])
+                    reference
+                    for reference in numbered_document_references(item["description"])
                     if not named_document_candidates(reference, candidates)
                 ]
                 if remaining_references:
-                    reconciled_missing.append({
-                        "kind": item["kind"],
-                        "description": "Localizar y cotejar los demás documentos requeridos: "
-                        + "; ".join(remaining_references)
-                        + ". Encontrar el otro archivo no acredita estos documentos.",
-                    })
+                    reconciled_missing.append(
+                        {
+                            "kind": item["kind"],
+                            "description": "Localizar y cotejar los demás documentos requeridos: "
+                            + "; ".join(remaining_references)
+                            + ". Encontrar el otro archivo no acredita estos documentos.",
+                        }
+                    )
                 reconciled = True
             else:
                 reconciled_missing.append(item)
@@ -861,7 +1040,8 @@ class OpenAISourceAssessor:
         retained_warnings = []
         for warning in warnings:
             if (
-                warning in proposed_warnings and absence.search(_plain(warning))
+                warning in proposed_warnings
+                and absence.search(_plain(warning))
                 and named_document_candidates(warning, candidates)
             ):
                 reconciled = True
@@ -908,45 +1088,69 @@ class OpenAISourceAssessor:
         for check in selection.declared_checks:
             source = index.get(check.chunk_id)
             if not source or check.chunk_id not in selected_ids:
-                add_warning("No se registró una comprobación propuesta porque no citaba "
-                            "un soporte seleccionado. Los respaldos válidos se conservan.")
+                add_warning(
+                    "No se registró una comprobación propuesta porque no citaba "
+                    "un soporte seleccionado. Los respaldos válidos se conservan."
+                )
                 continue
             # El modelo suele normalizar los espacios de un PDF. La comparación
             # admite sólo esa diferencia; el registro conserva las líneas originales.
             literal, expanded = _declaration_passage(check.declaration_quote, source["quote"])
             if source.get("category") != "historical_response" or not literal:
-                add_warning("No se registró una comprobación propuesta: su cita o su "
-                            "atribución no coincidió con el oficio. Los otros respaldos "
-                            "se conservan para revisión.")
-                analysis_notices.append({
-                    "code": "optional_declaration_citation_rejected",
-                    "source_id": source["source_id"], "chunk_id": source["chunk_id"],
-                    "message": "No se pudo asociar una comprobación propuesta por la IA con "
-                    "el pasaje exacto del oficio. Esa comprobación no se registró; los pasajes "
-                    "válidos y las dudas de contenido se conservan.",
-                })
+                add_warning(
+                    "No se registró una comprobación propuesta: su cita o su "
+                    "atribución no coincidió con el oficio. Los otros respaldos "
+                    "se conservan para revisión."
+                )
+                analysis_notices.append(
+                    {
+                        "code": "optional_declaration_citation_rejected",
+                        "source_id": source["source_id"],
+                        "chunk_id": source["chunk_id"],
+                        "message": "No se pudo asociar una comprobación propuesta por la IA con "
+                        "el pasaje exacto del oficio. Esa comprobación no se registró; los pasajes "
+                        "válidos y las dudas de contenido se conservan.",
+                    }
+                )
                 continue
             if expanded:
-                add_warning("La comprobación se vinculó al pasaje completo del oficio, "
-                            "conservando también los numerales intermedios.")
+                add_warning(
+                    "La comprobación se vinculó al pasaje completo del oficio, "
+                    "conservando también los numerales intermedios."
+                )
             # Conservar la declaración como tal, incluso si luego requiere contraste.
-            declared_checks.append({**check.model_dump(), "declaration_quote": source["quote"],
-                "kind": "antecedent_declared",
-                "source_id": source["source_id"], "attributed_to": source.get("title"),
-                "passage": {key: source[key] for key in
-                            ("chunk_id", "page", "line_start", "line_end", "quote")}})
+            declared_checks.append(
+                {
+                    **check.model_dump(),
+                    "declaration_quote": source["quote"],
+                    "kind": "antecedent_declared",
+                    "source_id": source["source_id"],
+                    "attributed_to": source.get("title"),
+                    "passage": {
+                        key: source[key]
+                        for key in ("chunk_id", "page", "line_start", "line_end", "quote")
+                    },
+                }
+            )
         sufficiency = validated_coverage(selection, request, supports)
         missing, gap_decisions = classify_proposed_gaps(missing, supports, sufficiency)
         for decision in gap_decisions:
             original = decision["original"]
             if original["description"] in warnings:
                 warnings.remove(original["description"])
-            titles = list(dict.fromkeys(
-                source.get("title") or source["source_id"] for source in supports
-                if source["source_id"] in original.get("linked_source_ids", [])
-            ))
-            add_warning("Contenido documental utilizado con atribución: "
-                        + "; ".join(titles) + ". " + decision["reason"])
+            titles = list(
+                dict.fromkeys(
+                    source.get("title") or source["source_id"]
+                    for source in supports
+                    if source["source_id"] in original.get("linked_source_ids", [])
+                )
+            )
+            add_warning(
+                "Contenido documental utilizado con atribución: "
+                + "; ".join(titles)
+                + ". "
+                + decision["reason"]
+            )
         if selection.coverage_complete and not missing:
             summary = (
                 "Evaluación preliminar: los pasajes seleccionados respaldan los "
@@ -965,8 +1169,11 @@ class OpenAISourceAssessor:
             "gap_decisions": gap_decisions,
             "candidate_documents": list(candidate_documents.values()),
             "selection_status": (
-                "additional_candidates_available" if additional else
-                "all_candidates_selected" if candidate_documents else "no_candidates"
+                "additional_candidates_available"
+                if additional
+                else "all_candidates_selected"
+                if candidate_documents
+                else "no_candidates"
             ),
         }
         return apply_evidence_contract(request, result, candidates)

@@ -10,6 +10,7 @@ from .intake_engine import OpenAIIntakeEngine
 from .intake_models import IntakeAssessment, IntakeContextAssessment
 from .jev_client import ENDPOINT, MODEL, get_key
 from .models import DomainError, Page, source_quote
+from .performance_metrics import submit_context
 
 CLASSIFICATION_VERSION = 1
 MAX_BATCH_BYTES = 24000
@@ -187,8 +188,8 @@ class JevIntakeEngine:
 
     def assess(self, payload):
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="intake-analysis") as pool:
-            classification = pool.submit(self.classifier.classify, payload)
-            document = pool.submit(self.context_engine.assess, payload)
+            classification = submit_context(pool, self.classifier.classify, payload)
+            document = submit_context(pool, self.context_engine.assess, payload)
             decisions = classification.result()
             context = IntakeContextAssessment.model_validate(document.result()).model_dump(
                 mode="json"

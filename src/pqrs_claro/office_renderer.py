@@ -378,7 +378,11 @@ def _blocks(document: dict, *, working=False) -> list[dict]:
         intro += f", recibida el {received.day} de {_MONTHS[received.month - 1]} de {received.year}"
     if document.get("petition_subject"):
         intro += ", relacionada con «" + document["petition_subject"] + "»"
-    add("intro", metadata.get("introduction") or intro + ", se da respuesta a los numerales que se presentan a continuación.")
+    add(
+        "intro",
+        metadata.get("introduction")
+        or intro + ", se da respuesta a los numerales que se presentan a continuación.",
+    )
     known = {item["number"] for item in document["references"]}
 
     def numbered_label(request):
@@ -577,7 +581,8 @@ def _make_docx(blocks: list[dict], path: Path) -> None:
         if kind == "response_label":
             paragraph.paragraph_format.space_after = Pt(2)
         if (
-            kind == "response" and index + 1 < len(blocks)
+            kind == "response"
+            and index + 1 < len(blocks)
             and blocks[index + 1].get("kind") == "heading"
             and blocks[index + 1].get("text") == "Conclusión"
         ):
@@ -643,7 +648,8 @@ def _make_template_docx(blocks: list[dict], path: Path, template_path: Path, pro
         if kind == "response_label":
             paragraph.paragraph_format.space_after = Pt(2)
         if (
-            kind == "response" and index + 1 < len(blocks)
+            kind == "response"
+            and index + 1 < len(blocks)
             and blocks[index + 1].get("kind") == "heading"
             and blocks[index + 1].get("text") == "Conclusión"
         ):

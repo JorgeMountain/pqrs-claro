@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 import unicodedata
+from array import array
 from collections import Counter
 from functools import lru_cache
 from typing import Any
@@ -33,6 +35,11 @@ HISTORICAL_CATEGORIES = frozenset(
 _EVIDENCE_CATEGORIES = (
     frozenset({"national_norm", "institutional_norm", "case_evidence"}) | HISTORICAL_CATEGORIES
 )
+# The same Unicode normalization as before, applied in C instead of visiting
+# every character in Python for each of the institutional library's passages.
+_COMBINING_MARKS = dict.fromkeys(
+    code for code in range(0x110000) if unicodedata.combining(chr(code))
+)
 
 
 def source_in_scope(request: dict[str, Any], source: dict[str, Any]) -> bool:
@@ -54,11 +61,7 @@ def source_in_scope(request: dict[str, Any], source: dict[str, Any]) -> bool:
 
 def tokenize(text: str) -> list[str]:
     """Normaliza mayúsculas y tildes; no simula comprensión semántica."""
-    normalized = "".join(
-        character
-        for character in unicodedata.normalize("NFKD", text.casefold())
-        if not unicodedata.combining(character)
-    )
+    normalized = unicodedata.normalize("NFKD", text.casefold()).translate(_COMBINING_MARKS)
     normalized = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", normalized)
     return [
         token
@@ -67,14 +70,24 @@ def tokenize(text: str) -> list[str]:
     ]
 
 
+TERMS_VERSION = "lexical-nfkd-v1"
+
+
+def terms_key(chunk):
+    text = f"{chunk.get('title', '')} {chunk['quote']}"
+    return hashlib.sha256((TERMS_VERSION + "\n" + text).encode("utf-8")).hexdigest()
+
+
 class RetrievalIndex:
     """Reutiliza estadísticas por alcance, sin mezclar colecciones ni expedientes."""
 
-    def __init__(self, chunks):
+    def __init__(self, chunks, *, prepared_terms=None):
         self.chunks = chunks
         self._statistics = {}
         self._identities = {}
         self._calendar = {}
+        self._prepared_terms = prepared_terms or {}
+        self.diagnostics = {"prepared_hits": 0, "computed": 0}
 
     def identity(self, request, chunk, kind, number):
         if not kind or kind == "documento":
@@ -92,17 +105,25 @@ class RetrievalIndex:
         return identities[key]
 
     def statistics(self, eligible):
-        key = tuple((str(chunk["chunk_id"]), chunk["quote"]) for chunk in eligible)
+        key = tuple((str(chunk["chunk_id"]), chunk.get("title", ""), chunk["quote"])
+                    for chunk in eligible)
         if key not in self._statistics:
-            documents = [
-                Counter(tokenize(f"{chunk.get('title', '')} {chunk['quote']}"))
-                for chunk in eligible
-            ]
-            lengths = [sum(document.values()) for document in documents]
-            postings = {}
-            for index, document in enumerate(documents):
+            # Consume one passage at a time, avoiding a second full corpus of Counters.
+            lengths, postings = [], {}
+            for index, chunk in enumerate(eligible):
+                document = self._prepared_terms.get(terms_key(chunk))
+                if document is None:
+                    document = Counter(tokenize(f"{chunk.get('title', '')} {chunk['quote']}"))
+                    self.diagnostics["computed"] += 1
+                else:
+                    self.diagnostics["prepared_hits"] += 1
+                lengths.append(sum(document.values()))
                 for term, count in document.items():
-                    postings.setdefault(term, []).append((index, count))
+                    entry = postings.get(term)
+                    if entry is None:
+                        entry = postings[term] = (array("I"), array("I"))
+                    entry[0].append(index)
+                    entry[1].append(count)
             self._statistics[key] = lengths, sum(lengths) / max(1, len(lengths)) or 1, postings
         return self._statistics[key]
 
@@ -127,11 +148,14 @@ def _rank(request, eligible, *, index=None, query=None):
     scores = Counter()
     matches = {}
     for term in sorted(query_terms):
-        occurrences = postings.get(term, [])
+        occurrences = postings.get(term)
+        if occurrences is None:
+            continue
+        positions, counts = occurrences
         inverse_frequency = math.log1p(
-            (len(eligible) - len(occurrences) + 0.5) / (len(occurrences) + 0.5)
+            (len(eligible) - len(positions) + 0.5) / (len(positions) + 0.5)
         )
-        for position, count in occurrences:
+        for position, count in zip(positions, counts):
             scores[position] += inverse_frequency * count * 2.5 / (
                 count + 1.5 * (0.25 + 0.75 * lengths[position] / average_length)
             )
@@ -218,7 +242,8 @@ def _document_budget(rows: list[dict[str, Any]], limit: int) -> list[dict[str, A
 
 
 def _baseline(
-    request: dict[str, Any], chunks: list[dict[str, Any]], limit: int = 24, *, index=None
+    request: dict[str, Any], chunks: list[dict[str, Any]], limit: int = 24, *, index=None,
+    ranked=None,
 ) -> list[dict[str, Any]]:
     """Combina búsqueda general y contestaciones, hasta 24 fragmentos originales.
 
@@ -239,7 +264,9 @@ def _baseline(
         and str(chunk.get("quote") or "").strip()
         and source_in_scope(request, chunk)
     ]
-    general = _document_budget(_rank(request, eligible, index=index), max(32, limit))
+    general = _document_budget(
+        ranked if ranked is not None else _rank(request, eligible, index=index), max(32, limit)
+    )
     answers = _document_budget(
         _rank(request, _answer_chunks(eligible), index=index), max(32, limit)
     )
@@ -422,8 +449,8 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     if not tokenize(query) or not eligible:
         return []
     index = index or RetrievalIndex(eligible)
-    baseline = _baseline(request, eligible, limit, index=index)
     general = _rank(request, eligible, index=index)
+    baseline = _baseline(request, eligible, limit, index=index, ranked=general)
     channels = {"lexical": baseline}
     context_queries = request.get("retrieval_queries") or [request.get("retrieval_context", "")]
     if isinstance(context_queries, str):

@@ -27,9 +27,11 @@ def test_citation_contract_repairs_once_with_same_candidates(failure):
     else:
         bad.coverage[0].citations[0].chunk_id = "C99"
     calls = []
+
     def parse(**kwargs):
         calls.append(json.loads(kwargs["input"]))
         return SimpleNamespace(status="completed", output_parsed=bad if len(calls) == 1 else good)
+
     assessor = OpenAISourceAssessor("test-not-real", "test")
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
     result = assessor.assess(request(), [original])
@@ -55,9 +57,11 @@ def test_persistent_invalid_citation_is_rejected_after_one_repair():
     bad.coverage[0].citations[0].chunk_id = "C1"
     bad.coverage[0].citations[0].quote = "Texto inventado."
     calls = []
+
     def parse(**kwargs):
         calls.append(kwargs)
         return SimpleNamespace(status="completed", output_parsed=bad)
+
     assessor = OpenAISourceAssessor("test-not-real", "test")
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
     with pytest.raises(DomainError, match="no coincide literalmente"):
@@ -430,9 +434,11 @@ def test_persistent_incompatible_coverage_use_is_rejected_after_one_repair():
     bad.coverage[0].citations[0].chunk_id = "C1"
     bad.coverage[0].use = "verified_fact"
     calls = []
+
     def parse(**kwargs):
         calls.append(kwargs)
         return SimpleNamespace(status="completed", output_parsed=bad)
+
     assessor = OpenAISourceAssessor("test-not-real", "test")
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
     with pytest.raises(DomainError, match="no permite el uso"):
@@ -452,22 +458,35 @@ def test_document_absence_is_repaired_as_gap_not_delivery_evidence():
     corrected.coverage_complete = False
     corrected.status = "needs_evidence"
     from pqrs_claro.source_assessment import _Missing
-    corrected.missing = [_Missing.model_validate(missing(
-        "document_search", "unavailable_document", kind="document",
-        description="Localizar el acta 17 solicitada.",
-        affected_claim="Disponibilidad de la copia del acta 17.",
-        why_unresolved="Los candidatos contienen un oficio, no el acta pedida.",
-        source_chunk_ids=["C1"],
-    ))]
+
+    corrected.missing = [
+        _Missing.model_validate(
+            missing(
+                "document_search",
+                "unavailable_document",
+                kind="document",
+                description="Localizar el acta 17 solicitada.",
+                affected_claim="Disponibilidad de la copia del acta 17.",
+                why_unresolved="Los candidatos contienen un oficio, no el acta pedida.",
+                source_chunk_ids=["C1"],
+            )
+        )
+    ]
     calls = []
+
     def parse(**kwargs):
         calls.append(json.loads(kwargs["input"]))
-        return SimpleNamespace(status="completed", output_parsed=bad if len(calls) == 1 else corrected)
+        return SimpleNamespace(
+            status="completed", output_parsed=bad if len(calls) == 1 else corrected
+        )
+
     assessor = OpenAISourceAssessor("test-not-real", "test")
     assessor.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
     result = assessor.assess(inquiry, [source()])
     assert len(calls) == 2
     assert result["status"] == "needs_evidence"
     assert result["supports"][0]["role"] == "antecedent"
-    assert any(gap["affected_claim"] == "Disponibilidad de la copia del acta 17."
-               for gap in result["missing"])
+    assert any(
+        gap["affected_claim"] == "Disponibilidad de la copia del acta 17."
+        for gap in result["missing"]
+    )

@@ -97,3 +97,24 @@ test('el registro automático de especialista no atribuye una decisión de conti
   assert.equal(isAutomaticDecisionNote('Nota del gestor'),false);
   assert.throws(()=>automaticDecisionNote('invalid'),/ruta válida/);
 });
+
+
+test('guarda rutas mixtas sin convertirlas ni iniciar redacción',async()=>{
+  const d=decision();d.document.route='specialist';d.requests[0].route='reiterate';
+  d.requests[0].note='Conservar la observación del gestor.';
+  const original=JSON.stringify(d),r=report(),calls=[];
+  r.document.proposed_route='specialist';
+  const reportSnapshot=JSON.stringify(r);
+  const result=await confirmAndPrepare({decision:d,report:r,
+    save:async body=>{calls.push('save');assert.equal(body.document.route,'specialist');assert.equal(body.requests[0].route,'reiterate');assert.match(body.requests[0].note,/Conservar la observación del gestor/);return {can_prepare:false};},
+    onSaved:()=>calls.push('saved'),prepare:async()=>calls.push('prepare')});
+  assert.equal(result.prepared,false);assert.deepEqual(calls,['save','saved']);
+  assert.equal(JSON.stringify(d),original);assert.equal(JSON.stringify(r),reportSnapshot);
+});
+
+test('el botón conjunto no inventa la confirmación humana ni la clasificación',()=>{
+  const d=decision();d.document.route='specialist';d.document.reviewed=false;
+  assert.throws(()=>confirmationPayload(d,report()),/Confirma/);
+  d.document.reviewed=true;d.document.route='continue';d.requests[0].petition_type='undetermined';
+  assert.throws(()=>confirmationPayload(d,report()),/Define el tipo/);
+});

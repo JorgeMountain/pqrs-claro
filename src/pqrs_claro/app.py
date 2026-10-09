@@ -26,6 +26,7 @@ from .management import ManagementStore, management_router
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
+from .performance_metrics import read_metrics
 from .preparation import PreparationService, preparation_router
 from .response_proposals import ResponseProposalService, response_proposal_router
 from .review_api import review_router
@@ -33,6 +34,7 @@ from .review_service import ReviewService
 from .service import CaseService
 from .source_api import source_router
 from .source_library import SourceLibrary
+from .source_preparation import SourcePreparation
 from .source_service import SourceService
 from .source_verification_api import source_verification_router
 from .source_verifications import SourceVerificationStore
@@ -96,6 +98,7 @@ def create_app(
         )
         source_extractor = PDFExtractor(source_ocr)
     library = SourceLibrary(settings.data_dir, source_extractor)
+    library_preparation = SourcePreparation(library)
     verifications = SourceVerificationStore(settings.data_dir, library, store)
     sources_service = SourceService(settings, store, library, assessor=source_assessor,
                                     verifications=verifications)
@@ -140,7 +143,9 @@ def create_app(
         preparation.recover()
         proposals.recover()
         initial_review.recover()
+        library_preparation.start()
         yield
+        library_preparation.close()
         service.close()
         initial_review.close()
         gmail.close()
@@ -154,9 +159,25 @@ def create_app(
             source_ocr.close()
 
     app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
+
+    @app.get("/api/cases/{case_id}/performance")
+    def case_performance(case_id: str):
+        store.get(case_id)
+        return read_metrics(settings.data_dir, case_id)
+
     app.state.store, app.state.service = store, service
     app.state.management = management
     app.state.library, app.state.sources = library, sources_service
+    app.state.library_preparation = library_preparation
+
+    @app.get("/api/library/preparation")
+    def library_preparation_status():
+        return library_preparation.status()
+
+    @app.post("/api/library/preparation/retry")
+    def library_preparation_retry():
+        return library_preparation.retry_errors()
+
     app.state.verifications = verifications
     app.state.drafts = drafts_service
     app.state.reviews = reviews_service
@@ -227,6 +248,7 @@ def create_app(
             management_enabled=settings.management_enabled,
             validation_mode=settings.data_dir.resolve().is_relative_to(ROOT / "output" / "qa"),
             model=settings.model,
+            draft_concurrency=min(6, max(1, settings.draft_concurrency)),
             max_upload_mb=settings.max_upload_mb,
             max_pages=settings.max_pages,
             initial_review_enabled=settings.initial_review_enabled,

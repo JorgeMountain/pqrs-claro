@@ -13,10 +13,17 @@ from fastapi import APIRouter
 from .classification_questions import QUESTIONS
 from .intake_cache import CACHE_VERSION, reuse_plan
 from .intake_engine import INSTRUCTIONS, OpenAIIntakeEngine, materialize
-from .intake_models import POLICY_VERSION, TERM_REFERENCE, IntakeDecision, IntakeStart
+from .intake_models import (
+    POLICY_VERSION,
+    TERM_REFERENCE,
+    IntakeDecision,
+    IntakeStart,
+    PilotReviewMode,
+)
 from .jev_client import MODEL as JEV_MODEL
 from .jev_client import get_key as get_jev_key
 from .jev_intake import CLASSIFICATION_VERSION, JevIntakeEngine
+from .performance_metrics import track_case
 from .service import user_error
 from .source_context import build_source_requests
 from .source_library import digest
@@ -97,9 +104,10 @@ class IntakeService:
         stale = legacy or bool(
             row.get("fingerprint") and row["fingerprint"] != self.fingerprint(case_id)
         )
+        bypass = self.pilot_bypassed(case_id)
         allowed = not self.enabled or (
             row["status"] == "approved" and not stale and case["status"] == "confirmed"
-        )
+        ) or (bypass and case["status"] == "confirmed")
         if self.cases.management and self.cases.management.get(case_id)["state"] == "closed":
             allowed = False
         work = row.get("analysis_work")
@@ -113,6 +121,7 @@ class IntakeService:
             "stale": stale,
             "legacy_report": legacy,
             "can_prepare": allowed,
+            "pilot_bypass_active": bypass,
             "classification_provider": self.settings.initial_classification_provider,
             "next_analysis": work,
         }
@@ -137,6 +146,42 @@ class IntakeService:
             raise Conflict(
                 "Completa la revisión inicial y confirma continuar en todas las solicitudes."
             )
+
+    def pilot_bypassed(self, case_id):
+        case = self.cases.get(case_id)
+        bypass = self.saved(case_id).get("pilot_bypass") or {}
+        return bool(bypass.get("enabled") and bypass.get("basis") == digest({
+            "original": case["sha256"], "identification": case.get("identification")
+        }))
+
+    def pilot_mode(self, case_id, body):
+        with (
+            self.identification.lock if self.identification else nullcontext(),
+            self.lock,
+            self.library.lock,
+        ):
+            self.cases.assert_open(case_id)
+            self.assert_idle(case_id)
+            case, row = self.cases.get(case_id), self.saved(case_id)
+            if case["version"] != body.version or row["revision"] != body.revision:
+                raise Conflict("El expediente cambió. Actualiza antes de continuar.")
+            if case_id in self.active or (
+                self.identification and case_id in self.identification.active
+            ):
+                raise Conflict("Espera a que termine el análisis en curso.")
+            if body.enabled:
+                if case["status"] == "needs_review" and self.identification:
+                    self.identification.confirm(case_id, case["version"])
+                elif case["status"] != "confirmed":
+                    raise Conflict("Primero deben estar identificadas las peticiones.")
+            self.save(row, pilot_bypass={
+                "enabled": body.enabled,
+                "at": now(),
+                "basis": digest({"original": case["sha256"],
+                                 "identification": case.get("identification")}),
+                "reason": "Continuación explícita del piloto; no aprueba la revisión inicial.",
+            })
+            return self.get(case_id)
 
     def assert_idle(self, case_id):
         if any(
@@ -311,6 +356,7 @@ class IntakeService:
             self.pool.submit(self.run, row)
             return self.get(case_id)
 
+    @track_case("initial_retrieval", "case_id")
     def payload(self, case_id):
         case = self.cases.get(case_id)
         if hashlib.sha256(self.cases.original(case_id).read_bytes()).hexdigest() != case["sha256"]:
@@ -318,7 +364,8 @@ class IntakeService:
         sources, chunks = self.library.snapshot(case_id)
         linked = self.library.linked_collections(case_id)
         candidates = {}
-        index = RetrievalIndex(chunks)
+        prepared = getattr(self.library, "prepared_terms", lambda _: {})(chunks)
+        index = RetrievalIndex(chunks, prepared_terms=prepared)
         base = {"case_id": case_id, "allowed_collection_ids": linked}
         queries = [
             *case["identification"]["requests"],
@@ -363,6 +410,7 @@ class IntakeService:
             },
         }
 
+    @track_case("initial_review", "row")
     def run(self, row):
         case_id = row["case_id"]
         started = perf_counter()
@@ -548,8 +596,13 @@ def intake_router(service):
     router = APIRouter(prefix="/api/cases/{case_id}/initial-review")
 
     @router.get("")
-    def get(case_id: str):
-        return service.get(case_id)
+    def get(case_id: str, compact: bool = False):
+        result = service.get(case_id)
+        if compact:
+            result = {k: v for k, v in result.items() if k != "consulted_sources"}
+            if result.get("scope"):
+                result["scope"] = {k: v for k, v in result["scope"].items() if k != "catalog"}
+        return result
 
     @router.post("/analyze", status_code=202)
     def analyze(case_id: str, body: IntakeStart):
@@ -558,6 +611,10 @@ def intake_router(service):
     @router.put("/decision")
     def decide(case_id: str, body: IntakeDecision):
         return service.decide(case_id, body)
+
+    @router.put("/pilot-mode")
+    def pilot_mode(case_id: str, body: PilotReviewMode):
+        return service.pilot_mode(case_id, body)
 
     @router.get("/history")
     def history(case_id: str):

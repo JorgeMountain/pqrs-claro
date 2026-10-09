@@ -10,6 +10,7 @@ import pymupdf
 from openai import OpenAI, OpenAIError
 
 from .models import MAX_PAGES, MAX_PDF_BYTES, MAX_TEXT_CHARS, DomainError, Page, validate_pages
+from .performance_metrics import metrics_http_client, provider_call
 
 
 class OpenAIOCR:
@@ -17,12 +18,13 @@ class OpenAIOCR:
 
     def __init__(self, api_key: str, model: str) -> None:
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=90.0, max_retries=2)
+        self.client = OpenAI(api_key=api_key, timeout=90.0, max_retries=2,
+                             http_client=metrics_http_client())
 
     def __call__(self, png_bytes: bytes) -> str:
         data_url = "data:image/png;base64," + base64.b64encode(png_bytes).decode("ascii")
         try:
-            response = self.client.responses.create(
+            response = provider_call("extraction.ocr", self.client.responses.create,
                 model=self.model,
                 store=False,
                 truncation="disabled",

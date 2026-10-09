@@ -12,7 +12,7 @@ test('muestra el resumen y JEV antes de confirmar la identificación',()=>{
   assert.match(summary,/1 petición analizada/);
   assert.doesNotMatch(summary,/Confirma las peticiones identificadas/);
   assert.match(initialRequestContent(current,ready).P1.header,/Tipo sugerido · JEV/);
-  assert.match(initialConfirmation(current,ready),/Confirmar y preparar respuestas/);
+  assert.match(initialConfirmation(current,ready),/Buscar fuentes y redactar/);
 });
 
 test('durante el análisis muestra progreso sin clasificación inventada',()=>{
@@ -53,4 +53,16 @@ test('distingue peticiones conservadas, reintento y análisis completo',()=>{
   assert.match(initialReviewSummary(current,{...ready,status:'error',error:'Fallo simulado',next_analysis:analysis_work}),/Reintentar pendientes/);
   assert.match(initialReviewSummary(current,ready),/live-initial-full/);
   assert.match(initialReviewSummary(current,ready),/Reanalizar todo con IA/);
+});
+
+
+test('una ruta alternativa guardada exige cambiar expresamente las rutas',()=>{
+  const routed={...ready,status:'routed',document_decision:{route:'specialist',reviewed:true},decisions:[{request_id:'P1',route:'specialist',reviewed:true}],reviewed_by:'Gestor ficticio'};
+  const html=initialConfirmation(current,routed);
+  assert.match(html,/<button[^>]*data-action="live-initial-confirm"[^>]*>Buscar fuentes y redactar/);
+  assert.match(html,/<button[^>]*data-action="live-initial-confirm"[^>]*disabled/);
+  assert.doesNotMatch(html,/Volver a la bandeja|Decisión guardada<\/button>/);
+  assert.match(html,/cambia expresamente esas rutas/);
+  assert.doesNotMatch(html,/<button[^>]*data-action="live-initial-route"[^>]*hidden/);
+  assert.match(html,/name="reviewed-all" required checked/);
 });

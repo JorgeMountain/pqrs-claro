@@ -7,6 +7,7 @@ from openai import OpenAI, OpenAIError
 from pydantic import Field, ValidationError
 
 from .models import DomainError, StrictModel
+from .performance_metrics import metrics_http_client, provider_call
 from .review_engine import _context, validate_review_input
 from .review_models import ReviewParagraph
 
@@ -42,7 +43,8 @@ breve y legible de los cambios) y paragraphs según el esquema."""
 class OpenAIResponseProposalEngine:
     def __init__(self, api_key, model):
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2)
+        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
+                             http_client=metrics_http_client())
 
     def propose(self, row):
         value = validate_review_input(row["request_snapshot"], row)
@@ -51,7 +53,7 @@ class OpenAIResponseProposalEngine:
         if len(serialized) > 600000:
             raise DomainError("La respuesta supera el contexto admitido para proponer un ajuste.")
         try:
-            result = self.client.responses.parse(
+            result = provider_call("proposal.write", self.client.responses.parse,
                 model=self.model,
                 instructions=INSTRUCTIONS,
                 input=serialized,

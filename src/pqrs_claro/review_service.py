@@ -8,9 +8,10 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
+from .document_decisions import canonical_document_decision
 from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError
-from .document_decisions import canonical_document_decision
+from .performance_metrics import track_case
 from .review_store import ReviewStore
 from .service import user_error
 from .source_assessment import _allowed_roles
@@ -267,10 +268,14 @@ class ReviewService:
             draft_run = self.drafts_service.get(case_id)
             draft_current = draft_run["status"] in {"ready", "partial"} and not draft_run["stale"]
             results = {r["request_id"]: r for r in draft_run.get("results", [])}
-            if not before_draft and not previous and (
-                not draft_current
-                or len(results) != len(findings)
-                or any(r["status"] == "error" for r in results.values())
+            if (
+                not before_draft
+                and not previous
+                and (
+                    not draft_current
+                    or len(results) != len(findings)
+                    or any(r["status"] == "error" for r in results.values())
+                )
             ):
                 raise Conflict("Prepara primero los borradores actuales de todas las solicitudes.")
             for request in build_source_requests(
@@ -283,14 +288,22 @@ class ReviewService:
                 if results.get(request["id"], {}).get("status") == "error":
                     draft = {}
                 expected_review = draft_run.get("review_snapshots", {}).get(request["id"])
-                if old and not old["paragraphs"] and expected_review and (
-                    self.drafts_service._review_input(old) != expected_review
+                if (
+                    old
+                    and not old["paragraphs"]
+                    and expected_review
+                    and (self.drafts_service._review_input(old) != expected_review)
                 ):
                     draft = {}
                 supports = self._supports(request, finding, chunks)
                 pending = self._pending((old or {}).get("pending", []), finding, draft, request)
                 adopting = bool(old and not old["paragraphs"] and draft.get("paragraphs"))
-                if old and old["base_fingerprint"] == fingerprint and not old["stale"] and not adopting:
+                if (
+                    old
+                    and old["base_fingerprint"] == fingerprint
+                    and not old["stale"]
+                    and not adopting
+                ):
                     continue
                 if old:
                     row = deepcopy(old)
@@ -344,8 +357,11 @@ class ReviewService:
                         sufficiency=deepcopy(finding.get("sufficiency", {})),
                     )
                 if adopting:
-                    row.update(paragraphs=[{**p, "cited_fact_ids": []} for p in draft["paragraphs"]],
-                               draft_run_id=draft_run["id"], pre_draft=False)
+                    row.update(
+                        paragraphs=[{**p, "cited_fact_ids": []} for p in draft["paragraphs"]],
+                        draft_run_id=draft_run["id"],
+                        pre_draft=False,
+                    )
                 self.store.save(
                     row,
                     expected=(old or {}).get("revision", 0),
@@ -430,16 +446,30 @@ class ReviewService:
                     item["resolution"] = None
                     continue
                 if item.get("state") == "analysis_error":
-                    raise ValueError("Un error de análisis debe corregirse al actualizar las fuentes; no se resuelve con una confirmación.")
+                    raise ValueError(
+                        "Un error de análisis debe corregirse al actualizar las fuentes; "
+                        "no se resuelve con una confirmación."
+                    )
                 if resolution.get("document_decision"):
                     resolution = canonical_document_decision(row, item, resolution)
                 if row.get("pre_draft") and resolution["action"] == "resolved":
-                    selected = [s for s in row["available_supports"]
-                                if s["chunk_id"] in resolution["cited_chunk_ids"]]
+                    selected = [
+                        s
+                        for s in row["available_supports"]
+                        if s["chunk_id"] in resolution["cited_chunk_ids"]
+                    ]
                     if not selected or resolution["cited_fact_ids"]:
-                        raise ValueError("Antes de redactar, confirma con un pasaje documental o agrega la evidencia al expediente.")
-                    if item["kind"] == "document" and not any(s.get("role") == "document" for s in selected):
-                        raise ValueError("Localiza el documento solicitado; una norma o una mención no sustituye su archivo.")
+                        raise ValueError(
+                            "Antes de redactar, confirma con un pasaje documental "
+                            "o agrega la evidencia al expediente."
+                        )
+                    if item["kind"] == "document" and not any(
+                        s.get("role") == "document" for s in selected
+                    ):
+                        raise ValueError(
+                            "Localiza el documento solicitado; "
+                            "una norma o una mención no sustituye su archivo."
+                        )
                 if (
                     resolution["action"] == "resolved"
                     and item["kind"] == "document"
@@ -453,8 +483,12 @@ class ReviewService:
                     for k in ("action", "note", "cited_chunk_ids", "cited_fact_ids")
                 }
                 if resolution.get("document_decision"):
-                    value.update({k: resolution[k] for k in (
-                        "document_decision", "document_source_id", "document_version")})
+                    value.update(
+                        {
+                            k: resolution[k]
+                            for k in ("document_decision", "document_source_id", "document_version")
+                        }
+                    )
                 old = item["resolution"]
                 if old and all(old.get(key) == value[key] for key in value):
                     continue
@@ -528,6 +562,7 @@ class ReviewService:
 
         return self.engine or OpenAIReviewEngine(self.settings.api_key, self.settings.model)
 
+    @track_case("review", "original")
     def run(self, original):
         from .review_graph import build_review_graph
 
@@ -594,7 +629,7 @@ class ReviewService:
                 self.active.discard(key)
 
     def approve(self, case_id, request_id, approval):
-        if getattr(self, 'initial_review', None):
+        if getattr(self, "initial_review", None):
             self.initial_review.assert_allowed(case_id)
         from .review_graph import build_review_graph
 
@@ -696,7 +731,7 @@ class ReviewService:
         return {"revisions": self.store.history(case_id, request_id), "limit": 100}
 
     def approved(self, case_id):
-        if getattr(self, 'initial_review', None):
+        if getattr(self, "initial_review", None):
             self.initial_review.assert_allowed(case_id)
         with self.lock:
             value = self.get(case_id)

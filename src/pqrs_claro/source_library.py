@@ -188,7 +188,12 @@ class SourceLibrary:
                 CREATE TABLE IF NOT EXISTS source_relationships(
                     source_id TEXT, target_id TEXT, kind TEXT, body TEXT,
                     PRIMARY KEY(source_id,target_id,kind));
+                CREATE INDEX IF NOT EXISTS sources_collection_scope
+                    ON sources(COALESCE(json_extract(body,'$.collection_id'),''));
+                CREATE INDEX IF NOT EXISTS source_runs_case ON source_runs(case_id);
             """)
+            from .source_preparation import install
+            install(conn)
 
     @contextmanager
     def connect(self):
@@ -230,6 +235,31 @@ class SourceLibrary:
         source["is_latest"] = source["version"] == row[2]
         return {"source": source, "pages": pages}
 
+    def scoped(self, case_id, *, evidence_only=False):
+        """Filter in SQLite before decoding metadata; preserve catalog order and scope."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT s.body FROM sources s INDEXED BY sources_collection_scope WHERE "
+                "COALESCE(json_extract(s.body,'$.collection_id'),'') IN "
+                "(SELECT '' UNION SELECT collection_id FROM case_source_collections "
+                "WHERE case_id=?) "
+                "AND (json_extract(s.body,'$.case_id') IS NULL "
+                "OR json_extract(s.body,'$.case_id')=?) "
+                "AND s.version=(SELECT max(other.version) FROM sources other "
+                "WHERE other.document_id=s.document_id) "
+                "AND COALESCE(json_extract(s.body,'$.validity'),'')!='superseded' "
+                "AND COALESCE(json_extract(s.body,'$.category'),'')!='previous_response' "
+                + (
+                    "AND COALESCE(json_extract(s.body,'$.category'),'')!='archive_only' "
+                    "AND (json_type(s.body,'$.extraction_status') IS NULL OR "
+                    "json_extract(s.body,'$.extraction_status') IN ('ready','partial')) "
+                    if evidence_only else ""
+                )
+                + "ORDER BY s.rowid DESC",
+                (case_id, case_id),
+            ).fetchall()
+        return [{**json.loads(row[0]), "is_latest": True} for row in rows]
+
     def original(self, source_id, case_id=None):
         source = self.get(source_id, case_id)["source"]
         path = self.root / source_id / ("original" + Path(source["filename"]).suffix.lower())
@@ -241,8 +271,19 @@ class SourceLibrary:
             raise DomainError("El original cambió fuera de la biblioteca. Carga una nueva versión.")
         return path
 
-    def add(self, filename, data, *, title, category, origin, case_id=None, document_id=None,
-            retain_unreadable=False, collection_id=None):
+    def add(
+        self,
+        filename,
+        data,
+        *,
+        title,
+        category,
+        origin,
+        case_id=None,
+        document_id=None,
+        retain_unreadable=False,
+        collection_id=None,
+    ):
         filename = Path(filename.replace("\\", "/")).name[:180]
         extension = Path(filename).suffix.lower()
         if extension not in {".pdf", ".docx", ".txt", *IMAGE_FORMATS}:
@@ -250,7 +291,11 @@ class SourceLibrary:
         if not data or len(data) > MAX_SOURCE_BYTES:
             raise DomainError("Selecciona una fuente de hasta 20 MB.")
         historical = category in {"historical_response", "historical_attachment"}
-        if (category not in CATEGORIES and not historical) or not title.strip() or not origin.strip():
+        if (
+            (category not in CATEGORIES and not historical)
+            or not title.strip()
+            or not origin.strip()
+        ):
             raise DomainError("Indica título, tipo y procedencia de la fuente.")
         if historical and not collection_id:
             raise DomainError("Los antecedentes necesitan una colección de procedencia.")
@@ -258,15 +303,18 @@ class SourceLibrary:
             raise DomainError("Un soporte del caso debe asociarse a un expediente.")
         sha = hashlib.sha256(data).hexdigest()
         with self.lock:
-            if collection_id and collection_id not in {c['id'] for c in self.collections()}:
+            if collection_id and collection_id not in {c["id"] for c in self.collections()}:
                 raise KeyError("Colección no encontrada.")
             previous = [s for s in self.list(case_id) if s["document_id"] == document_id]
             if document_id and not previous:
                 raise KeyError("Documento no encontrado.")
             if previous:
                 last = max(previous, key=lambda s: s["version"])
-                if (last["case_id"] != case_id or last["category"] != category
-                        or last.get("collection_id") != collection_id):
+                if (
+                    last["case_id"] != case_id
+                    or last["category"] != category
+                    or last.get("collection_id") != collection_id
+                ):
                     raise DomainError(
                         "La nueva versión debe conservar el tipo y expediente del documento."
                     )
@@ -306,11 +354,17 @@ class SourceLibrary:
                     location_kind=kind,
                 )
                 if collection_id:
-                    source.update(collection_id=collection_id,
-                                  document_status="unknown", verification_status="pending")
+                    source.update(
+                        collection_id=collection_id,
+                        document_status="unknown",
+                        verification_status="pending",
+                    )
                 if extraction_error:
-                    source.update(extraction_status="error", extraction_error=extraction_error,
-                                  extraction_note=extraction_error)
+                    source.update(
+                        extraction_status="error",
+                        extraction_error=extraction_error,
+                        extraction_note=extraction_error,
+                    )
                 if extension in IMAGE_FORMATS and not extraction_error:
                     provider = self.pdf_extractor.ocr_provider
                     source.update(
@@ -377,10 +431,17 @@ class SourceLibrary:
     def snapshot(self, case_id):
         with self.lock:
             sources = self.eligible(case_id)
-            source_ids = {s["id"] for s in sources}
+            source_ids = [s["id"] for s in sources]
+            pages = {}
             with self.connect() as conn:
-                rows = conn.execute("SELECT id,pages FROM sources").fetchall()
-            pages = {row[0]: json.loads(row[1]) for row in rows if row[0] in source_ids}
+                # Bound the parameters and memory even when a case links a large collection.
+                for offset in range(0, len(source_ids), 400):
+                    batch = source_ids[offset:offset + 400]
+                    rows = conn.execute(
+                        "SELECT id,pages FROM sources WHERE id IN ("
+                        + ",".join("?" for _ in batch) + ")", batch,
+                    )
+                    pages.update((row[0], json.loads(row[1])) for row in rows)
             chunks = []
             for source in sources:
                 path = (
@@ -452,17 +513,12 @@ class SourceLibrary:
             )
         return sorted(collection_ids)
 
+    def prepared_terms(self, chunks):
+        from .source_preparation import load_terms
+        return load_terms(self, chunks)
+
     def eligible(self, case_id):
-        linked = set(self.linked_collections(case_id))
-        return [
-            s
-            for s in self.list(case_id)
-            if s["is_latest"]
-            and s["category"] not in {"previous_response", "archive_only"}
-            and s["validity"] != "superseded"
-            and s.get("extraction_status", "ready") in {"ready", "partial"}
-            and (not s.get("collection_id") or s["collection_id"] in linked)
-        ]
+        return self.scoped(case_id, evidence_only=True)
 
     def save_run(self, run):
         with self.connect() as conn:

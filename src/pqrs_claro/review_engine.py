@@ -12,6 +12,7 @@ from pydantic import Field, ValidationError
 
 from .draft_engine import aliased_sufficiency, citation_context
 from .models import DomainError, StrictModel
+from .performance_metrics import metrics_http_client, provider_call
 from .review_models import FactInput, PendingResolutionInput, ReviewParagraph
 from .source_assessment import _allowed_roles, _historical_document_status
 from .source_documents import requested_document
@@ -493,7 +494,8 @@ class OpenAIReviewEngine:
 
     def __init__(self, api_key: str, model: str) -> None:
         self.model = model
-        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2)
+        self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
+                             http_client=metrics_http_client())
 
     def assess(self, request: dict, review: dict) -> dict:
         value = validate_review_input(request, review)
@@ -517,7 +519,7 @@ class OpenAIReviewEngine:
                 "sin omitir la información necesaria para responder."
             )
         try:
-            response = self.client.responses.parse(
+            response = provider_call("review.assess", self.client.responses.parse,
                 model=self.model,
                 instructions=_INSTRUCTIONS,
                 input=serialized,

@@ -16,6 +16,8 @@ import shutil
 import sqlite3
 import threading
 import time
+from collections import OrderedDict
+from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable
 
@@ -117,6 +119,7 @@ class SemanticIndex:
         model_key: str = MODEL_KEY,
         batch_size: int = 8,
         threads: int | None = None,
+        matrix_cache_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self.cache_dir = Path(cache_dir)
         self.model_key = model_key
@@ -128,11 +131,16 @@ class SemanticIndex:
             "encoded": 0,
             "prepared": 0,
             "queries": 0,
+            "matrix_builds": 0,
+            "matrix_hits": 0,
+            "matrix_cache_bytes": 0,
         }
         self._factory = model_factory or (lambda path: _load_model(path, threads=threads))
         self._model: Any = None
         self._vectors: dict[str, Any] = {}
-        self._queries: dict[str, Any] = {}
+        self._queries: OrderedDict[str, Any] = OrderedDict()
+        self._matrices: OrderedDict[tuple[str, ...], Any] = OrderedDict()
+        self._matrix_budget = max(0, matrix_cache_bytes)
         self._failed = False
         self._lock = threading.RLock()
 
@@ -182,26 +190,33 @@ class SemanticIndex:
                     self.diagnostics["prepared"] = len(texts)
                     return True
                 self.cache_dir.mkdir(parents=True, exist_ok=True)
-                with sqlite3.connect(
+                with closing(sqlite3.connect(
                     self.cache_dir / "embeddings.sqlite", timeout=60
-                ) as connection:
+                )) as connection, connection:
                     connection.execute(
                         "CREATE TABLE IF NOT EXISTS embeddings ("
                         "model_key TEXT NOT NULL, text_key TEXT NOT NULL, "
                         "dimensions INTEGER NOT NULL, "
                         "vector BLOB NOT NULL, PRIMARY KEY(model_key, text_key))"
                     )
-                    for key, dimensions, value in connection.execute(
-                        "SELECT text_key, dimensions, vector FROM embeddings WHERE model_key = ?",
-                        (self.model_key,),
-                    ):
-                        if key not in pending:
-                            continue
-                        vector = np.frombuffer(value, dtype="<f4")
-                        if len(vector) == dimensions and np.isfinite(vector).all() and vector.any():
-                            self._vectors[key] = self._normalize(vector)
-                            pending.remove(key)
-                            self.diagnostics["cached"] += 1
+                    # Use the composite primary key instead of loading every saved
+                    # vector, including vectors outside the current collection.
+                    pending_keys = sorted(pending)
+                    for offset in range(0, len(pending_keys), 400):
+                        batch = pending_keys[offset : offset + 400]
+                        placeholders = ",".join("?" for _ in batch)
+                        rows = connection.execute(
+                            "SELECT text_key, dimensions, vector FROM embeddings "
+                            f"WHERE model_key = ? AND text_key IN ({placeholders})",
+                            (self.model_key, *batch),
+                        )
+                        for key, dimensions, value in rows:
+                            vector = np.frombuffer(value, dtype="<f4")
+                            if (len(vector) == dimensions and np.isfinite(vector).all()
+                                    and vector.any()):
+                                self._vectors[key] = self._normalize(vector)
+                                pending.remove(key)
+                                self.diagnostics["cached"] += 1
                     # El padding de ONNX alcanza el texto más largo del lote.
                     # Agrupar longitudes evita rellenar párrafos breves de DOCX
                     # hasta 512 tokens, sin recortar ni cambiar su contenido.
@@ -251,19 +266,41 @@ class SemanticIndex:
             try:
                 import numpy as np
 
-                if not self.prepare(eligible):
-                    return []
+                keys = tuple(_text_key(_document_text(chunk)) for chunk in eligible)
+                matrix = self._matrices.get(keys)
+                if matrix is None:
+                    if not self.prepare(eligible):
+                        return []
+                    matrix = np.stack([self._vectors[key] for key in keys])
+                    self.diagnostics["matrix_builds"] += 1
+                    # Account for numeric storage and the key strings; cap the
+                    # number of scopes too. Large scopes still work without caching.
+                    size = matrix.nbytes + sum(len(key) + 64 for key in keys) + 128
+                    if size <= self._matrix_budget:
+                        while self._matrices and (
+                            self.diagnostics["matrix_cache_bytes"] + size > self._matrix_budget
+                            or len(self._matrices) >= 4
+                        ):
+                            old_keys, old_matrix = self._matrices.popitem(last=False)
+                            self.diagnostics["matrix_cache_bytes"] -= (
+                                old_matrix.nbytes + sum(len(key) + 64 for key in old_keys) + 128
+                            )
+                        self._matrices[keys] = matrix
+                        self.diagnostics["matrix_cache_bytes"] += size
+                else:
+                    self._matrices.move_to_end(keys)
+                    self.diagnostics["matrix_hits"] += 1
                 if query not in self._queries:
                     vectors = list(self._embedding_model().embed([f"query: {query}"], batch_size=1))
                     if len(vectors) != 1:
                         raise ValueError("El modelo no devolvió el vector de la consulta")
                     self._queries[query] = self._normalize(vectors[0])
                     self.diagnostics["queries"] += 1
-                # Matriz construida exclusivamente desde eligible: el índice puede
-                # contener otros expedientes, pero nunca amplía el alcance de consulta.
-                matrix = np.stack(
-                    [self._vectors[_text_key(_document_text(chunk))] for chunk in eligible]
-                )
+                    if len(self._queries) > 128:
+                        self._queries.popitem(last=False)
+                self._queries.move_to_end(query)
+                # Matrices cache only vectors in eligible order, never metadata.
+                # Current identifiers, permissions and citations come from eligible.
                 scores = matrix @ self._queries[query]
                 positions = sorted(
                     range(len(eligible)),

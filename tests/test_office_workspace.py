@@ -1,7 +1,14 @@
+# ruff: noqa: F811 -- pytest fixtures are intentionally imported and injected by name.
 from copy import deepcopy
 
-from test_office_service_api import inputs, metadata, office_app, preview
+from test_office_service_api import (
+    inputs,
+    metadata,
+    office_app,  # noqa: F401
+    preview,
+)
 from test_review_service_api import approve, assess, current, prepare
+
 
 def test_valid_previous_analysis_remains_current_but_changes_and_errors_do_not(
     office_app, monkeypatch

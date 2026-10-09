@@ -8,6 +8,14 @@ from .models import StrictModel
 
 CheckKey = Literal["requirements", "respect", "repetition", "classification"]
 DocumentRoute = Literal["continue", "complement", "reject", "specialist"]
+
+
+class PilotReviewMode(StrictModel):
+    version: int = Field(ge=1)
+    revision: int = Field(ge=0)
+    enabled: StrictBool
+
+
 RequestRoute = Literal["continue", "reiterate", "specialist"]
 PetitionType = Literal[
     "information",

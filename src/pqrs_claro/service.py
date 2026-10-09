@@ -11,6 +11,7 @@ from .config import Settings
 from .extraction import OpenAIOCR, PDFExtractor
 from .identification import OpenAIIdentifier
 from .models import Identification, Page, validate_identification
+from .performance_metrics import track_case
 from .storage import CaseStore, Conflict, now
 from .workflow import build_graph
 
@@ -67,11 +68,13 @@ class CaseService:
                 case_id,
                 status="reading",
                 error=None,
+                error_diagnostic=None,
                 event="Análisis solicitado. El original permanece guardado.",
             )
             self.pool.submit(self.run, case_id)
             return case
 
+    @track_case("identification", "case_id")
     def run(self, case_id):
         config = {"configurable": {"thread_id": case_id}}
         try:
@@ -124,10 +127,12 @@ class CaseService:
                     case_id, snapshot.values, confirmed=bool(snapshot.values.get("confirmed"))
                 )
         except Exception as exc:
+            diagnostic = getattr(exc, "diagnostic", None)
             self.store.update(
                 case_id,
                 status="error",
                 error=user_error(exc),
+                error_diagnostic={**diagnostic, "at": now()} if diagnostic else None,
                 event=f"Proceso detenido: {type(exc).__name__}. Avance conservado.",
             )
         finally:

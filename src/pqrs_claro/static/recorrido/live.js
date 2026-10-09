@@ -1,8 +1,9 @@
-import {reviewNavigation,reviewItems,nextReviewIndex,focusReviewPetition,syncReviewNavigation,suggestedReviewer} from './review-navigation.js?v=phase4';
+import {reviewNavigation,reviewItems,nextReviewIndex,focusReviewPetition,syncReviewNavigation,suggestedReviewer} from './review-navigation.js?v=review-context2';
 import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=phase2';
 import {createFinal} from './live-document.js?v=phase2';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
+import {watchPreparation} from './library-progress.js';
 import {renderCaseNavigation} from './live-case-navigation.js?v=phase2';
 import {createProposalPanel} from './live-proposal.js?v=20260919-supports';
 import {createPendingActions} from './live-pending.js?v=20260919-supports';
@@ -12,8 +13,9 @@ import {createIdentificationActions} from './identification-actions.js';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
 import {createEvidenceUpload} from '/library-evidence.js';
-import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=phase4';
-import {confirmAndPrepare} from './initial-confirmation.js?v=phase2';
+import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=review-context2';
+import {confirmAndPrepare} from './initial-confirmation.js?v=review-context2';
+import {pilotReviewControls} from './pilot-review.js?v=pilot1';
 
 async function api(path,body,method='POST'){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
@@ -38,14 +40,14 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
   }
   function draftFeedback(){const status=view.querySelector('[data-draft-status]');if(status){status.textContent=draftMessage;status.setAttribute('role',draftProblem?'alert':'status');}}
   window.addEventListener('beforeunload',event=>{if(draftProblem&&initialForm){event.preventDefault();event.returnValue='';}});
-  async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(settings.management_enabled){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}}if(initialEnabled&&!document.querySelector('.fiaga-environment')){const banner=document.createElement('div');banner.className='fiaga-environment';banner.textContent=settings.environment_label||'PQRS · revisión inicial y confirmación humana';document.querySelector('header').after(banner);}}
+  async function config(){if(configLoaded)return;const settings=await api('/api/config');initialEnabled=Boolean(settings.initial_review_enabled);automaticInitial=Boolean(settings.automatic_initial_review);configLoaded=true;if(settings.management_enabled){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}}}
   function initialSteps(){
     document.querySelector('[data-step="1"]').innerHTML=`<span>1</span> ${initialEnabled&&current?'Procesar solicitud':'Entender la petición'}`;
   }
   const initialDirty=()=>Boolean(initialForm&&initialForm.case_id===current?.id&&initialForm.revision===initial.revision);
   const closed=()=>current?.management?.state==='closed';
   const canNavigate=()=>closed()||canPrepare();
-  const canPrepare=()=>initialReady(initial)&&initial.can_prepare&&!initialDirty();
+  const canPrepare=()=>initial.can_prepare&&(initial.pilot_bypass_active||initialReady(initial)&&!initialDirty());
   const rememberDecision=event=>{
     if(!current||event.target.form?.id!=='initial-decision-form')return;
     if(event.target.name!=='reviewed-all')view.querySelector('[name="reviewed-all"]').checked=false;
@@ -101,6 +103,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial})+reviewNavigation(current,initial,initialForm,{cursor:reviewCursor,busy}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
     else if(step===2)view.innerHTML=job.status?responses(current,job,mapping,drafts,review):'<h1>Respuestas para revisar</h1><p role="status">Recuperando el avance guardado…</p>';
     else {const paper=final.view();if(view.firstChild!==paper)view.replaceChildren(paper);}
+    if(step===1&&initialEnabled)view.insertAdjacentHTML('beforeend',pilotReviewControls(current,initial,{busy}));
     renderCaseNavigation(view,current,{step,showMail:Boolean(showMail)});
     if(current.error&&current.identification)view.insertAdjacentHTML('afterbegin',`<p role="alert" class="alert">${esc(current.error)}</p><button data-action="live-analyze">Reintentar identificación</button>`);
     if(step===1&&data){bindOriginal(state,number=>run(()=>loadPage(number)));release=bindSplitPane();}
@@ -146,12 +149,12 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     if(next.version!==current.version){current=next;adapt();if(step===1&&current.pages.length)await loadPage(state.originalPage);}
     current.analysis_running=next.analysis_running;current.management=next.management;
     if(initialEnabled&&current.identification){
-      const value=await api(path('/initial-review'));if(sequence!==token||current?.id!==id)return;
+      const value=await api(path('/initial-review?compact=true'));if(sequence!==token||current?.id!==id)return;
       const changed=value.revision!==initial.revision;
       initial=value;if(changed||!initialForm)recoverDraft();if(!canNavigate()&&[2,3].includes(step))step=1;
     }
     if(current.status==='confirmed'){
-      const results=await Promise.all([api(path('/preparation')),api(path('/sources')),api(path('/drafts')),api(path('/review'))]);
+      const results=await Promise.all([api(path('/preparation')),api(path('/sources?compact=true')),api(path('/drafts')),api(path('/review'))]);
       if(sequence!==token||current?.id!==id)return;[job,mapping,drafts,review]=results;
 
     }
@@ -198,7 +201,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
     const caseId=current.id;
     open('Fuentes de consulta','<div id="live-groups" role="status"><span class="source-loading"><span class="source-spinner" aria-hidden="true"></span>Cargando colecciones…</span></div>');const container=document.querySelector('#live-groups');
     const groups=await api('/api/source-collections?case_id='+caseId);if(!container.isConnected||current?.id!==caseId)return;
-    container.innerHTML=`<p>Estas colecciones delimitan los antecedentes que se consultarán para esta petición. Las normas compartidas y los soportes del expediente también se consideran.</p><form id="live-groups-form">${groups.collections.map(c=>`<label class="check"><input type="checkbox" name="collection" value="${esc(c.id)}" ${groups.linked_collection_ids.includes(c.id)?'checked':''}>${esc(c.name||c.id)}</label>`).join('')}<button class="primary">Guardar fuentes de consulta</button></form><p id="live-groups-error" role="alert"></p>`;
+    container.innerHTML=`<p>Estas colecciones delimitan los antecedentes que se consultarán para esta petición. Las normas compartidas y los soportes del expediente también se consideran.</p><p id="live-library-progress" role="status" aria-live="polite">Consultando preparación de la biblioteca…</p><form id="live-groups-form">${groups.collections.map(c=>`<label class="check"><input type="checkbox" name="collection" value="${esc(c.id)}" ${groups.linked_collection_ids.includes(c.id)?'checked':''}>${esc(c.name||c.id)}</label>`).join('')}<button class="primary">Guardar fuentes de consulta</button></form><p id="live-groups-error" role="alert"></p>`;
+    void watchPreparation(document.querySelector('#live-library-progress'), api);
     document.querySelector('#live-groups-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('button').disabled=true;
       try{if(current?.id!==caseId)throw new Error('El expediente cambió.');await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');close();await refresh();notice('Fuentes de consulta guardadas.');}catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}}
     };
@@ -238,7 +242,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       const url=URL.createObjectURL(new Blob([JSON.stringify(copy,null,2)],{type:'application/json'}));
       const link=document.createElement('a');link.href=url;link.download=`borrador-${current.id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
     }
-    const decision=b.dataset.action==='live-initial-confirm'?readInitialDecision(view,current,initial):null;
+    const rawDecision=['live-initial-confirm','live-initial-route'].includes(b.dataset.action)?readInitialDecision(view,current,initial):null;
+    const decision=rawDecision;
     if(decision){
       updateInitialConfirmation(view,initial,decision,{saved:canPrepare()});
       const form=view.querySelector('#initial-decision-form');
@@ -251,20 +256,31 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse}){
       if(!form.reportValidity())return;
     }
     run(async()=>{switch(b.dataset.action){
+        case 'live-pilot-continue':{
+          if(initialForm&&!persistDraft())throw new Error('Guarda o descarga tu borrador antes de continuar.');
+          if(!initial.pilot_bypass_active)await api(path('/initial-review/pilot-mode'),{version:current.version,revision:initial.revision,enabled:true},'PUT');
+          await refresh();
+          await api(path('/preparation'),{version:current.version});step=2;await refresh();break;
+        }
+        case 'live-pilot-require':{
+          await api(path('/initial-review/pilot-mode'),{version:current.version,revision:initial.revision,enabled:false},'PUT');
+          await refresh();break;
+        }
       case 'live-initial-full':
       case 'live-initial-analyze':{const target=current.id;const next=await api(path('/initial-review/analyze'),{version:current.version,revision:initial.revision||0,mode:b.dataset.action==='live-initial-full'?'full':'incremental'});if(current?.id!==target)break;initial=next;initialForm=null;await refresh();break;}
+      case 'live-initial-route':
       case 'live-initial-confirm':{
         if(!decision||!initialReady(initial))break;
         const caseId=current.id;initialActionError='';
         try{
-          const result=await confirmAndPrepare({saved:canPrepare()?initial:null,decision,report:initial.report,
+          const result=await confirmAndPrepare({saved:b.dataset.action==='live-initial-confirm'&&canPrepare()?initial:null,decision,report:initial.report,
             save:body=>api(`/api/cases/${caseId}/initial-review/decision`,body,'PUT'),
             onSaved:value=>{try{draftStore.clear(caseId);}catch{notice('La revisión quedó confirmada. No se pudo retirar la copia del borrador de este navegador.');}if(current?.id===caseId){initial=value;initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;}},
             prepare:async()=>{const latest=await api(`/api/cases/${caseId}`);return api(`/api/cases/${caseId}/preparation`,{version:latest.version});}});
           if(current?.id!==caseId)break;
           if(result.error){initialActionError=result.error;await refresh();break;}
           if(result.prepared){step=2;await refresh();}
-          else {await refresh();notice('Decisión guardada. La ruta elegida mantiene el expediente en este paso.');}
+          else {await refresh();notice('Ruta alternativa guardada. Para preparar respuestas, cambia expresamente las rutas a Continuar y confirma la revisión.');}
         }catch(error){if(current?.id===caseId)initialActionError=error.message;}
         break;
       }

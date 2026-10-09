@@ -112,6 +112,26 @@ def source_app(tmp_path, request):
         yield app, client, assessor, settings
 
 
+def test_preparation_progress_and_retry_are_available_without_ai(source_app):
+    app, client, assessor, _ = source_app
+    app.state.library_preparation.close()
+    assert upload_source(client).status_code == 201
+    status = client.get("/api/library/preparation").json()
+    assert status["total"] == 1 and status["queued"] == 1
+    with app.state.library.connect() as connection:
+        connection.execute("UPDATE source_index_jobs SET status='error',error='TestError'")
+    response = client.post("/api/library/preparation/retry")
+    assert response.status_code == 200
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        status = client.get("/api/library/preparation").json()
+        if status["ready"] == 1:
+            break
+        time.sleep(0.01)
+    assert status["ready"] == 1 and status["error"] == 0
+    assert not assessor.calls
+
+
 def wait_case(client, case_id):
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:

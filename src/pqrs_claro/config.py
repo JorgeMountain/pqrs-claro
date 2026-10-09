@@ -44,4 +44,9 @@ class Settings:
         )
         data = Path(os.environ.get("PQRS_CLARO_DATA_DIR", str(ROOT / "data")))
         port = int(os.environ.get("PQRS_CLARO_PORT") or local.get("PQRS_CLARO_PORT") or 8770)
-        return cls(data_dir=data, api_key=key, model=model, port=port)
+        draft_concurrency = int(os.environ.get("PQRS_CLARO_DRAFT_CONCURRENCY")
+                                or local.get("PQRS_CLARO_DRAFT_CONCURRENCY") or 3)
+        if not 1 <= draft_concurrency <= 6:
+            raise ValueError("PQRS_CLARO_DRAFT_CONCURRENCY debe estar entre 1 y 6.")
+        return cls(data_dir=data, api_key=key, model=model, port=port,
+                   draft_concurrency=draft_concurrency)

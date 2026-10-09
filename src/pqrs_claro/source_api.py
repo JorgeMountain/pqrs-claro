@@ -142,8 +142,11 @@ def source_router(library, service, cases):
         return library.review(source_id, case_id=case_id or body.case_id, **values)
 
     @router.get("/api/cases/{case_id}/sources")
-    def mapping(case_id: str):
-        return service.get(case_id)
+    def mapping(case_id: str, compact: bool = False):
+        result = service.get(case_id)
+        if compact:
+            return {k: v for k, v in result.items() if k != "source_snapshot"}
+        return result
 
     @router.post("/api/cases/{case_id}/sources/search", status_code=202)
     def search(case_id: str, body: SearchSources):
