@@ -10,6 +10,20 @@ const choices=(keys,value)=>keys.map(k=>`<option value="${k}" ${k===value?'selec
 const list=items=>items?.length?`<ul>${items.map(t=>`<li>${esc(t)}</li>`).join('')}</ul>`:'';
 const currentDraft=(current,value,draft)=>draft?.case_id===current.id&&draft.revision===value.revision?draft:null;
 export const initialReady=value=>Boolean(value.report?.document&&!value.legacy_report&&!value.stale&&['needs_review','approved','routed'].includes(value.status));
+function classifierIdentity(model){
+  if(typeof model!=='string'||!model.trim())return null;
+  const version=/^jev-(\d+\.\d+(?:\.\d+)?)$/.exec(model);
+  if(version)return {name:`JEV ${version[1]}`,provider:'TypeSafe',jev:true};
+  if(model==='typesafe-ai/jev')return {name:'JEV',provider:'Vercel',jev:true};
+  return {name:model==='gpt-6-luna'?'Luna · gpt-6-luna':model,provider:'',jev:false};
+}
+function classificationDetails(row){
+  const classifier=classifierIdentity(row.classification_model);
+  if(!classifier)return '';
+  const confidence=row.classification_confidence;
+  const hasConfidence=Number.isFinite(confidence)&&confidence>=0&&confidence<=1;
+  return `<p class="muted">Clasificado por ${esc(classifier.name)}${classifier.provider?` · ${classifier.provider}`:''}${hasConfidence?` · confianza ${Math.round(confidence*100)} %`:''}.${hasConfidence?' Es una estimación del modelo, no una garantía.':''}</p>`;
+}
 function original(ref,id){return `<blockquote>${esc(ref.quote)}</blockquote><a href="/api/cases/${encodeURIComponent(id)}/original#page=${ref.page}" target="_blank" rel="noopener">Original · página ${ref.page}, líneas ${ref.line_start}–${ref.line_end}</a>`;}
 function source(s,id){return `<div class="initial-source"><strong>${esc(s.title)}</strong><blockquote>${esc(s.quote)}</blockquote><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${encodeURIComponent(id)}#page=${s.page}">${s.location_kind==='section'?'Sección':'Página'} ${s.page} · abrir original</a>${s.needs_review?'<p>Texto obtenido por OCR: cotejar con el original.</p>':''}<p class="muted">Vigencia registrada: ${esc(({unknown:'Por verificar',current:'Vigente según revisión registrada',superseded:'Sustituida',not_applicable:'No aplica'})[s.validity]||'Por verificar')}</p></div>`;}
 function checksView(checks,id,key){return `<div class="initial-checks">${checks.map(c=>`<details data-initial-disclosure="${esc(key+'-'+c.key)}"><summary><span>${names[c.key]}</span><span class="initial-state ${c.state}">${states[c.state]}</span></summary><p><strong>Resultado:</strong> ${esc(c.summary)}</p><p><strong>Motivo:</strong> ${esc(c.reason)}</p>${list(c.pending)}${c.original_refs.length||c.sources.length?'<p><strong>Evidencia consultada</strong></p>':''}${c.original_refs.map(r=>original(r,id)).join('')}${c.sources.map(s=>source(s,id)).join('')}</details>`).join('')}</div>`;}
@@ -20,16 +34,17 @@ function decisionFields(row,decision,key,keys,label){
 }
 
 export function initialReviewSummary(current,value,draft,{automatic=true}={}){
+  const typesOnly=value.analysis_scope==='petition_types_v1';
   const legacy=Boolean(value.report&&!value.report.document)||value.legacy_report;
   const report=legacy?null:value.report,identified=Boolean(current.identification)&&(automatic||current.status==='confirmed'),running=value.status==='running',form=currentDraft(current,value,draft);
   let status='Identificando peticiones',description='El análisis del trámite comenzará al identificar las peticiones.';
   if(!automatic&&!identified){status='Pendiente';description='Esta instancia usa el flujo anterior. Confirma las peticiones para analizar su trámite.';}
   if(identified){
-    status=initialStatuses[value.status]||'Cargando';description='Analiza los datos y el lenguaje del documento, y el tipo de cada petición.';
+    status=initialStatuses[value.status]||'Cargando';description=typesOnly?'Revisa las peticiones identificadas y el tipo propuesto para cada una.':'Analiza los datos y el lenguaje del documento, y el tipo de cada petición.';
     if(!value.status)description='Recuperando el análisis guardado…';
-    else if(running)description='Analizando el documento y clasificando sus peticiones…';
+    else if(running)description=typesOnly?'Clasificando las peticiones a partir del documento original…':'Analizando el documento y clasificando sus peticiones…';
     else if(legacy){status='Por actualizar';description='El análisis anterior se conserva en el historial. Actualízalo para revisar los datos y el lenguaje una sola vez.';}
-    else if(value.stale){status='Por actualizar';description='Cambiaron las solicitudes, las fuentes o el modelo. Vuelve a analizar antes de continuar.';}
+    else if(value.stale){status='Por actualizar';description=typesOnly?'Cambiaron las peticiones o la clasificación. Actualiza lo necesario antes de continuar.':'Cambiaron las solicitudes, las fuentes o el modelo. Vuelve a analizar antes de continuar.';}
     else if(value.error)description=value.error;
     else if(report){
       description=`${report.requests.length} ${report.requests.length===1?'petición analizada':'peticiones analizadas'}. Revisa el tipo en cada tarjeta.`;
@@ -40,44 +55,91 @@ export function initialReviewSummary(current,value,draft,{automatic=true}={}){
     }
   }
   const work=running?value.analysis_work:value.next_analysis;
-  const workNote=work&&(running||value.stale||value.error)?`<p class="muted">${running?'En esta actualización':'Al actualizar'}: ${work.pending.length} ${work.pending.length===1?"petición por analizar":"peticiones por analizar"} y ${work.reused.length} ${work.reused.length===1?"resultado conservado":"resultados conservados"}. ${work.pending.length?'Se revisará también el documento completo para mantener el contexto.':'No se necesita otra consulta a IA.'}</p>`:'';
-  const classifierNote=value.classification_provider==='jev'?'<p class="muted">Clasificación por petición: JEV a través de Vercel. Al analizar, se envían el título, la descripción y sus fragmentos originales a Vercel / TypeSafe.</p>':'';
+  const workNote=work&&(running||value.stale||value.error)?`<p class="muted">${running?'En esta actualización':'Al actualizar'}: ${work.pending.length} ${work.pending.length===1?"petición por clasificar":"peticiones por clasificar"} y ${work.reused.length} ${work.reused.length===1?"resultado conservado":"resultados conservados"}. ${typesOnly?'Las fuentes se consultan al continuar a Redacción.':work.pending.length?'Se revisará también el documento completo para mantener el contexto.':'No se necesita otra consulta a IA.'}</p>`:'';
+  const configuredClassifier=classifierIdentity(value.classification_model);
+  const classifierNote=value.classification_provider==='jev'?`<p class="muted">Próxima clasificación: ${esc(configuredClassifier?.jev?configuredClassifier.name:'JEV')}. Al analizar, el contenido de las peticiones se envía a ${configuredClassifier?.jev?configuredClassifier.provider:'su proveedor configurado'}.</p>`:'';
   const analyze=identified&&value.status&&!running&&(!report||value.stale||value.error)?`<button class="primary" data-action="live-initial-analyze">${value.error?'Reintentar pendientes':value.report?'Actualizar lo necesario':'Analizar trámite'}</button>`:'';
-  const general=report&&!value.stale&&!running&&!value.error?`<div class="intake-global-summary">${report.document.checks.map(c=>`<p class="${c.state==='attention'?'has-observation':''}"><strong>${c.key==='requirements'?'Datos del documento':'Lenguaje'} <span class="initial-state ${c.state}">${states[c.state]}</span></strong><span>${esc(c.summary)}</span></p>`).join('')}</div>${!report.history_available?'<p class="intake-history-note">Antecedentes: consulta no disponible con las fuentes actuales.</p>':''}`:'';
+  const general=report&&!value.stale&&!running&&!value.error?`<div class="intake-global-summary">${report.document.checks.map(c=>`<p class="${c.state==='attention'?'has-observation':''}"><strong>${c.key==='requirements'?'Datos del documento':'Lenguaje'} <span class="initial-state ${c.state}">${states[c.state]}</span></strong><span>${esc(c.summary)}</span></p>`).join('')}</div>${typesOnly?'<p class="intake-history-note">Preanálisis conservado. La búsqueda de fuentes comienza al continuar a Redacción.</p>':!report.history_available?'<p class="intake-history-note">Antecedentes: consulta no disponible con las fuentes actuales.</p>':''}`:'';
   return `<section class="intake-summary" aria-labelledby="intake-summary-title"><div class="intake-summary-heading"><h2 id="intake-summary-title" tabindex="-1">Resumen del trámite</h2><span class="initial-state ${value.stale||value.error?'attention':''}">${esc(status)}</span></div><div class="intake-summary-content"><p role="${value.error||value.stale?'alert':'status'}">${esc(description)}</p>${analyze}${workNote}${classifierNote}</div>${general}${running?'<progress aria-label="Analizando trámite"></progress>':''}<p class="initial-unsaved" role="status" ${form?'':'hidden'}>Hay cambios sin confirmar. Puedes guardar el borrador y continuar después.</p>${identified?`<details class="intake-details" id="initial-review-details" data-initial-disclosure="review"><summary>Ver detalle${report?' y decisión general':''}</summary>${report?documentDetails(current,value,form):'<p>Los resultados requieren revisión humana. El historial conserva los análisis anteriores.</p><button data-action="live-collections">Fuentes de consulta</button> <button data-action="live-initial-history">Ver historial</button>'}</details>`:''}</section>`;
 }
-function documentDetails(current,value,form){
+export function documentDetails(current,value,form){
   const report=value.report,row=report.document,decision=form?.document||value.document_decision;
-  let html=`<div class="intake-tools"><button data-action="live-initial-history">Ver historial</button><button data-action="live-collections">Fuentes de consulta</button>${initialReady(value)?'<button data-action="live-initial-full">Reanalizar todo con IA</button><span class="muted">Genera una nueva consulta para todas las peticiones.</span>':''}</div><details class="initial-scope" data-initial-disclosure="scope"><summary>Alcance de la consulta · ${value.scope?.readable_sources||0} fuentes disponibles</summary>${list(report.warnings)}</details>`;
+  const typesOnly=value.analysis_scope==='petition_types_v1';
+  let html=typesOnly?`<p>Se identificaron las peticiones y su tipo a partir del documento original. Las fuentes se consultarán al continuar a Redacción.</p><p>Las verificaciones previas se conservan en <button type="button" class="text-button" data-action="live-preanalysis">Preanálisis</button>.</p><div class="intake-tools"><button data-action="live-initial-history">Ver historial</button>${initialReady(value)?'<button data-action="live-initial-full">Volver a clasificar los tipos</button>':''}</div>${list(report.warnings)}`:`<div class="intake-tools"><button data-action="live-initial-history">Ver historial</button><button data-action="live-collections">Fuentes de consulta</button>${initialReady(value)?'<button data-action="live-initial-full">Reanalizar todo con IA</button><span class="muted">Genera una nueva consulta para todas las peticiones.</span>':''}</div><details class="initial-scope" data-initial-disclosure="scope"><summary>Alcance de la consulta · ${value.scope?.readable_sources||0} fuentes disponibles</summary>${list(report.warnings)}</details>`;
   const special=report.special_treatment;
   if(special.detected)html+=`<section class="alert"><h3>Tratamiento especial por revisar</h3><p>${esc(special.reason)}</p><dl>${[['Remitente',special.sender],['Asunto',special.subject],['Información solicitada',special.requested_information],['Término escrito',special.stated_term]].map(([k,v])=>`<dt>${k}</dt><dd>${esc(v||'No identificado')}</dd>`).join('')}</dl>${special.original_refs.map(r=>original(r,current.id)).join('')}</section>`;
   if(value.decided_at)html+=`<p class="initial-saved">Decisión guardada por ${esc(value.reviewed_by)} · ${esc(new Date(value.decided_at).toLocaleString('es-CO'))}.</p>`;
-  return html+checksView(row.checks,current.id,'document')+`<fieldset class="intake-request-fields" ${initialReady(value)?'':'disabled'}><legend class="sr-only">Decisión sobre el documento completo</legend>${communication(row,decision,'document')}${decisionFields(row,decision,'document',['continue','complement','reject','specialist'],'Ruta del documento completo')}</fieldset>`;
+  return html+(typesOnly?'':checksView(row.checks,current.id,'document'))+`<fieldset class="intake-request-fields" ${initialReady(value)?'':'disabled'}><legend class="sr-only">Decisión sobre el documento completo</legend>${communication(row,decision,'document')}${decisionFields(row,decision,'document',['continue','complement','reject','specialist'],'Ruta del documento completo')}</fieldset>`;
 }
-export function initialRequestContent(current,value,draft){
+function identificationTypes(requests){
+  const counts=new Map();
+  for(const row of requests){const type=Object.hasOwn(typeNames,row.petition_type)?row.petition_type:'undetermined';counts.set(type,(counts.get(type)||0)+1);}
+  return [...counts].map(([type,count])=>`<li><strong>${count}</strong> ${esc(typeNames[type])}</li>`).join('');
+}
+// Los informes anteriores conservan sus verificaciones en el historial; esta
+// vista resume la identificación sin volver a presentar el preanálisis.
+export function identificationDetails(current,value,form){
+  const report=value.report,row=report.document,decision=form?.document||value.document_decision;
+  const decisions=new Map((form?.requests||value.decisions||[]).map(r=>[r.request_id,r]));
+  const requests=report.requests.map(r=>decisions.get(r.request_id)||r);
+  return `<p>Tipos propuestos para las peticiones de este expediente:</p><ul class="expediente-type-counts" data-identification-types aria-live="polite">${identificationTypes(requests)}</ul><div class="expediente-summary-links"><button type="button" class="text-button" data-action="live-preanalysis">Ver preanálisis</button><button type="button" class="text-button" data-action="live-initial-history">Ver historial</button></div><details class="expediente-general-options" data-initial-disclosure="general-options"><summary>Ruta general y opciones de identificación</summary>${value.decided_at?`<p class="initial-saved">Revisión guardada por ${esc(value.reviewed_by)}.</p>`:''}<fieldset class="intake-request-fields" ${initialReady(value)?'':'disabled'}><legend class="sr-only">Decisión sobre el documento completo</legend>${communication(row,decision,'document')}${decisionFields(row,decision,'document',['continue','complement','reject','specialist'],'Ruta del expediente').replaceAll('Continuar a preparar respuestas','Continuar a redacción')}</fieldset>${initialReady(value)?'<button type="button" data-action="live-initial-full">Volver a clasificar los tipos</button>':''}</details>`;
+}
+export function initialRequestContent(current,value,draft,{workspace=false}={}){
   const report=value.report,content={};
   if(value.status==='running'){
     for(const r of current.identification.requests)content[r.id]={header:`<span class="intake-type" role="status">${value.analysis_work?.reused.includes(r.id)?'Resultado conservado':'Clasificando petición…'}</span>`,details:''};
     return content;
   }
   if(!report?.document||value.legacy_report)return content;
-  const form=currentDraft(current,value,draft),valid=initialReady(value);
+  const form=currentDraft(current,value,draft),valid=initialReady(value)&&!current.analysis_running&&!current.error;
   for(const [i,row] of report.requests.entries()){
     const request=current.identification.requests.find(r=>r.id===row.request_id),decision=(form?.requests||value.decisions||[]).find(r=>r.request_id===row.request_id),repetition=row.checks.find(c=>c.key==='repetition');
     const canReiterate=!['unavailable','unverified'].includes(repetition.state)&&repetition.sources.some(s=>s.category==='historical_response');
+    if(workspace){
+      const note=isAutomaticDecisionNote(decision?.note)?'':decision?.note||'';
+      const routeOptions=canReiterate?['continue','reiterate','specialist']:['continue','specialist'];
+      content[row.request_id]={
+        header:`<label class="expediente-field-row"><span>Tipo propuesto</span><select form="initial-decision-form" data-initial-type="${i}" name="type-${i}" aria-label="Tipo de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(Object.keys(typeNames),decision?.petition_type||row.petition_type).replace('>Información</option>','>Petición de información</option>')}</select></label>`,
+        route:`<label class="expediente-field-row"><span>Ruta sugerida</span><select form="initial-decision-form" name="route-${i}" aria-label="Ruta de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(routeOptions,decision?.route||row.proposed_route).replaceAll('Continuar a preparar respuestas','Continuar a redacción')}</select></label>`,
+        notes:`<details class="expediente-note-options" data-initial-disclosure="observation-${esc(row.request_id)}" ${note?'open':''}><summary>${note?'Observación del gestor':'Añadir observación'}</summary><label class="expediente-observation">Observaciones del gestor<textarea form="initial-decision-form" name="note-${i}" maxlength="5000" rows="2" placeholder="Añade una aclaración si es necesaria" ${valid?'':'disabled'}>${esc(note)}</textarea></label></details>`,
+        details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>${value.analysis_scope==='petition_types_v1'?'Ver clasificación':'Ver fundamentos y antecedentes'}</summary>${classificationDetails(row)}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}${communication(row,decision,i)}</details>`,
+      };
+      continue;
+    }
     content[row.request_id]={
-      header:`<label class="intake-type">${value.decisions?'Tipo de petición':row.classification_model?'Tipo sugerido · JEV':'Tipo sugerido'}<select form="initial-decision-form" data-initial-type="${i}" name="type-${i}" aria-label="Tipo de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(Object.keys(typeNames),decision?.petition_type||row.petition_type)}</select></label>${value.stale?'<p class="muted">Clasificación anterior · actualiza el análisis.</p>':''}`,
-      details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>Ver clasificación${repetition.state==='unavailable'?'':' y antecedentes'} y decisión</summary>${row.classification_model?`<p class="muted">Clasificado por JEV · Vercel · confianza ${Math.round(row.classification_confidence*100)} %. Es una estimación del modelo, no una garantía.</p>`:''}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}<fieldset class="intake-request-fields" ${valid?'':'disabled'}><legend class="sr-only">Decisión de la petición ${esc(request?.label||row.request_id)}</legend>${communication(row,decision,i)}${decisionFields(row,decision,i,canReiterate?['continue','reiterate','specialist']:['continue','specialist'],'Ruta de esta petición')}</fieldset></details>`,
+      header:`<label class="intake-type">${value.decisions?'Tipo de petición':classifierIdentity(row.classification_model)?.jev?'Tipo sugerido · JEV':'Tipo sugerido'}<select form="initial-decision-form" data-initial-type="${i}" name="type-${i}" aria-label="Tipo de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(Object.keys(typeNames),decision?.petition_type||row.petition_type)}</select></label>${value.stale?'<p class="muted">Clasificación anterior · actualiza el análisis.</p>':''}`,
+      details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>Ver clasificación${repetition.state==='unavailable'?'':' y antecedentes'} y decisión</summary>${classificationDetails(row)}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}<fieldset class="intake-request-fields" ${valid?'':'disabled'}><legend class="sr-only">Decisión de la petición ${esc(request?.label||row.request_id)}</legend>${communication(row,decision,i)}${decisionFields(row,decision,i,canReiterate?['continue','reiterate','specialist']:['continue','specialist'],'Ruta de esta petición')}</fieldset></details>`,
     };
   }
   return content;
 }
-export function initialConfirmation(current,value,draft,{busy=false,error='',draftMessage='',draftProblem=false,hasPrevious=false,suggestedReviewer=''}={}){
+function routeBlockerMessage(value,decision){
+  const documentRoute=decision?.document?.route??value.document_decision?.route??value.report.document.proposed_route;
+  const decisions=new Map((decision?.requests||value.decisions||[]).map(r=>[r.request_id,r]));
+  const blocked=value.report.requests.flatMap((r,i)=>{
+    const route=decisions.get(r.request_id)?.route??r.proposed_route;
+    return route==='continue'?[]:[{key:String(i),label:`Petición ${i+1}`,route}];
+  });
+  const allPetitionsContinue=!blocked.length;
+  if(documentRoute!=='continue')blocked.unshift({key:'document',label:'Ruta general del expediente',route:documentRoute});
+  if(!blocked.length)return '';
+  const count=value.report.requests.length;
+  return `<strong>Qué falta para continuar a redacción</strong>${allPetitionsContinue?`<p>${count===1?'La petición está':`Las ${count} peticiones están`} en «Continuar a redacción». Falta revisar la ruta general.</p>`:''}<ul>${blocked.map(item=>`<li><span><strong>${esc(item.label)}</strong><span>${esc(routes[item.route]||'Por definir')}</span></span><button type="button" class="text-button" data-action="live-initial-route-edit" data-route-key="${item.key}">${item.key==='document'?'Revisar ruta general':`Revisar petición ${Number(item.key)+1}`}</button></li>`).join('')}</ul><p>Para redactar, todas las rutas deben estar en Continuar. Guardar una ruta alternativa conserva esa decisión y no inicia la redacción.</p>`;
+}
+export function initialConfirmation(current,value,draft,{busy=false,error='',draftMessage='',draftProblem=false,hasPrevious=false,suggestedReviewer='',workspace=false}={}){
   if(!initialReady(value))return '';
   const form=currentDraft(current,value,draft),saved=value.can_prepare&&!form,recorded=Boolean(value.document_decision)&&!form;
   const decision=form||{document:value.document_decision,requests:value.decisions};
   const continuing=form||value.document_decision?decisionContinues(decision):value.report.document.proposed_route==='continue'&&value.report.requests.every(r=>r.proposed_route==='continue');
   const checked=form?form.document.reviewed&&form.requests.every(r=>r.reviewed):Boolean(value.document_decision?.reviewed&&value.decisions?.every(r=>r.reviewed));
+  if(workspace){
+    const reviewer=form?.reviewed_by??value.reviewed_by??suggestedReviewer;
+    const typesReady=(form?.requests||value.decisions||value.report.requests).every(r=>(r.petition_type||'undetermined')!=='undetermined');
+    return `<section class="expediente-confirmation" aria-label="Revisión conjunta"><form id="initial-decision-form" data-workspace="true" novalidate data-revision="${value.revision}" data-case="${esc(current.id)}">
+      <div class="expediente-confirmation-main"><div><label class="check expediente-review-all"><input type="checkbox" name="reviewed-all" required ${checked?'checked':''} ${busy?'disabled':''}>He revisado todas las peticiones</label><p class="expediente-confirmation-hint">Incluye el contenido y el tipo de cada petición.</p><p class="expediente-global-state" role="status" data-global-review>${checked?`${value.report.requests.length} peticiones revisadas en conjunto`:'Confirma la revisión conjunta para continuar.'}</p></div><div class="expediente-confirmation-actions"><button type="button" class="primary expediente-continue" data-action="live-initial-confirm" ${busy||!continuing||!checked||!typesReady||!reviewer?.trim()?'disabled':''}>${busy?'Guardando revisión…':'Continuar a redacción'}</button><button type="button" data-action="live-initial-route" ${continuing?'hidden':''} ${busy||!checked?'disabled':''}>Guardar ruta alternativa</button></div></div>
+      <div class="expediente-route-hint" data-confirmation-message role="status" ${continuing?'hidden':''}>${routeBlockerMessage(value,form)}</div><p class="alert" role="alert" data-initial-error ${error?'':'hidden'}>${esc(error)}</p>
+      <div class="expediente-confirmation-options"><details class="expediente-review-options" data-initial-disclosure="review-options"><summary>Responsable y opciones</summary><label class="field">Responsable de la revisión<input name="reviewed_by" required maxlength="200" value="${esc(reviewer)}" autocomplete="name"></label><button type="button" data-action="live-initial-draft-download">Descargar observaciones</button>${hasPrevious?'<button type="button" data-action="live-initial-draft-preview">Ver observaciones guardadas</button>':''}<p>Se conservan las observaciones del análisis. La confirmación no las marca como resueltas automáticamente.</p><p class="expediente-draft-status" role="${draftProblem?'alert':'status'}" data-draft-status>${esc(draftMessage)}</p></details><button type="button" class="text-button" data-action="live-save-and-queue">Guardar y volver a la bandeja</button></div></form></section>`;
+  }
   const confirmationMessage=continuing
     ?'Al pulsar, confirmas continuar con la búsqueda de fuentes y la redacción. No se envía ninguna comunicación.'
     :'Hay rutas alternativas elegidas. Puedes guardarlas; para preparar respuestas, cambia expresamente esas rutas a Continuar y confirma de nuevo.';
@@ -87,6 +149,19 @@ export function initialConfirmation(current,value,draft,{busy=false,error='',dra
 export function updateInitialConfirmation(view,value,decision,{saved=false,recorded=false}={}){
   if(!decision)return;
   const continuing=decisionContinues(decision),button=view.querySelector('[data-action="live-initial-confirm"]');
+  const workspace=view.querySelector('#initial-decision-form')?.dataset.workspace==='true';
+  if(workspace){
+    const types=view.querySelector('[data-identification-types]');if(types)types.innerHTML=identificationTypes(decision.requests);
+    const reviewed=decision.document.reviewed&&decision.requests.every(r=>r.reviewed);
+    const valid=reviewed&&decision.reviewed_by.trim()&&decision.requests.every(r=>r.route!=='continue'||r.petition_type!=='undetermined');
+    if(button){button.textContent='Continuar a redacción';button.disabled=!valid||!continuing||view.getAttribute('aria-busy')==='true';}
+    const alternative=view.querySelector('[data-action="live-initial-route"]');if(alternative){alternative.hidden=continuing;alternative.disabled=!reviewed||!decision.reviewed_by.trim();}
+    const message=view.querySelector('[data-confirmation-message]');if(message){message.hidden=continuing;message.innerHTML=routeBlockerMessage(value,decision);}
+    const status=view.querySelector('[data-global-review]');if(status)status.textContent=reviewed?`${decision.requests.length} ${decision.requests.length===1?'petición revisada':'peticiones revisadas'} en conjunto`:'Confirma la revisión conjunta para continuar.';
+    for(const [i,item] of decision.requests.entries())view.querySelector(`[name="type-${i}"]`)?.setCustomValidity(item.route==='continue'&&item.petition_type==='undetermined'?'Define el tipo de esta petición antes de continuar.':'');
+    const reviewer=view.querySelector('[name="reviewed_by"]');reviewer?.setCustomValidity(reviewer.value.trim()?'':'Indica quién revisó el expediente.');
+    return;
+  }
   if(button&&!button.disabled)button.textContent='Buscar fuentes y redactar →';
   const alternative=view.querySelector('[data-action="live-initial-route"]');
   if(alternative)alternative.hidden=continuing;

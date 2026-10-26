@@ -1,5 +1,5 @@
 import {esc} from './views.js';
-import {initialReady,routes} from './initial-review.js?v=review-context2';
+import {initialReady,routes} from './initial-review.js?v=reading-space1';
 
 export function reviewItems(current,value,draft){
   const valid=initialReady(value), decisions=draft?.requests||value.decisions||[];

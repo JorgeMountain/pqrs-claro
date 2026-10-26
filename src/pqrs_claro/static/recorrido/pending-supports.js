@@ -32,9 +32,11 @@ export function supportOptions(row,p){
     const dated=!exact?dateContext(p.description,s.quote):null;
     const overlap=matches.length/Math.max(1,terms.length);
     const score=dated?3+1/(1+dated.distance)+.005*overlap:overlap;
-    unique.set(s.chunk_id,{value:'source:'+s.chunk_id,text:s.quote,label:s.title,
-      location:`${s.location_kind==='section'?'Sección':'Página'} ${s.page} · líneas ${s.line_start||1}–${s.line_end||1}`,
-      url:`/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${encodeURIComponent(row.case_id)}#page=${Number(s.page)||1}`,
+    const page=Number(s.page),hasPage=Number.isInteger(page)&&page>0;
+    const lines=Number.isInteger(s.line_start)&&Number.isInteger(s.line_end)&&s.line_end>=s.line_start?` · líneas ${s.line_start}–${s.line_end}`:'';
+    unique.set(s.chunk_id,{value:'source:'+s.chunk_id,text:s.quote,label:s.title||s.filename||'Documento sin título',
+      location:(hasPage?`${s.location_kind==='section'?'Sección':'Página'} ${page}`:'Ubicación no indicada')+lines,
+      url:`/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${encodeURIComponent(row.case_id)}${hasPage&&s.location_kind!=='section'?'#page='+page:''}`,
       excerpt:dated?s.quote.slice(dated.start,dated.end):null,
       priority:exact&&linked.has(s.chunk_id)?2:score,
       hint:exact&&linked.has(s.chunk_id)?'Pasaje señalado en este punto':dated?'Contiene una fecha cerca del tema consultado':matches.length?'Coincide con: '+matches.slice(0,3).join(', '):'Otro pasaje disponible'});
@@ -47,22 +49,53 @@ export function supportOptions(row,p){
 }
 
 export function supportPicker(options){
-  if(!options.length)return '<p>No hay pasajes disponibles. Puedes agregar evidencia para este punto.</p>';
-  const best=options[0]?.priority||0;
-  const related=options.filter(o=>o.priority>0&&o.priority>=best-.2).slice(0,3);
-  const first=related.length?related:options.slice(0,2);
-  const other=options.filter(o=>!first.includes(o));
-  const card=(o,i)=>`<article class="pending-support-card" data-support-text="${esc(clean(o.label+' '+o.text))}"><label class="pending-support-choice"><input type="radio" name="pending-support" value="${esc(o.value)}" required><span><strong>${esc(o.label)}</strong><small>${esc(o.location)}</small></span></label><p class="pending-support-hint">${esc(o.hint)}</p><blockquote tabindex="0" aria-label="Texto del pasaje ${i+1}">${esc(o.excerpt||o.text)}</blockquote>${o.excerpt?`<details><summary>Ver pasaje completo</summary><blockquote tabindex="0">${esc(o.text)}</blockquote></details>`:''}${o.url?`<a href="${esc(o.url)}" target="_blank" rel="noopener">Abrir original en esta página ↗</a>`:''}</article>`;
-  return `<fieldset class="pending-support-picker"><legend>Revisa el texto y selecciona el respaldo</legend><p class="library-note">Son pasajes candidatos. Selecciónalo solo si el texto permite resolver este punto.</p>${first.map(card).join('')}${other.length?`<details class="pending-other-sources"><summary>Ver otras fuentes (${other.length} pasajes)</summary><label class="field">Buscar por documento o contenido<input type="search" id="pending-support-search" placeholder="Palabra, fecha o nombre del documento"></label><div>${other.map(card).join('')}</div><p id="pending-support-empty" hidden>No hay coincidencias.</p></details>`:''}</fieldset>`;
+  if(!options.length)return '<div class="pending-support-empty" role="status"><strong>No hay respaldos disponibles para elegir</strong><p>Usa «Agregar evidencia» para incorporar un documento. Después podrás revisar su contenido y seleccionarlo aquí.</p></div>';
+  const card=(o,i)=>{
+    const text=String(o.text||''),sample=String(o.excerpt||text);
+    const shortened=sample.length>480;
+    const preview=shortened?sample.slice(0,480).replace(/\s+\S*$/,'')+'…':sample;
+    const fullText=shortened||Boolean(o.excerpt&&o.excerpt!==text);
+    return `<article class="pending-support-card" data-support-text="${esc(clean(o.label+' '+o.location+' '+text))}"${i>=3?' hidden':''}><label class="pending-support-choice"><input type="radio" name="pending-support" value="${esc(o.value)}"${i<3?' required':''}><span><strong>${esc(o.label)}</strong><small>${esc(o.location)}</small></span><span class="pending-support-selected" aria-hidden="true">Seleccionado</span></label><p class="pending-support-hint">${esc(o.hint)}</p><blockquote>${esc(preview||'Este respaldo no contiene un fragmento de texto disponible.')}</blockquote>${fullText?`<details class="pending-support-full"><summary>Leer fragmento completo</summary><blockquote>${esc(text)}</blockquote></details>`:''}${o.url?`<a class="pending-support-original" href="${esc(o.url)}" target="_blank" rel="noopener">Ver documento original ↗</a>`:''}</article>`;
+  };
+  return `<fieldset class="pending-support-picker"><legend>Elige el respaldo que revisaste</legend><p class="pending-support-intro">Estos fragmentos son candidatos. Selecciona uno solo si su contenido respalda este punto.</p>${options.length>1?'<div class="pending-support-filter"><label>Filtrar respaldos<input type="search" data-support-search placeholder="Documento, palabra o fecha" autocomplete="off"></label><button type="button" data-support-clear hidden>Limpiar filtro</button></div>':''}<div class="pending-support-status" role="status" aria-live="polite" aria-atomic="true"><span data-support-results>${Math.min(3,options.length)} de ${options.length} ${options.length===1?'respaldo':'respaldos'}</span><span data-support-selection>Sin seleccionar</span></div><p class="pending-support-filter-note" data-support-filter-note hidden></p><div class="pending-support-list" role="group" aria-label="Fragmentos disponibles como respaldo" tabindex="0">${options.map(card).join('')}</div><button type="button" class="pending-support-more" data-support-more${options.length<=3?' hidden':''}>Ver más respaldos (${Math.max(0,options.length-3)})</button><div class="pending-support-empty" data-support-empty hidden><strong>No hay coincidencias con este filtro</strong><p>Prueba con otra palabra o limpia el filtro para ver todos los respaldos.</p></div></fieldset>`;
 }
 
 export function bindSupportPicker(form){
-  const search=form.querySelector('#pending-support-search');
-  if(search)search.oninput=()=>{
-    const query=clean(search.value).trim();let count=0;
-    form.querySelectorAll('.pending-other-sources .pending-support-card').forEach(card=>{
-      card.hidden=!card.dataset.supportText.includes(query);if(!card.hidden)count++;
-    });
-    form.querySelector('#pending-support-empty').hidden=count>0;
-  };
+  for(const picker of form.querySelectorAll('.pending-support-picker')){
+    const search=picker.querySelector('[data-support-search]');
+    const clear=picker.querySelector('[data-support-clear]');
+    const more=picker.querySelector('[data-support-more]');
+    const cards=[...picker.querySelectorAll('.pending-support-card')];
+    let shown=3;
+    const refresh=()=>{
+      const query=clean(search?.value).trim(),terms=query.split(/\s+/).filter(Boolean);
+      let count=0,selected=false,selectedHidden=false,selectedFiltered=false;
+      for(const card of cards){
+        const input=card.querySelector('input[name="pending-support"]');
+        const matches=terms.every(term=>card.dataset.supportText.includes(term));
+        if(matches)count++;
+        card.hidden=!matches||count>shown;
+        // The controller still requires a valid selected option. Avoid native
+        // validation trying to focus an invisible radio when a filter has no hits.
+        input.required=!card.hidden;
+        if(input.checked){selected=true;selectedHidden=card.hidden;selectedFiltered=!matches;}
+      }
+      picker.querySelector('[data-support-results]').textContent=query?`${Math.min(shown,count)} de ${count} ${count===1?'coincidencia':'coincidencias'}`:`${Math.min(shown,count)} de ${cards.length} ${cards.length===1?'respaldo':'respaldos'}`;
+      picker.querySelector('[data-support-selection]').textContent=selected?'1 respaldo seleccionado':'Sin seleccionar';
+      picker.querySelector('[data-support-selection]').classList.toggle('has-selection',selected);
+      picker.querySelector('[data-support-empty]').hidden=count>0;
+      picker.querySelector('.pending-support-list').hidden=count===0;
+      const note=picker.querySelector('[data-support-filter-note]');
+      note.hidden=!selectedHidden;
+      note.textContent=selectedFiltered?'El respaldo seleccionado está fuera del filtro. Limpia el filtro para volver a verlo.':'Tu selección se conserva. Usa «Ver más respaldos» para volver a verla.';
+      more.hidden=count<=shown;
+      more.textContent=`Ver más respaldos (${Math.max(0,count-shown)})`;
+      if(clear)clear.hidden=!query;
+    };
+    if(search)search.oninput=()=>{shown=3;refresh();};
+    if(clear)clear.onclick=()=>{search.value='';shown=3;refresh();search.focus();};
+    more.onclick=()=>{const firstNew=shown;shown+=3;refresh();cards.filter(card=>!card.hidden)[firstNew]?.querySelector('input').focus();};
+    picker.onchange=refresh;
+    refresh();
+  }
 }

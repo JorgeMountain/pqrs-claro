@@ -33,10 +33,11 @@ export function confirmationPayload(decision,report){
 }
 
 // Guardar primero permite reintentar la preparación sin duplicar la decisión.
-export async function confirmAndPrepare({saved,decision,report,save,onSaved,prepare}){
+export async function confirmAndPrepare({saved,decision,report,save,onSaved,onPreparing=()=>{},prepare}){
   let value=saved;
   if(!value){value=await save(confirmationPayload(decision,report));onSaved(value);}
   if(!value.can_prepare||!decisionContinues(decision))return {prepared:false};
-  try{await prepare();return {prepared:true};}
-  catch(error){return {prepared:false,error:'La revisión quedó guardada, pero no se pudo iniciar la preparación. Puedes reintentar. '+error.message};}
+  onPreparing();
+  try{const preparation=await prepare();return {prepared:true,preparation};}
+  catch(error){return {prepared:false,error:'La revisión quedó guardada, pero no se pudo confirmar el inicio de la preparación. Actualiza el estado antes de reintentar. '+error.message};}
 }

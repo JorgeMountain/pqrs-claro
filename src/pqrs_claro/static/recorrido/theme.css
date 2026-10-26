@@ -1,0 +1,68 @@
+/* Paleta compartida del recorrido. Los documentos y las imágenes originales
+   conservan sus colores; los componentes usan estos tonos semánticos. */
+:root {
+  --color-ink: #0d1033;
+  --color-muted: #495485;
+  --color-secondary: #39446d;
+  --color-page: #f8fbfa;
+  --color-line: #cbd5e2;
+  --color-divider: #e0e5ef;
+  --color-control-line: #aebdd1;
+  --color-surface-soft: #f2f5fa;
+  --color-canvas: #e7edf3;
+  --color-neutral: #e6ebf3;
+  --color-neutral-ink: #475276;
+  --color-green: #1f5c3e;
+  --color-green-hover: #16452f;
+  --color-green-soft: #e4f1e9;
+  --color-green-line: #6c9a7e;
+  --color-green-avatar: #cce4d5;
+  --color-success: #267443;
+  --color-success-soft: #d9efdf;
+  --color-preanalysis: #4b8c5d;
+  --color-blue: #3560f7;
+  --color-blue-ink: #2850e8;
+  --color-blue-soft: #e7edff;
+  --color-blue-line: #a6b7fb;
+  --color-blue-avatar: #cbdcff;
+  --color-purple: #6825ef;
+  --color-purple-ink: #5d1dce;
+  --color-purple-soft: #eee5ff;
+  --color-purple-wash: #f5f0ff;
+  --color-purple-line: #ac87f4;
+  --color-purple-avatar: #d8c5ff;
+  --color-danger: #b02f49;
+  --color-danger-soft: #fce9ee;
+  --color-danger-line: #e7adba;
+  --color-focus: #5b43e7;
+}
+
+/* Los controles no disponibles siguen distinguiéndose, con texto legible. */
+body :is(.primary,.button-primary,.pre-start,.expediente-continue):disabled {
+  opacity: 1;
+  background: var(--color-neutral) !important;
+  border-color: var(--color-control-line) !important;
+  color: var(--color-neutral-ink);
+}
+
+:root body :is(button,a,input,select,textarea,summary):focus-visible {
+  outline-color: var(--color-focus);
+}
+
+/* Acentos del estado, sin filtros que alteren PDF, logos o documentos. */
+.inbox-state.review,
+.redaction-state.review {
+  background: var(--color-purple);
+  color: #fff;
+}
+.redaction-state.processing { color: var(--color-blue-ink); }
+.inbox-state.preanalysis {
+  background: var(--color-purple-soft);
+  color: var(--color-purple-ink);
+}
+.expediente-steps .stage-0.complete .expediente-step-number {
+  background: var(--color-preanalysis);
+}
+.expediente-steps .current .expediente-step-number { color: var(--color-blue-ink); }
+.redaction-pending-summary { border-color: var(--color-purple-line); }
+.inbox-workspace .cases-refresh:not(:disabled) { opacity: 1; }

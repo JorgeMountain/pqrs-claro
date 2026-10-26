@@ -1,1 +1,39 @@
-.pending-support-picker{border:0;padding:0;margin:20px 0;min-width:0}.pending-support-picker legend{font-weight:650;font-size:16px}.pending-support-card{border:1px solid var(--line);border-radius:8px;padding:16px;margin:12px 0;background:white;min-width:0}.pending-support-card:has(input:checked){border-color:var(--green);box-shadow:inset 3px 0 var(--green);background:var(--tint)}.pending-support-choice{display:flex;align-items:flex-start;gap:12px;cursor:pointer}.pending-support-choice input{width:18px;height:18px;flex:0 0 18px;margin-top:3px;accent-color:var(--green)}.pending-support-choice span{min-width:0}.pending-support-choice strong{font-size:14px;overflow-wrap:anywhere;display:block}.pending-support-choice small{display:block;color:var(--muted);margin-top:4px;font-size:12px}.pending-support-card blockquote{margin:12px 0;padding:12px;max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--page);border-left:2px solid var(--line);font-size:14px;line-height:1.55}.pending-support-card a{font-size:13px}.pending-support-hint{color:var(--muted);font-size:12px;margin:8px 0}.pending-other-sources{border-top:1px solid var(--line);padding-top:16px;margin-top:20px}.pending-other-sources summary{cursor:pointer;font-weight:600}.pending-support-card[hidden]{display:none}@media(max-width:600px){.pending-support-card{padding:12px}.pending-support-card blockquote{max-height:150px}}
+.pending-support-picker{border:0;padding:0;margin:24px 0;min-width:0;color:var(--color-ink)}
+.pending-support-picker legend{padding:0;font-weight:650;font-size:16px;line-height:1.4}
+.pending-support-intro{margin:8px 0 16px;color:var(--color-muted);font-size:13px;line-height:1.5}
+.pending-support-filter{display:flex;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.pending-support-filter label{display:grid;gap:6px;flex:1 1 200px;min-width:0;font-size:13px;font-weight:600}
+.pending-support-filter input[type=search]{box-sizing:border-box;width:100%;min-width:0;padding:10px 12px;border:1px solid var(--color-control-line);border-radius:6px;background:white;color:var(--color-ink);font:inherit;font-weight:400}
+.pending-support-filter input::placeholder{color:var(--color-muted);opacity:1}
+.pending-support-filter button{min-height:40px;padding:8px 10px;border:1px solid var(--color-control-line);border-radius:6px;color:var(--color-green);background:white;font-size:12px;font-weight:600;white-space:nowrap}
+.pending-support-filter button:hover{background:var(--color-green-soft);border-color:var(--color-green-line)}
+.pending-support-status{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin:12px 0;color:var(--color-muted);font-size:12px;line-height:1.5}
+.pending-support-status [data-support-selection]{border-radius:4px;padding:3px 8px;background:var(--color-neutral);color:var(--color-neutral-ink)}
+.pending-support-status .has-selection{background:var(--color-green-soft);color:var(--color-green);font-weight:650}
+.pending-support-filter-note{padding:10px 12px;border-left:3px solid var(--color-purple);background:var(--color-purple-wash);color:var(--color-purple-ink);font-size:12px;line-height:1.5}
+.pending-support-list{display:grid;gap:12px;max-height:min(28rem,55dvh);overflow-y:auto;padding:2px 4px 2px 2px;scrollbar-gutter:stable;min-width:0}
+.pending-support-card{border:1px solid var(--color-line);border-radius:8px;padding:12px;background:white;min-width:0}
+.pending-support-card:has(input:checked){border-color:var(--color-green);box-shadow:inset 3px 0 var(--color-green);background:var(--color-green-soft)}
+.pending-support-choice{display:flex;align-items:flex-start;gap:8px;cursor:pointer;min-height:32px}
+.pending-support-choice input{width:18px;height:18px;flex:0 0 18px;margin:2px 0 0;accent-color:var(--color-green)}
+.pending-support-choice>span{min-width:0}
+.pending-support-choice>span:first-of-type{flex:1}
+.pending-support-choice strong{display:block;overflow-wrap:anywhere;font-size:14px;line-height:1.4;font-weight:650}
+.pending-support-choice small{display:block;margin-top:4px;color:var(--color-muted);font-size:12px;line-height:1.4}
+.pending-support-choice .pending-support-selected{display:none;flex:0 0 auto;font-size:11px;font-weight:650;line-height:1.5;color:var(--color-green)}
+.pending-support-card:has(input:checked) .pending-support-selected{display:block}
+.pending-support-hint{margin:8px 0;color:var(--color-muted);font-size:12px;line-height:1.45}
+.pending-support-card blockquote{margin:0;padding:12px;border-left:3px solid var(--color-purple-line);border-radius:0 4px 4px 0;background:var(--color-surface-soft);color:var(--color-secondary);white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6}
+.pending-support-card:has(input:checked) blockquote{background:white;border-left-color:var(--color-green-line)}
+.pending-support-full{margin-top:8px;font-size:12px}
+.pending-support-full summary{padding:4px 0;color:var(--color-green);font-weight:600;cursor:pointer}
+.pending-support-full[open] blockquote{margin-top:8px}
+.pending-support-original{display:inline-block;margin-top:12px;font-size:12px;font-weight:600;line-height:1.5;color:var(--color-green);text-underline-offset:3px}
+.pending-support-more{display:block;width:100%;min-height:40px;margin-top:12px;padding:8px 12px;border:1px solid var(--color-control-line);border-radius:6px;background:white;color:var(--color-green);font-size:13px;font-weight:600}
+.pending-support-more:hover{background:var(--color-green-soft);border-color:var(--color-green-line)}
+.pending-support-empty{padding:16px;border:1px dashed var(--color-control-line);border-radius:6px;background:var(--color-surface-soft);color:var(--color-muted);font-size:13px;line-height:1.5}
+.pending-support-empty strong{display:block;color:var(--color-ink);font-size:14px}
+.pending-support-empty p{margin:6px 0 0}
+.pending-support-picker [hidden]{display:none!important}
+.pending-support-picker :is(input,button,a,summary,.pending-support-list):focus-visible{outline:2px solid var(--color-focus);outline-offset:3px}
+@media(max-width:600px){.pending-support-choice .pending-support-selected{display:none!important}.pending-support-list{max-height:min(26rem,50dvh)}}

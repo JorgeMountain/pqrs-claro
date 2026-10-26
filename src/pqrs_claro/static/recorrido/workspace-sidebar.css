@@ -1,0 +1,41 @@
+/* Compact shared navigation, matching the selected sidebar. */
+.shell.workspace-expanded,.inbox-page .shell.workspace-expanded{grid-template-columns:264px minmax(0,1fr)}
+.workspace-rail,.inbox-page .workspace-rail{background:#f1f7f3}
+.workspace-sticky{display:flex;flex-direction:column;height:calc(100dvh - var(--header-height,74px));max-height:100dvh;overflow:auto;overscroll-behavior:contain}
+.workspace-rail #workspace-menu:not([hidden]){display:flex;flex:1;flex-direction:column}
+.workspace-expanded .rail-tools,.inbox-page .workspace-expanded .rail-tools{padding:4px 16px 6px;gap:8px;flex-wrap:nowrap}
+.rail-title,.inbox-page .rail-title{font-family:"Segoe UI",Arial,sans-serif;font-size:13px;font-weight:650;line-height:1.3;color:var(--ink)}
+.workspace-toggle,.inbox-page .workspace-toggle{width:30px;height:30px;min-height:30px;padding:5px;border-radius:6px;background:transparent;color:var(--ink);border-color:var(--line)}
+.workspace-toggle>[data-workspace-icon],.workspace-quick>[data-workspace-icon]{display:flex}
+[data-workspace-icon]{display:inline-flex;flex:0 0 22px;align-items:center;justify-content:center}
+.workspace-link svg,.inbox-page .workspace-rail .workspace-link svg{width:22px;height:22px;stroke-width:1.7}
+.workspace-toggle svg,.inbox-page .workspace-toggle svg{width:18px;height:18px}
+.workspace-rail .sidebar,.inbox-page .workspace-rail .sidebar{display:flex;flex:1;flex-direction:column;gap:0;padding:0 16px 14px;min-height:0;font-family:"Segoe UI",Arial,sans-serif}
+.workspace-rail .workspace-link,.inbox-page .workspace-rail .workspace-link{display:flex;align-items:center;gap:14px;width:100%;min-height:38px;margin:0;padding:8px 10px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ink);font-size:13px;font-weight:400;line-height:1.35;text-align:left;box-shadow:none}
+.workspace-link-label{flex:1;min-width:0;white-space:nowrap}
+.workspace-rail .workspace-link:hover{background:var(--color-green-soft)}
+.workspace-rail .workspace-link[aria-current=page],.inbox-page .workspace-rail .workspace-link[aria-current=page]{background:var(--green);color:white;border-color:var(--green);font-weight:600;box-shadow:none}
+.workspace-rail .workspace-create,.inbox-page .workspace-rail .workspace-create{min-height:40px;margin-bottom:14px!important;background:var(--green);border-color:var(--green);color:white;font-weight:600}
+.workspace-rail .workspace-create:hover{background:var(--color-green-hover)}
+.workspace-create svg{width:25px;height:25px}
+.workspace-section-label{margin:0;padding:0 10px 6px;color:var(--ink);font-size:11px;font-weight:500;line-height:1.5;text-transform:uppercase;letter-spacing:.15px}
+.workspace-count{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;min-width:24px;min-height:22px;padding:2px 7px;border-radius:12px;background:var(--color-neutral);color:var(--ink);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.3}
+.workspace-count.attention{background:var(--color-purple);color:#fff}
+.workspace-count.complete{background:var(--color-green-soft);color:var(--green)}
+.workspace-link[aria-current=page] .workspace-count{background:#ffffff24;color:white}
+.workspace-link[aria-current=page] .workspace-count.attention{background:var(--color-purple);color:white}
+.workspace-resources{margin:16px 0 0;padding-top:14px;border-top:1px solid var(--line)}
+.workspace-footer{margin-top:auto;padding-top:28px}
+.workspace-help dl{margin:24px 0}.workspace-help dt{font-weight:650;color:var(--ink)}.workspace-help dd{margin:4px 0 18px;color:var(--muted);line-height:1.5}
+.inbox-workspace .cases-tabs [hidden]{display:none}
+@media(max-width:760px){
+  .shell.workspace-expanded,.inbox-page .shell.workspace-expanded{display:block}
+  .workspace-sticky{height:auto;max-height:85dvh}
+  .workspace-expanded .rail-tools,.inbox-page .workspace-expanded .rail-tools,.rail-tools{padding:8px 12px}
+  .workspace-toggle,.inbox-page .workspace-toggle{width:auto;height:36px;padding:6px 8px}
+  .workspace-rail .sidebar,.inbox-page .workspace-rail .sidebar{padding:4px 12px 12px}
+  .workspace-rail .workspace-link,.inbox-page .workspace-rail .workspace-link{min-height:44px;font-size:14px}
+  .workspace-footer{padding-top:12px}
+  .workspace-rail .workspace-create,.inbox-page .workspace-rail .workspace-create{margin-bottom:12px!important}
+  .workspace-resources{margin-top:12px;padding-top:12px}
+}

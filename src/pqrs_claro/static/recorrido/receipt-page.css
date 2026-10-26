@@ -10,13 +10,13 @@
 .receipt-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px}
 .receipt-section-heading h2{font-size:17px;margin:0}
 #receipt-count{font-size:11px;color:var(--muted);white-space:nowrap;background:var(--tint);padding:4px 8px;border-radius:4px}
-.receipt-page .receipt-dropzone{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:0;padding:28px 20px;background:#f6f8f5;border:1px dashed #b9c9bf;border-radius:6px}
+.receipt-page .receipt-dropzone{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:0;padding:28px 20px;background:var(--color-page);border:1px dashed var(--color-control-line);border-radius:6px}
 .receipt-page .receipt-dropzone.dragover{background:var(--tint);border:1px solid var(--green)}
 .receipt-upload-icon{display:grid;place-items:center;width:44px;height:48px;color:var(--green);margin-bottom:12px}
 .receipt-upload-icon svg{width:36px;height:36px}
 .receipt-page .receipt-dropzone h3{font-size:16px;margin:0 0 6px;line-height:1.4}
 .receipt-page .receipt-dropzone p{max-width:38ch;font-size:12px;margin:0;color:var(--muted);line-height:1.6}
-.receipt-page .petition-file-label{margin-top:16px;font-size:12px;padding:9px 16px;background:var(--surface);border:1px solid #afc1b6;color:var(--green);border-radius:5px}
+.receipt-page .petition-file-label{margin-top:16px;font-size:12px;padding:9px 16px;background:var(--surface);border:1px solid var(--color-control-line);color:var(--green);border-radius:5px}
 .receipt-page .petition-file-label:hover{background:var(--tint)}
 .receipt-page .receipt-dropzone .upload-limit{max-width:none;margin-top:12px;font-size:10px}
 .receipt-date-row{display:flex;gap:20px;align-items:center;margin:20px 0}
@@ -30,12 +30,12 @@
 .receipt-aside h2{font-size:15px;margin:0 0 16px}
 .receipt-next ol{padding:0;margin:0;list-style:none;display:grid;gap:20px}
 .receipt-next li{display:flex;gap:12px}
-.receipt-next li>span{color:#617d70;font-size:11px;line-height:24px;font-variant-numeric:tabular-nums}
+.receipt-next li>span{color:var(--color-muted);font-size:11px;line-height:24px;font-variant-numeric:tabular-nums}
 .receipt-next strong{font-size:13px;font-weight:600;line-height:24px}
 .receipt-next p{font-size:12px;color:var(--muted);line-height:1.6;margin:2px 0 0;max-width:28ch}
 .receipt-demo{border:0;background:none;font-size:11px;font-weight:400;color:var(--muted);padding:0;margin-top:20px}
 .receipt-demo:hover{text-decoration:underline;background:none}
-.receipt-page .receipt-file{margin:16px 0;border-radius:5px;padding:12px;min-width:0;background:#fcfdfb}
+.receipt-page .receipt-file{margin:16px 0;border-radius:5px;padding:12px;min-width:0;background:var(--color-page)}
 .receipt-page .receipt-file legend{font-size:12px;padding:0 6px;max-width:100%}
 .receipt-file-fields{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:12px}
 .receipt-file-fields .field:first-child{grid-column:1/-1}
@@ -49,10 +49,10 @@
 .receipt-inputs .receipt-main{min-width:0;margin:0}
 .receipt-provider{font-size:11px;color:var(--muted);background:var(--tint);padding:4px 8px;border-radius:4px}
 .receipt-email{display:flex;flex-direction:column}
-.receipt-email-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px 20px;border:1px solid var(--line);border-radius:6px;background:#f6f8f5}
+.receipt-email-zone{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:28px 20px;border:1px solid var(--line);border-radius:6px;background:var(--color-page)}
 .receipt-email-zone h3{font-size:16px;margin:0 0 6px;line-height:1.4}
 .receipt-email-zone p{max-width:38ch;font-size:12px;margin:0;color:var(--muted);line-height:1.6}
-.receipt-email-zone button{margin-top:16px;font-size:12px;padding:9px 16px;background:var(--surface);border:1px solid #afc1b6;color:var(--green);border-radius:5px}
+.receipt-email-zone button{margin-top:16px;font-size:12px;padding:9px 16px;background:var(--surface);border:1px solid var(--color-control-line);color:var(--green);border-radius:5px}
 .receipt-email-zone button:hover{background:var(--tint)}
 .receipt-email-zone .receipt-email-hint{margin-top:12px;font-size:10px}
 .receipt-email-note{font-size:12px;line-height:1.6;color:var(--muted);margin:20px 0}

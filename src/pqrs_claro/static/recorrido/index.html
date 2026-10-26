@@ -3,28 +3,74 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gestión de Peticiones · Nuevo recorrido</title>
-  <link rel="icon" href="data:,"><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="original-viewer.css"><link rel="stylesheet" href="workspace-layout.css"><link rel="stylesheet" href="split-pane.css?v=20260911-scroll"><link rel="stylesheet" href="quick-confirmation.css">
-  <link rel="stylesheet" href="evidence-upload.css"><link rel="stylesheet" href="library.css"><link rel="stylesheet" href="live-final.css"><link rel="stylesheet" href="petition-upload.css"><link rel="stylesheet" href="analysis-progress.css?v=20260911-source-spinner"><link rel="stylesheet" href="response-cards.css?v=20260914-passages"><script type="module" src="app.js?v=index2"></script>
-<link rel="stylesheet" href="document-workspace.css?v=20260911-footer-static">
-<link rel="stylesheet" href="gmail.css?v=20260916-mail">
-<link rel="stylesheet" href="identification-actions.css?v=20260916-discard">
-<link rel="stylesheet" href="case-browser.css?v=20260919-supports">
-<link rel="stylesheet" href="pending-supports.css?v=20260919">
-<link rel="stylesheet" href="initial-review.css?v=phase4">
-<link rel="stylesheet" href="receipt-page.css?v=6">
-<link rel="stylesheet" href="workspace-navigation.css?v=1">
+  <link rel="icon" href="data:,"><link rel="stylesheet" href="styles.css?v=palette4"><link rel="stylesheet" href="original-viewer.css?v=palette4"><link rel="stylesheet" href="workspace-layout.css?v=palette4"><link rel="stylesheet" href="split-pane.css?v=palette4"><link rel="stylesheet" href="quick-confirmation.css?v=palette4">
+  <link rel="stylesheet" href="evidence-upload.css?v=palette4"><link rel="stylesheet" href="library.css?v=palette4"><link rel="stylesheet" href="live-final.css?v=palette4"><link rel="stylesheet" href="petition-upload.css?v=palette4"><link rel="stylesheet" href="analysis-progress.css?v=palette4"><link rel="stylesheet" href="response-cards.css?v=palette4"><script type="module" src="app.js?v=sidebar1"></script>
+<link rel="stylesheet" href="document-workspace.css?v=palette4">
+<link rel="stylesheet" href="gmail.css?v=palette4">
+<link rel="stylesheet" href="identification-actions.css?v=palette4">
+<link rel="stylesheet" href="case-browser.css?v=palette4">
+<link rel="stylesheet" href="pending-supports.css?v=pending-guide1">
+<link rel="stylesheet" href="initial-review.css?v=palette4">
+<link rel="stylesheet" href="receipt-page.css?v=palette4">
+<link rel="stylesheet" href="workspace-navigation.css?v=palette4">
+<link rel="stylesheet" href="inbox.css?v=docked-receipt1">
+<link rel="stylesheet" href="manager-picker.css?v=palette4">
+<link rel="stylesheet" href="preanalysis.css?v=palette4">
+<link rel="stylesheet" href="expediente-workspace.css?v=reading-space1">
+<link rel="stylesheet" href="redaction-workspace.css?v=reading-confirmation1">
+<link rel="stylesheet" href="theme.css?v=palette4">
+<link rel="stylesheet" href="pending-workspace.css?v=pending-guide1">
+<link rel="stylesheet" href="draft-workspace.css?v=draft-workspace1">
+<link rel="stylesheet" href="stage-progress.css?v=stage-progress1">
+<link rel="stylesheet" href="workspace-sidebar.css?v=sidebar1">
 </head>
 <body>
   <a href="#main" class="skip">Ir al contenido</a>
-  <header class="institutional-header"><a id="home-logo" class="home-logo" href="/" aria-label="Universidad de Antioquia · Ir al inicio" title="Ir al inicio"><img src="logo.png" alt="Universidad de Antioquia · Facultad de Ingeniería"></a><div class="brand"><strong>Gestión de Peticiones</strong><span>Atención y respuesta institucional</span></div><div class="institutional-status"><span class="demo-badge">Demo</span><span class="prototype-status">Demo + biblioteca</span></div></header>
+  <header class="institutional-header"><a id="home-logo" class="home-logo" href="/" aria-label="Universidad de Antioquia · Ir al inicio" title="Ir al inicio"><span class="inbox-logo-image"><img src="logo.png" alt="Universidad de Antioquia · Facultad de Ingeniería"></span><span class="inbox-faculty" aria-hidden="true">Facultad de Ingeniería</span></a><div class="brand"><strong>Gestión de Peticiones</strong><span>Atención y respuesta institucional</span></div><div class="inbox-date"><time data-inbox-date></time><span>América/Bogotá</span></div><div class="inbox-identity">
+    <select id="cases-actor" hidden tabindex="-1" aria-hidden="true"><option value="">Selecciona tu gestor</option></select>
+    <div class="manager-control"><span class="manager-label">Gestor activo</span><button type="button" class="manager-trigger" data-manager-toggle aria-label="Cambiar gestor" aria-haspopup="dialog" aria-expanded="false" aria-controls="manager-picker"><span class="inbox-profile-avatar" data-actor-avatar aria-hidden="true">—</span><span data-manager-name>Selecciona tu gestor</span><span class="manager-chevron" data-manager-icon="chevron-down"></span></button></div>
+    <button type="button" class="manager-add-quick" data-manager-add aria-label="Añadir gestor" title="Añadir gestor"><span data-manager-icon="plus"></span></button>
+    <section id="manager-picker" class="manager-picker" role="dialog" aria-labelledby="manager-picker-title" aria-describedby="manager-picker-hint" hidden>
+      <h2 id="manager-picker-title"><span data-manager-icon="users"></span>Cambiar gestor</h2>
+      <p id="manager-list-label" class="manager-list-label">Gestores del piloto</p>
+      <div class="manager-list" role="listbox" aria-labelledby="manager-list-label" data-manager-list></div>
+      <button type="button" class="manager-add" data-manager-add><span data-manager-icon="user-plus"></span>Añadir gestor</button>
+      <p id="manager-picker-hint" class="manager-hint">Selecciona con quién vas a trabajar.</p>
+    </section>
+  </div><div class="institutional-status"><span class="demo-badge">Demo</span><span class="prototype-status">Demo + biblioteca</span></div></header>
 
   <div class="shell">
-<aside class="workspace-rail" aria-label="Navegación principal"><div class="workspace-sticky"><div class="rail-tools"><span class="rail-title">Espacio de trabajo</span><button id="workspace-toggle" class="workspace-toggle" aria-label="Abrir menú" aria-controls="workspace-menu" aria-expanded="false" title="Abrir menú"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg><span>Menú</span></button><button id="workspace-inbox" class="workspace-quick" title="Bandeja de PQRS" aria-label="Bandeja de PQRS"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 14h5l2 3h2l2-3h5"/></svg><span>Bandeja</span></button></div><div id="workspace-menu" hidden><nav class="sidebar" aria-label="Secciones de trabajo">
-<button id="live-open" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM4 14h5l2 3h2l2-3h5"/></svg><span>Bandeja de PQRS</span></button>
-<button id="live-new" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Recibir expedientes</span></button>
-<div class="workspace-divider"></div><button id="library" class="workspace-link"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v15M12 5C8 2 4 4 3 5v14c4-2 7-1 9 1 2-2 5-3 9-1V5c-4-2-7-2-9 0Z"/></svg><span>Biblioteca de fuentes</span></button>
-<div class="workspace-demo-group"><p class="workspace-label">DEMOSTRACIÓN</p><button class="case" id="case"><strong>Mecánica de Máquinas</strong><span>3 solicitudes · Información académica</span></button><button id="reset" class="text-button">Reiniciar maqueta</button></div>
-</nav></div></div></aside>
+<aside class="workspace-rail" aria-label="Navegación principal">
+  <div class="workspace-sticky">
+    <div class="rail-tools">
+      <span class="rail-title">Espacio de trabajo</span>
+      <button id="workspace-toggle" class="workspace-toggle" aria-label="Abrir menú" aria-controls="workspace-menu" aria-expanded="false" title="Abrir menú"><span data-workspace-icon="panel" aria-hidden="true"></span><span>Menú</span></button>
+      <button id="workspace-inbox" class="workspace-quick" title="Mi trabajo" aria-label="Mi trabajo"><span data-workspace-icon="inbox" aria-hidden="true"></span><span>Mi trabajo</span></button>
+    </div>
+    <div id="workspace-menu" hidden>
+      <nav class="sidebar" aria-label="Secciones de trabajo">
+        <button id="live-new" class="workspace-link workspace-create"><span data-workspace-icon="plus" aria-hidden="true"></span><span class="workspace-link-label">Nuevo expediente</span></button>
+        <div class="workspace-group" role="group" aria-labelledby="workspace-management-label">
+          <h2 class="workspace-section-label" id="workspace-management-label">Gestión</h2>
+          <button id="live-open" class="workspace-link" data-workspace-section="mine"><span data-workspace-icon="user" aria-hidden="true"></span><span class="workspace-link-label">Mi trabajo</span><span class="workspace-count" data-workspace-count="mine" aria-hidden="true">…</span></button>
+          <button id="workspace-pool" class="workspace-link" data-workspace-section="active"><span data-workspace-icon="users" aria-hidden="true"></span><span class="workspace-link-label">Pool del equipo</span><span class="workspace-count" data-workspace-count="active" aria-hidden="true">…</span></button>
+          <button id="workspace-pending" class="workspace-link" data-workspace-section="pending"><span data-workspace-icon="clock" aria-hidden="true"></span><span class="workspace-link-label">Pendientes por resolver</span><span class="workspace-count attention" data-workspace-count="pending" aria-hidden="true">…</span></button>
+          <button id="workspace-drafts" class="workspace-link" data-workspace-section="drafts"><span data-workspace-icon="file" aria-hidden="true"></span><span class="workspace-link-label">Borradores</span><span class="workspace-count" data-workspace-count="drafts" aria-hidden="true">…</span></button>
+          <button id="workspace-closed" class="workspace-link" data-workspace-section="closed"><span data-workspace-icon="archive" aria-hidden="true"></span><span class="workspace-link-label">Finalizadas</span><span class="workspace-count complete" data-workspace-count="closed" aria-hidden="true">…</span></button>
+        </div>
+        <div class="workspace-group workspace-resources" role="group" aria-labelledby="workspace-resources-label">
+          <h2 class="workspace-section-label" id="workspace-resources-label">Recursos</h2>
+          <button id="library" class="workspace-link"><span data-workspace-icon="book" aria-hidden="true"></span><span class="workspace-link-label">Biblioteca de fuentes</span></button>
+        </div>
+        <div class="workspace-footer">
+          <button id="workspace-trash" class="workspace-link" data-workspace-section="trash"><span data-workspace-icon="trash" aria-hidden="true"></span><span class="workspace-link-label">Papelera</span></button>
+          <button id="workspace-help" class="workspace-link"><span data-workspace-icon="circle-help" aria-hidden="true"></span><span class="workspace-link-label">Ayuda</span></button>
+        </div>
+      </nav>
+    </div>
+  </div>
+  <div hidden><button id="case">Mecánica de Máquinas</button><button id="reset">Reiniciar maqueta</button></div>
+</aside>
 
     <main id="main" tabindex="-1">  <div class="prototype">Prueba del nuevo recorrido · usa la demo ya validada. Las acciones son simuladas y no cambian expedientes.</div><nav class="steps" aria-label="Etapas de la petición"><button data-step="1"> <span>1</span> Entender la petición</button><button data-step="2"><span>2</span> Preparar las respuestas</button><button data-step="3"><span>3</span> Revisar el oficio</button></nav><div id="view"><p role="status">Cargando la petición de demostración…</p></div></main>
   </div>

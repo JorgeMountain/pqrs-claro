@@ -1,6 +1,7 @@
-import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=20260919-supports';
+import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=pending-guide1';
 import {esc,understanding,sourcesView} from './views.js';
 import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
+import {redactionWorkspace} from './redaction-workspace.js?v=reading-confirmation1';
 export function identification(data,state,{summary='',initial={},requestContent={},confirmation=''}={}){
   const closed=data.management?.state==='closed';
   let html=understanding(data,state,{reviewable:!closed&&data.status==='needs_review'&&initial.status!=='running',processing:data.initial_review_enabled,beforeRequests:summary,requestContent});
@@ -20,9 +21,11 @@ export function identification(data,state,{summary='',initial={},requestContent=
   return html;
 }
 const names={support_found:'Respaldo encontrado',confirmation_pending:'Confirmación pendiente',document_missing:'Documento faltante',analysis_error:'Error de análisis'};
-export function responses(current,job,mapping,drafts,review){
+export function responses(current,job,mapping,drafts,review,options={}){
+  if(options.workspace)return redactionWorkspace(current,job,mapping,drafts,review,options);
   const running=job.status==='running';
-  let html=`<div class="heading responses-heading ${running?'is-preparing':''}"><div><p class="eyebrow">${current.request_count} SOLICITUDES</p><h1>Respuestas para revisar</h1><p class="muted">Consulta cada respuesta, sus fuentes y los puntos concretos por revisar.</p></div></div>`;
+  let html=`<div class="heading responses-heading ${running?'is-preparing':''}"><div><p class="eyebrow">${current.request_count} SOLICITUDES</p><h1>Redacción de respuestas</h1><p class="muted">Consulta cada respuesta, sus fuentes y los puntos concretos por revisar.</p></div></div>`;
+  if(job.status==='starting')return html+'<section class="preparation-progress"><span class="analysis-badge">Revisión guardada</span><h2>Iniciando la preparación de respuestas</h2><p role="status">Estamos recuperando el expediente y comprobando sus fuentes. No necesitas volver a confirmar las peticiones.</p></section>';
   if(running)html+=preparationProgress(job,mapping,current.request_count,drafts);
   if(job.status==='waiting_review')html+=`<section class="pre-draft-notice"><strong>Revisa los puntos antes de redactar</strong><p>Abre los puntos de cada solicitud, confirma su respaldo o explica por qué no aplican. Las solicitudes listas se redactan automáticamente; las demás conservan su avance.</p></section>`;
   if(job.error)html+=`<div class="alert" role="alert">${esc(job.error)}</div>`;
@@ -69,7 +72,7 @@ export function responses(current,job,mapping,drafts,review){
       <details class="response-original"><summary>Qué solicitó la persona</summary><p>${esc(r.description)}</p></details>
     </article>`;
   }).join('');
-  return html+'<div class="actionbar"><p class="muted">Las respuestas se guardan para revisión.</p><button class="primary" data-action="live-final">Revisar y preparar el oficio →</button></div>';
+  return html+'<div class="actionbar"><p class="muted">Las respuestas se guardan para revisión.</p><button class="primary" data-action="live-final">Continuar al borrador →</button></div>';
 }
 export function supports(items,caseId){
   return sourcesView(items.map(s=>({...s,url:`/api/sources/${s.source_id}/original?case_id=${caseId}`})));

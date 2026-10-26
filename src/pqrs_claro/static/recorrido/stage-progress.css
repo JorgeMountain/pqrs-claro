@@ -1,0 +1,19 @@
+/* One compact progress strip for the four stages of the expediente. */
+.stage-progress{--draft-sage:var(--color-preanalysis);--draft-green:var(--color-green);--draft-blue:var(--color-blue);--stage-color:var(--color-blue)}
+.stage-progress-0{--stage-color:var(--color-preanalysis)}
+.stage-progress-1{--stage-color:var(--color-green)}
+.stage-progress-3{--stage-color:var(--color-purple)}
+.stage-progress .redaction-progress-copy>svg{width:20px;height:20px;flex:none;color:var(--stage-color)}
+.stage-progress .source-spinner{color:var(--stage-color)}
+.stage-progress .redaction-segments{min-width:100px}
+.stage-progress .workflow-segment{position:relative;flex:1;background:var(--color-neutral);overflow:hidden}
+.stage-progress .workflow-segment.stage-0{--segment-color:var(--color-preanalysis)}
+.stage-progress .workflow-segment.stage-1{--segment-color:var(--color-green)}
+.stage-progress .workflow-segment.stage-2{--segment-color:var(--color-blue)}
+.stage-progress .workflow-segment.stage-3{--segment-color:var(--color-purple)}
+.stage-progress .workflow-segment.current{box-shadow:inset 0 0 0 1px var(--segment-color)}
+.stage-progress .workflow-segment i{display:block;height:100%;width:var(--stage-fill);background:var(--segment-color);border-radius:inherit;transition:width .2s ease}
+.stage-progress .workflow-segment.indeterminate i{width:40%;animation:stage-progress-sweep 1.6s ease-in-out infinite alternate}
+@keyframes stage-progress-sweep{from{transform:translateX(-50%)}to{transform:translateX(200%)}}
+@media(max-width:600px){.stage-progress{gap:10px;padding:10px 12px}.stage-progress .redaction-progress-copy{flex-basis:100%;gap:10px}.stage-progress .redaction-segments{flex-basis:75%}.stage-progress .redaction-progress-message{display:block}.stage-progress .redaction-count{margin-left:auto}}
+@media(prefers-reduced-motion:reduce){.stage-progress .workflow-segment i{transition:none;animation:none}.stage-progress .source-spinner{animation:none}.stage-progress .workflow-segment.indeterminate i{width:100%;opacity:.4}}

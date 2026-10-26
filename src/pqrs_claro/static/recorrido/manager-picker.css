@@ -1,0 +1,43 @@
+.inbox-page .inbox-identity{position:relative}
+.inbox-identity [hidden]{display:none!important}
+.inbox-identity .manager-control{display:flex;flex-direction:column;gap:2px;min-width:0}
+.manager-label{font-size:12px;line-height:14px;color:var(--muted)}
+.inbox-identity .manager-trigger{display:flex;align-items:center;gap:10px;min-width:166px;max-width:220px;height:34px;padding:3px 10px;border:1px solid var(--color-line);border-radius:6px;background:#fff;color:var(--ink);font-size:var(--ui);font-weight:400;text-align:left}
+.manager-trigger [data-manager-name]{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.manager-trigger .inbox-profile-avatar{width:26px;height:26px;flex:0 0 26px;font-size:14px}
+.inbox-identity .manager-trigger:hover,.inbox-identity .manager-trigger[aria-expanded=true]{border-color:var(--color-green-line);background:var(--color-page)}
+.manager-chevron{margin-left:auto;display:flex}
+.manager-trigger[aria-expanded=true] .manager-chevron{transform:rotate(180deg)}
+.inbox-identity svg{width:22px;height:22px;stroke-width:1.8;flex-shrink:0;display:block}
+.inbox-identity .manager-chevron svg{width:18px;height:18px}
+.inbox-identity .manager-add-quick{display:grid;place-items:center;align-self:flex-end;width:32px;height:34px;padding:0 0 0 10px;border:0;border-left:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted)}
+.inbox-identity .manager-add-quick:hover{color:var(--green)}
+.manager-picker{position:absolute;right:0;top:calc(100% + 8px);z-index:12;width:288px;max-width:calc(100vw - 32px);max-height:calc(100dvh - var(--header-height) - 20px);overflow:auto;overscroll-behavior:contain;padding:14px 12px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 6px 24px #172b211f;font-size:14px;line-height:1.4}
+.manager-picker h2{display:flex;align-items:center;gap:9px;margin:0 2px 14px;font-size:16px;font-weight:700;line-height:1.3;letter-spacing:0}
+.manager-picker h2 svg{width:20px;height:20px}
+.manager-list-label{margin:0 2px 6px;color:var(--muted);text-transform:uppercase;font-size:11px;font-weight:500;line-height:1.4}
+.manager-list{max-height:min(320px,42dvh);overflow:auto}
+.inbox-identity .manager-option{display:flex;align-items:center;gap:10px;width:100%;min-height:52px;padding:8px;border:0;border-bottom:1px solid var(--color-neutral);border-radius:0;background:#fff;color:var(--ink);text-align:left;font-size:14px;font-weight:400;line-height:1.4}
+.inbox-identity .manager-option[aria-selected=true]{background:var(--color-green-soft);border-radius:6px;border-bottom-color:transparent}
+.inbox-identity .manager-option:hover{background:var(--color-page)}
+.inbox-identity .manager-option[aria-selected=true]:hover{background:var(--color-green-soft)}
+.inbox-identity .manager-option:focus-visible{outline:2px solid var(--color-green-line);outline-offset:-3px;border-radius:6px}
+.manager-avatar{display:grid;place-items:center;flex:0 0 32px;height:32px;border-radius:50%;font-size:16px;font-weight:700;color:var(--color-green);background:var(--color-green-soft)}
+.manager-avatar.selected{background:var(--color-green-avatar)}
+.manager-avatar.violet{background:var(--color-purple-avatar);color:var(--color-purple-ink)}
+.manager-option-copy{min-width:0;overflow-wrap:anywhere}
+.manager-option-copy small{display:block;font-size:12px;color:var(--green);margin-top:1px}
+.manager-selected-check{display:grid;place-items:center;width:21px;height:21px;flex:0 0 21px;margin-left:auto;border-radius:50%;background:var(--green);color:#fff}
+.manager-selected-check svg{width:15px;height:15px;stroke-width:2.4}
+.inbox-identity .manager-add{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:34px;padding:6px 10px;margin-top:10px;border:1px solid var(--color-green-line);border-radius:5px;background:#fff;color:var(--green);font-size:13px;font-weight:700}
+.manager-add svg{width:18px;height:18px}
+.inbox-identity .manager-add:hover{background:var(--tint)}
+.manager-hint{margin:7px 0 0;color:var(--muted);font-size:12px;line-height:1.4}
+.manager-empty{color:var(--muted);padding:12px 4px;margin:0}
+@media(max-width:760px){
+  .inbox-identity .manager-control{flex:1}
+  .inbox-identity .manager-trigger{width:100%;max-width:none;height:40px}
+  .inbox-identity .manager-add-quick{height:40px;width:38px}
+  .manager-picker{width:min(288px,100%);max-height:calc(100dvh - 150px)}
+  .inbox-identity .manager-add{min-height:40px}
+}

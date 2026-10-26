@@ -2,14 +2,24 @@
 const copy=v=>structuredClone(v);
 import {focusPoint} from './document-pages.js';
 const button=(action,label,icon)=>`<button type="button" data-tool="${action}" title="${label}" aria-label="${label}">${icon?`<span aria-hidden="true">${icon}</span>`:''}<span>${label}</span></button>`;
-export const toolsMarkup=()=>`<div class="document-tools" role="region" aria-label="Herramientas del documento">
+const fullToolsMarkup=()=>`<div class="document-tools" role="region" aria-label="Herramientas del documento">
   <div class="tool-group">${button('undo','Deshacer','↶')}${button('redo','Rehacer','↷')}${button('save','Guardar','✓')}</div>
   <div class="tool-group">${button('find','Buscar y reemplazar','⌕')}${button('add','Añadir párrafo','+')}${button('remove','Quitar párrafo','−')}</div>
   <div class="tool-group tool-view"><button type="button" data-tool="out" aria-label="Reducir zoom" title="Reducir zoom">−</button><label class="zoom-control"><span class="tool-sr">Zoom del documento</span><select data-zoom><option value="fit">Ajustar al ancho</option>${[50,75,90,100,110,125,150,175,200].map(n=>`<option value="${n}">${n}%</option>`).join('')}</select></label><button type="button" data-tool="in" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>${button('full','Pantalla completa','⛶')}</div>
   <div class="document-find" hidden><label>Buscar en el texto editable<input type="search" data-find autocomplete="off"></label><label>Reemplazar por<input data-replacement autocomplete="off"></label><div class="find-actions">${button('previous','Anterior','↑')}${button('next','Siguiente','↓')}${button('replace','Reemplazar')}${button('all','Reemplazar todos')}${button('close-find','Cerrar búsqueda','×')}</div><span data-find-count role="status"></span></div>
   </div><div class="document-tool-status"><span data-page-count></span><span data-word-count></span><span data-selection-label>Selecciona un párrafo para editarlo</span><details><summary>Atajos</summary><p>Ctrl + Z: deshacer · Ctrl + Y: rehacer · Ctrl + F: buscar · Ctrl + S: guardar. En Mac, usa ⌘. El zoom cambia solo la vista. La paginación es orientativa; consulta el PDF generado para ver la distribución final.</p></details></div>`;
 
-export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,save}){
+export function toolsMarkup({compact=false}={}){
+  let markup=fullToolsMarkup();
+  if(compact){
+    const secondary=button('find','Buscar y reemplazar','⌕')+button('add','Añadir párrafo','+')+button('remove','Quitar párrafo','−');
+    markup=markup.replace(`<div class="tool-group">${secondary}</div>`,`<details class="doc-tools-more"><summary aria-label="Más opciones" title="Más opciones">Más opciones</summary><div class="doc-tools-menu">${secondary}</div></details>`).replace('class="document-tools"','class="document-tools is-compact"');
+  }
+  return markup;
+}
+
+export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,save,isReadOnly=()=>false}){
+  const locked=()=>s.busy||isReadOnly();
   const root=s.node,stage=root.querySelector('.document-stage'),canvas=root.querySelector('.document-canvas');
   const history=s.editHistory??={past:[],future:[]};
   let selected=null,lastInput=0,lastTarget=null,matchIndex=-1,matches=[];
@@ -37,7 +47,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   }
   function travel(redo){
     const from=redo?history.future:history.past,to=redo?history.past:history.future;
-    if(s.busy||!from.length)return;to.push(snapshot());restore(from.pop());lastTarget=null;
+    if(locked()||!from.length)return;to.push(snapshot());restore(from.pop());lastTarget=null;
     const el=root.querySelector(`[data-block="${selected}"]`);
     if(el){el.focus();const range=document.createRange();range.selectNodeContents(el);range.collapse(false);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);}
   }
@@ -45,15 +55,15 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   function refresh(){
     const text=s.work.blocks.map(b=>b.text).join('\n').trim();
     root.querySelector('[data-word-count]').textContent=`${text?text.split(/\s+/u).length:0} palabras · ${text.length.toLocaleString('es-CO')} caracteres`;
-    root.querySelector('[data-tool="undo"]').disabled=s.busy||!history.past.length;
-    root.querySelector('[data-tool="redo"]').disabled=s.busy||!history.future.length;
-    root.querySelector('[data-tool="save"]').disabled=s.busy||s.work.requests.some(r=>r.status==='checking');
+    root.querySelector('[data-tool="undo"]').disabled=locked()||!history.past.length;
+    root.querySelector('[data-tool="redo"]').disabled=locked()||!history.future.length;
+    root.querySelector('[data-tool="save"]').disabled=locked()||s.work.requests.some(r=>r.status==='checking');
     const block=s.work.blocks[selected],marks=block?.bookmarks||[],single=marks.length===1;
     const [,ri,pi]=single?marks[0].split('_').map((v,i)=>i?Number(v):v):[];
     const row=s.work.requests[ri],p=row?.paragraphs[pi];
-    root.querySelector('[data-tool="add"]').disabled=s.busy||!p||row.paragraphs.length>=30;
-    root.querySelector('[data-tool="remove"]').disabled=s.busy||!p||row.paragraphs.length<=1||row.paragraphs.filter(x=>x.office_section==='response').length===1&&p.office_section==='response';
-    root.querySelectorAll('[data-tool="replace"],[data-tool="all"]').forEach(e=>e.disabled=s.busy);
+    root.querySelector('[data-tool="add"]').disabled=locked()||!p||row.paragraphs.length>=30;
+    root.querySelector('[data-tool="remove"]').disabled=locked()||!p||row.paragraphs.length<=1||row.paragraphs.filter(x=>x.office_section==='response').length===1&&p.office_section==='response';
+    root.querySelectorAll('[data-tool="replace"],[data-tool="all"]').forEach(e=>e.disabled=locked());
     root.querySelector('[data-selection-label]').textContent=block?block.request_ids?.length?`Respuesta · ${block.request_ids.join(', ')}`:'Datos del oficio':'Selecciona un párrafo para editarlo';
   }
   function bindSheet(){
@@ -96,7 +106,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     root.querySelector('[data-find-count]').textContent=`${matchIndex+1} de ${matches.length} coincidencias`;refresh();
   }
   function replace(all){
-    if(s.busy)return;scan();if(!matches.length)return;
+    if(locked())return;scan();if(!matches.length)return;
     record();const replacement=root.querySelector('[data-replacement]').value;
     const chosen=all?matches:[matches[Math.max(0,Math.min(matchIndex,matches.length-1))]];
     for(const index of new Set(chosen.map(m=>m.block))){
@@ -111,6 +121,8 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   root.querySelector('[data-zoom]').onchange=e=>{s.zoomMode=e.target.value;applyZoom();};
   root.querySelectorAll('[data-tool]').forEach(button=>button.onclick=async()=>{
     const action=button.dataset.tool;
+    if(['undo','redo','save','add','remove','replace','all'].includes(action)&&locked())return;
+    if(button.closest('.doc-tools-more'))button.closest('.doc-tools-more').open=false;
     if(action==='undo'||action==='redo')travel(action==='redo');
     else if(action==='save')save();
     else if(action==='find'){root.querySelector('.document-find').hidden=false;root.querySelector('[data-find]').focus();}
@@ -123,7 +135,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
       s.zoomMode=String(zoom);applyZoom();
     }else if(action==='full'){
       expand(!stage.classList.contains('document-expanded'));
-    }else if((action==='add'||action==='remove')&&!s.busy){record();selected=paragraph(selected,action);renderSheet();changed();refresh();root.querySelector(`[data-block="${selected}"]`)?.focus();}
+    }else if((action==='add'||action==='remove')&&!locked()){record();selected=paragraph(selected,action);renderSheet();changed();refresh();root.querySelector(`[data-block="${selected}"]`)?.focus();}
   });
   root.onkeydown=e=>{
     if(e.key==='Escape'&&stage.classList.contains('document-expanded')){expand(false);root.querySelector('[data-tool="full"]').focus();}

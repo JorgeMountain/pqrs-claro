@@ -1,8 +1,8 @@
-.evidence-update{margin:16px 0;padding:16px;border-left:3px solid var(--green,#3e6747);background:#f2f6f2;font-size:14px;overflow-wrap:anywhere}
+.evidence-update{margin:16px 0;padding:16px;border-left:3px solid var(--green,#3e6747);background:var(--color-green-soft);font-size:14px;overflow-wrap:anywhere}
 .evidence-update p{margin:8px 0}.evidence-update button{min-height:40px}
 #evidence-form .field{margin:12px 0}#evidence-form input[type=file]{width:100%;min-width:0;max-width:100%;font-size:14px;padding:10px;overflow:hidden}
 #evidence-form input:not([type=file]),#evidence-form select{width:100%;min-height:42px;padding:8px 10px;border:1px solid var(--line,#cdd6ce);border-radius:4px;font:inherit;background:white;color:inherit}
 #evidence-form details{margin:16px 0}#evidence-form .dialog-actions{display:flex;flex-wrap:wrap;gap:8px}
 #evidence-progress:empty,#evidence-error:empty{display:none}
-#evidence-error{color:#922e2e}#evidence-library-rows .source{overflow-wrap:anywhere}
+#evidence-error{color:var(--color-danger)}#evidence-library-rows .source{overflow-wrap:anywhere}
 @media(max-width:480px){#evidence-form .dialog-actions button{width:100%}}

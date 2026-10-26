@@ -55,6 +55,26 @@ test('un error de guardado no inicia la preparación',async()=>{
   await assert.rejects(()=>confirmAndPrepare({decision:decision(),report:report(),save:async()=>{throw new Error('Conflicto de revisión');},onSaved:()=>calls.push('saved'),prepare:async()=>calls.push('prepare')}),/Conflicto/);
   assert.deepEqual(calls,[]);
 });
+
+test('anuncia redacción después de guardar y antes de esperar la preparación',async()=>{
+  let finish;const pending=new Promise(resolve=>finish=resolve),calls=[];
+  const result=confirmAndPrepare({decision:decision(),report:report(),
+    save:async()=>{calls.push('save');return {can_prepare:true};},
+    onSaved:()=>calls.push('saved'),onPreparing:()=>calls.push('redaction'),
+    prepare:()=>{calls.push('prepare');return pending;}});
+  await Promise.resolve();await Promise.resolve();
+  assert.deepEqual(calls,['save','saved','redaction','prepare']);
+  const job={status:'running',stage:'sources'};finish(job);
+  assert.deepEqual(await result,{prepared:true,preparation:job});
+});
+
+test('no anuncia redacción si la revisión no permite preparar',async()=>{
+  const calls=[];
+  const result=await confirmAndPrepare({decision:decision(),report:report(),
+    save:async()=>({can_prepare:false}),onSaved:()=>calls.push('saved'),
+    onPreparing:()=>calls.push('redaction'),prepare:async()=>calls.push('prepare')});
+  assert.deepEqual(calls,['saved']);assert.equal(result.prepared,false);
+});
 test('la ruta alternativa se guarda y respeta el bloqueo devuelto por el servidor',async()=>{
   const d=decision();d.document.route='complement';d.document.note='';
   let prepared=false,saved=false;

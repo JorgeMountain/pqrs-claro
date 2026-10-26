@@ -1,12 +1,14 @@
-import {showPetitionUpload} from './petition-upload.js?v=receipt6';
-import {createGmail} from './gmail-inbox.js?v=management1';
+import {receiveDocument} from './receipt-flow.js';
+import {actor,request as managementRequest} from './management-ui.js?v=phase2';
+import {createGmail} from './gmail-inbox.js?v=workspace1';
 import {createEvidenceUpload} from './evidence-upload.js';
 import {createLibrary} from './library.js?v=20260911-source-spinner';
-import {createLive} from './live.js?v=index2';
-import {createCaseBrowser} from './case-browser.js?v=phase2';
+import {createLive} from './live.js?v=approval-progress1';
+import {createCaseBrowser} from './case-browser.js?v=sidebar1';
+import {createPreanalysis} from './preanalysis.js?v=stage-progress1';
 import {confirmScope,reopenScope,recordDecision,rejectionForm,scopeStatement} from './quick-confirmation.js';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
-import {setWorkspaceSection} from './workspace-menu.js?v=navigation1';
+import {setWorkspaceSection,selectWorkspaceInbox,syncWorkspaceQueue,workspaceHelp} from './workspace-menu.js?v=sidebar1';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {esc, understanding, responses, office, sourcesView, blocked, paragraphs} from './views.js';
 const view=document.querySelector('#view'), drawer=document.querySelector('#drawer'), body=document.querySelector('#drawer-body');
@@ -17,30 +19,75 @@ const notice=message=>{clearTimeout(timer);document.querySelector('#notice').tex
 const library=createLibrary({open,close:()=>drawer.close(),notice});
 const evidence=createEvidenceUpload({open,close:()=>drawer.close(),render:()=>render(),notice,getData:()=>data,changed:dirty=>{state.evidenceDirty=dirty;if(dirty)invalidate();}});
 let releaseSplitPane=()=>{};
-const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases});
-const gmail=createGmail({open,close:()=>drawer.close(),notice,onOpenCase:async id=>{const c=await fetch('/api/cases/'+id).then(r=>r.json());if(c.status==='uploaded'){await showCases();return;}homeVisible=false;showWorkspace();await live.select(id);}});
-const caseBrowser=createCaseBrowser({container:view,open,close:()=>drawer.close(),notice,onNew:showHome,onSelect:async id=>{await live.select(id);homeVisible=false;}});
-document.querySelector('#live-open').onclick=()=>live.choose();
-document.querySelector('#workspace-inbox').onclick=()=>live.choose();
-function showWorkspace(){document.querySelector('.steps').hidden=false;document.querySelector('.prototype').hidden=false;}
-function showCases(){
-  if(live.leave()===false)return;setWorkspaceSection('live-open');releaseSplitPane();homeVisible=true;if(drawer.open)drawer.close();
+const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases,onPreanalysis:showSavedPreanalysis});
+const preanalysis=createPreanalysis({container:view,notice,onBack:showCases,onStarted:async id=>{preanalysis.leave();showWorkspace();homeVisible=false;history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id));await live.select(id);}});
+async function uploadToPool(file,metadata){
+  const body=new FormData();body.set('file',file);for(const [key,value] of Object.entries(metadata))if(value)body.set(key,value);
+  const response=await fetch('/api/cases',{method:'POST',body});const result=await response.json();
+  if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Revisa los datos del expediente.');return result;
+}
+const gmail=createGmail({open,close:()=>drawer.close(),notice,onOpenCase:async id=>{await showCases();await caseBrowser.received(id,'analyze');},onReceive:async(id,context)=>{
+  if(context.mode==='analyze'&&!context.duplicate&&!context.linked)await receiveDocument({caseId:id},{mode:'analyze',manager:actor(),request:managementRequest});
+  if(!caseBrowser.visible())await showCases();
+  await caseBrowser.received(id,context.mode==='analyze'&&!context.linked?'analyze':'save');
+}});
+const caseBrowser=createCaseBrowser({container:view,open,close:()=>drawer.close(),notice,upload:uploadToPool,gmail:mode=>{if(mode==='analyze'&&!actor()){notice('Selecciona tu gestor antes de recibir y analizar un correo.');return;}return gmail.show(mode);},onSelect:openCase,onQueueChange:syncWorkspaceQueue,onViewChange:section=>{
+  selectWorkspaceInbox(section);
+  if(caseBrowser.visible())history.replaceState(null,'',location.pathname+'?view=cases&section='+encodeURIComponent(section));
+}});
+
+async function showSavedPreanalysis(current,navigation,progress){
+  homeVisible=true;releaseSplitPane();
+  document.body.classList.remove('expediente-page');document.body.classList.add('inbox-page');
+  document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
+  setWorkspaceSection('live-open');
+  history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(current.id)+'&view=preanalysis');
+  await preanalysis.show(current,{readOnly:true,navigation,progress,onStage:step=>{
+    preanalysis.leave();homeVisible=false;showWorkspace();return live.resume(step);
+  }});
+}
+
+async function openCase(id,options={}){
+  if(preanalysis.busy())return;
+  const current=await managementRequest('/api/cases/'+encodeURIComponent(id));
+  if(!current.identification&&['uploaded','error'].includes(current.status)&&current.management?.owner_id){
+    if(live.leave()===false)return;homeVisible=true;releaseSplitPane();
+    document.body.classList.add('inbox-page');document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
+    setWorkspaceSection('live-open');history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id)+'&view=preanalysis');
+    await preanalysis.show(current);return;
+  }
+  const viewPreanalysis=new URLSearchParams(location.search).get('view')==='preanalysis';
+  preanalysis.leave();showWorkspace();homeVisible=false;await live.select(id,{...options,viewPreanalysis,caseRecord:current});
+}
+
+function showInboxSection(section){
+  if(caseBrowser.visible()){
+    if(!caseBrowser.navigate(section))notice('Espera a que termine la recepción del documento.');
+    return;
+  }
+  return showCases({section});
+}
+document.querySelectorAll('[data-workspace-section]').forEach(button=>button.onclick=()=>showInboxSection(button.dataset.workspaceSection));
+document.querySelector('#workspace-inbox').onclick=()=>showInboxSection('mine');
+function showWorkspace(){document.body.classList.remove('inbox-page');document.querySelector('.steps').hidden=false;document.querySelector('.prototype').hidden=false;}
+function showCases(options={}){
+  if(preanalysis.busy()){notice('Espera a que se confirme el inicio del análisis.');return;}
+  if(caseBrowser.busy()){notice('Espera a que termine la recepción del documento.');return;}
+  if(live.leave()===false)return;preanalysis.leave();document.body.classList.add('inbox-page');setWorkspaceSection('live-open');releaseSplitPane();homeVisible=true;if(drawer.open)drawer.close();
   document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
   document.querySelector('.demo-badge').textContent='Gestión de Peticiones';document.querySelector('.prototype-status').textContent='Bandeja de PQRS';
   document.querySelector('#case').classList.remove('active');
   history.replaceState(null,'',location.pathname+'?view=cases');window.scrollTo(0,0);
-  return caseBrowser.show();
+  return caseBrowser.show(options);
 }
-function showHome(){
-  if(live.leave()===false)return;setWorkspaceSection('live-new');releaseSplitPane();homeVisible=true;if(drawer.open)drawer.close();
-  document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
-  document.querySelector('.demo-badge').textContent='Gestión de Peticiones';document.querySelector('.prototype-status').textContent='Inicio';
-  document.querySelector('#case').classList.remove('active');
-  showPetitionUpload({container:view,gmail:()=>gmail.show(),upload:async (file,metadata)=>{const body=new FormData();body.set('file',file);for(const [key,value] of Object.entries(metadata))if(value)body.set(key,value);const response=await fetch('/api/cases',{method:'POST',body});const result=await response.json();if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Revisa los datos del expediente.');return result;},choose:()=>live.choose(),demo:()=>{if(live.leave()===false)return;go(1);}});
-  document.querySelector('#main').focus();window.scrollTo(0,0);
+async function showHome(){
+  if(!caseBrowser.visible())await showCases();
+  if(caseBrowser.visible()){caseBrowser.showPanel('analyze');setWorkspaceSection('live-new');}
 }
+
 document.querySelector('#live-new').onclick=showHome;
-document.querySelector('#home-logo').onclick=event=>{if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;event.preventDefault();showHome();};
+document.querySelector('#workspace-help').onclick=()=>{open('Ayuda del espacio de trabajo',workspaceHelp);drawer.querySelector('.eyebrow').textContent='GUÍA DE NAVEGACIÓN';};
+document.querySelector('#home-logo').onclick=event=>{if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;event.preventDefault();showCases();};
 function render(focus=false){
   if(live.active()||homeVisible)return;
   releaseSplitPane();
@@ -124,4 +171,4 @@ view.addEventListener('click',e=>{
     case 'missing':if(evidence.isConnected()){evidence.uploadForm(data.requests[1].request_id);break;}open('Aportar el documento solicitado',`<p><strong>Programa de Mecánica de Máquinas · 2019-2</strong></p><p>En el sistema integrado, aquí se adjuntaría el archivo o se registraría a quién solicitarlo. El pendiente seguiría abierto hasta que el documento se lea y se compruebe su relación con esta solicitud.</p><p class="muted">La maqueta no carga archivos ni da este pendiente por resuelto. Puedes volver a «Demo validada» en el selector para continuar probando.</p>`);break;
   }
 });
-try{const response=await fetch('./data.json');if(!response.ok)throw new Error('Snapshot unavailable');data=await response.json();await live.init();if(live.active())setWorkspaceSection('live-open');if(!live.active()){if(new URLSearchParams(location.search).get('view')==='cases')await showCases();else await showCases();await evidence.connect();}}catch{view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo cargar la demostración</h1><p>Recarga la página para volver a intentar abrir los datos de la maqueta.</p><button id="reload">Reintentar</button></div>';document.querySelector('#reload').addEventListener('click',()=>location.reload());document.querySelectorAll('header button,.sidebar button,.steps button').forEach(b=>b.disabled=true);}
+try{const response=await fetch('./data.json');if(!response.ok)throw new Error('Snapshot unavailable');data=await response.json();const restoreUrl=location.href,selectedCase=new URLSearchParams(location.search).get('case'),section=new URLSearchParams(location.search).get('section');await live.init(false);if(selectedCase){await caseBrowser.initializeIdentity();history.replaceState(null,'',restoreUrl);await openCase(selectedCase);}else{await showCases({section});await evidence.connect();}}catch{view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo cargar la demostración</h1><p>Recarga la página para volver a intentar abrir los datos de la maqueta.</p><button id="reload">Reintentar</button></div>';document.querySelector('#reload').addEventListener('click',()=>location.reload());document.querySelectorAll('header button,.sidebar button,.steps button').forEach(b=>b.disabled=true);}
