@@ -9,7 +9,12 @@ from .config import ROOT
 def mount_recorrido_ui(app, *, backend_port=None):
     """Registrar después de la API: el montaje raíz siempre queda al final."""
     static = ROOT / "src" / "pqrs_claro" / "static"
-    demo = ROOT / "output" / "ux-peticiones-20260910"
+    legacy_demo = ROOT / "output" / "ux-peticiones-20260910"
+    # A fresh clone includes the empty snapshot required by the current inbox.
+    # Keep an existing local demo available without distributing its documents.
+    demo = static / "demo"
+    if (legacy_demo / "data.json").is_file() and (legacy_demo / "files").is_dir():
+        demo = legacy_demo
 
     @app.get("/recorrido-status")
     def status():
@@ -26,7 +31,8 @@ def mount_recorrido_ui(app, *, backend_port=None):
 
     @app.get("/logo.png")
     def logo():
-        return FileResponse(demo / "logo.png")
+        image = demo / "logo.png"
+        return FileResponse(image if image.is_file() else static / "assets" / "udea-ingenieria.png")
 
     @app.get("/library-evidence.js")
     def evidence_module():

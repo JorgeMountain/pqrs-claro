@@ -58,12 +58,32 @@ las ejecuciones ya registradas. Los errores de evaluación mantienen su reanudac
 La versión 8 de análisis y la revisión de extracción invalidan resultados anteriores.
 Actualizar fuentes no reabre la identificación ni aprueba o publica una respuesta.
 
+## Rendimiento de temas y fechas
+
+La búsqueda de temas utiliza las posiciones del índice léxico para preseleccionar
+fragmentos, y después aplica las mismas reglas de coincidencia, puntuación y orden.
+La búsqueda de fechas también preselecciona candidatos, conservando palabras cortadas
+y variantes Unicode. Cuando el índice puede omitir una variante, se mantiene el recorrido
+completo. El filtro de permisos y colecciones se aplica antes de estas operaciones.
+
+Esta optimización está integrada desde el 19 de octubre de 2026. No cambia el evaluador
+Luna, las citas ni la versión de selección; no invalida ni reprocesa resultados guardados.
+Se utiliza automáticamente cuando se ejecuta una nueva búsqueda con el código actualizado.
+
+En la comparación local del 16 de octubre, 17 solicitudes de dos casos pasaron de
+718,92 a 148,91 segundos de recuperación, con 408 resultados de candidatos idénticos
+en contenido, orden y metadatos. Es una reducción observada del 79,29 % en esa muestra;
+excluye carga inicial, validación de PDF, evaluación con Luna y redacción. Los resultados
+se conservan en `../experiments/retrieval-speed-20261016/INFORME.md`.
+
 ## Comprobación
 
 Las pruebas sintéticas cubren contexto, alcance, citas inmutables, coincidencias por
 correo, respuestas contiguas, intención de entrega, caché, recuperación tras fallos
 y conservación de resultados anteriores. Hay una prueba opcional con el modelo real
 que recupera una paráfrasis y bloquea conexiones de red durante la inferencia.
+`test_topic_prefilter.py` y `test_date_prefilter.py` comprueban además que la
+preselección conserve coincidencias, citas, orden, alcance y cambios de texto.
 
 `scripts/check_retrieval_benchmark.py` compara una referencia independiente con el
 buscador real. Recibe explícitamente caso, fuentes, alcance y referencia; no escribe

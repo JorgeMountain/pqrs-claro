@@ -1,5 +1,15 @@
 # Recorrido del código de PQRS Claro
 
+Para instalar y entregar la versión actual, usa [ENTREGA.md](ENTREGA.md) y el
+[índice de documentación](README.md). La interfaz actual tiene cuatro etapas:
+Preanálisis, Identificación, Redacción y Borrador.
+
+**Lectura actualizada del 12 de octubre de 2026:** empieza por la
+[guía para entender y colaborar](GUIA_PARA_ENTENDER_Y_COLABORAR.md).
+La bandeja ahora separa recepción e inicio del análisis; se incorporaron revisión
+inicial, gestión y una excepción explícita de piloto. La secuencia inicial y el
+modelo predeterminado mencionados más abajo corresponden a la etapa de esta guía.
+
 Guía comprobada contra el código del repositorio el **15 de septiembre de 2026**. Explica el recorrido elegido en **8772**. Los ejemplos de esta guía son didácticos: no ejecutan IA ni cambian expedientes.
 
 **Ampliación del 16 de septiembre:** hay una segunda entrada por Gmail junto a la
@@ -104,15 +114,18 @@ read_pdf → identify_requests → review_identification → fin
 
 **Resultado:** tarjetas editables para revisar lo que se identificó. No son aún respuestas.
 
+En el flujo actual, `intake_service.py` continúa con `petition_classification.py` para proponer el tipo de cada petición usando sus fragmentos originales. Esta etapa conserva el preanálisis y no carga ni busca en la biblioteca. Las clasificaciones nuevas no se invalidan por añadir fuentes; los análisis anteriores conservan su contrato y su historial.
+
 ### Parada 3 · Confirmas las solicitudes
 
-En [`static/recorrido/live.js`](../src/pqrs_claro/static/recorrido/live.js), busca `case 'live-confirm'`.
+En [`static/recorrido/live.js`](../src/pqrs_claro/static/recorrido/live.js), busca `case 'live-initial-confirm'`.
 
 ```text
-Clic en confirmar
-  → POST /api/cases/{id}/confirm-and-prepare
-  → PreparationService.confirm()
-  → confirma identificación + inicia preparación
+Revisión conjunta de todas las peticiones y sus tipos
+  → PUT /api/cases/{id}/initial-review/decision
+  → decisión del gestor guardada
+  → POST /api/cases/{id}/preparation
+  → Redacción: busca fuentes, revisa pendientes y prepara respuestas
 ```
 
 [`preparation.py`](../src/pqrs_claro/preparation.py) es el coordinador principal de esta parte. `run()` espera el análisis de fuentes, construye los pendientes y manda a redactar las solicitudes elegibles.

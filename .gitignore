@@ -10,3 +10,9 @@ output/
 __pycache__/
 *.pyc
 .playwright-cli/
+/tmp/
+.coverage
+htmlcov/
+*.egg-info/
+/build/
+/dist/
