@@ -146,6 +146,84 @@ class CaseStore:
                            "lifecycle_revision": revision, "deleted_at": deleted_at})
         return result
 
+    def inbox_cases(self, *, deleted=False):
+        """Project queue metadata without decoding pages or identified petitions."""
+        fields = ("id", "filename", "status", "created_at", "request_count", "version",
+                  "received_at", "origin", "receipt")
+        projection = ",".join(f"json_extract(c.body, '$.{key}')" for key in fields)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT {projection}, json_extract(c.body, '$.identification.subject'), "
+                "json_extract(c.body, '$.identification') NOT IN ('{}','[]','',0), "
+                "(SELECT max(json_extract(e.value, '$.created_at')) "
+                " FROM json_each(c.body, '$.events') e), "
+                "COALESCE(l.revision,0), l.deleted_at FROM cases c "
+                "LEFT JOIN case_lifecycle l ON l.case_id=c.id "
+                "WHERE (l.deleted_at IS NOT NULL)=? ORDER BY c.rowid DESC", (deleted,)
+            ).fetchall()
+        result = []
+        for row in rows:
+            case = dict(zip(fields, row))
+            for key in ("origin", "receipt"):
+                case[key] = json.loads(case[key]) if case[key] else {}
+            subject, identified, activity, revision, deleted_at = row[len(fields):]
+            # default() only needs whether identification has started.
+            case["identification"] = bool(identified)
+            item = {key: case[key] for key in fields[:6]}
+            item.update(
+                subject=subject or case["origin"].get("subject") or "",
+                origin_kind=case["origin"].get("kind", "pdf"),
+                case_number=case["origin"].get("reported_case_number", ""),
+                lifecycle_revision=revision, deleted_at=deleted_at,
+            )
+            result.append((item, case, activity or ""))
+        return result
+
+    def workflow_summary(self, versions, *, initial_review_enabled=True, deleted=False):
+        """Saved navigation hints only; callers already admitted these case IDs.
+
+        This does not establish source freshness or grant preparation/approval.
+        All operation guards remain in the corresponding services.
+        """
+        result = {
+            case_id: dict(
+                preanalysis_status=None if deleted else "idle",
+                initial_review_status="idle" if initial_review_enabled and not deleted else None,
+                preparation=dict(status="idle", stage=None, version=None, stale=False),
+            ) for case_id in versions
+        }
+        if not result or deleted:
+            return result
+        with self.connect() as conn:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            ids = list(versions)
+            for start in range(0, len(ids), 500):
+                batch = ids[start:start + 500]
+                placeholders = ",".join("?" for _ in batch)
+                for table, key in (("case_preanalysis", "preanalysis_status"),
+                                   ("intake_reviews", "initial_review_status")):
+                    if table not in tables or (table == "intake_reviews"
+                                              and not initial_review_enabled):
+                        continue
+                    for case_id, status in conn.execute(
+                        f"SELECT case_id,json_extract(body,'$.status') FROM {table} "
+                        f"WHERE case_id IN ({placeholders})", batch
+                    ):
+                        result[case_id][key] = status
+                if "preparations" in tables:
+                    for case_id, status, stage, version in conn.execute(
+                        "SELECT case_id,json_extract(body,'$.status'),"
+                        "json_extract(body,'$.stage'),json_extract(body,'$.version') "
+                        f"FROM preparations WHERE case_id IN ({placeholders})", batch
+                    ):
+                        result[case_id]["preparation"] = dict(
+                            status=status, stage=stage, version=version,
+                            stale=version != versions[case_id],
+                        )
+        return result
+
     def set_deleted(self, case_id, *, version, lifecycle_revision, deleted, management_revision=0):
         """Soft deletion preserves content versions, approvals and all original files."""
         with self.connect() as conn:

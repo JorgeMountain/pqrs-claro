@@ -22,15 +22,20 @@ from .extraction import OpenAIOCR, PDFExtractor
 from .gmail_api import gmail_router
 from .gmail_service import GmailService
 from .intake_service import IntakeService, intake_router
+from .jev_classification import MODEL as JEV_CLASSIFICATION_MODEL
+from .jev_classification import get_key as get_jev_classification_key
 from .management import ManagementStore, management_router
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
 from .performance_metrics import read_metrics
+from .preanalysis import PreanalysisService, preanalysis_router
 from .preparation import PreparationService, preparation_router
 from .response_proposals import ResponseProposalService, response_proposal_router
 from .review_api import review_router
 from .review_service import ReviewService
+from .saved_progress import saved_offices, saved_stages
+from .semantic_preparation import SemanticPreparation
 from .service import CaseService
 from .source_api import source_router
 from .source_library import SourceLibrary
@@ -81,6 +86,7 @@ def create_app(
     proposal_engine=None,
     gmail_auth=None,
     intake_engine=None,
+    preanalysis_engine=None,
     interface="workspace",
 ):
     if interface not in {"workspace", "recorrido"}:
@@ -91,6 +97,9 @@ def create_app(
     management = ManagementStore(store)
     service.management = management if settings.management_enabled else None
     store.management = service.management
+    preanalysis = PreanalysisService(settings, store, management, service,
+                                    engine=preanalysis_engine)
+    service.preanalysis = preanalysis
     source_ocr = None
     if source_extractor is None:
         source_ocr = WindowsOCR() if os.name == "nt" else (
@@ -99,9 +108,11 @@ def create_app(
         source_extractor = PDFExtractor(source_ocr)
     library = SourceLibrary(settings.data_dir, source_extractor)
     library_preparation = SourcePreparation(library)
+    semantic_preparation = SemanticPreparation(library)
     verifications = SourceVerificationStore(settings.data_dir, library, store)
     sources_service = SourceService(settings, store, library, assessor=source_assessor,
                                     verifications=verifications)
+    sources_service.semantic_preparation = semantic_preparation
     drafts_service = DraftService(settings, store, library, sources_service, engine=draft_engine)
     reviews_service = ReviewService(
         settings,
@@ -143,9 +154,13 @@ def create_app(
         preparation.recover()
         proposals.recover()
         initial_review.recover()
+        preanalysis.recover()
         library_preparation.start()
+        semantic_preparation.start()
         yield
+        semantic_preparation.close()
         library_preparation.close()
+        preanalysis.close()
         service.close()
         initial_review.close()
         gmail.close()
@@ -167,8 +182,15 @@ def create_app(
 
     app.state.store, app.state.service = store, service
     app.state.management = management
+    app.state.preanalysis = preanalysis
+    app.include_router(preanalysis_router(preanalysis))
     app.state.library, app.state.sources = library, sources_service
     app.state.library_preparation = library_preparation
+    app.state.semantic_preparation = semantic_preparation
+
+    @app.get("/api/library/semantic-preparation")
+    def semantic_preparation_status():
+        return semantic_preparation.status()
 
     @app.get("/api/library/preparation")
     def library_preparation_status():
@@ -190,7 +212,7 @@ def create_app(
     app.include_router(intake_router(initial_review))
     lifecycle_services = (preparation, service, sources_service, drafts_service,
                           proposals, offices_service, reviews_service, gmail, library,
-                          verifications, initial_review)
+                          verifications, initial_review, preanalysis)
     app.include_router(management_router(management, service, lifecycle_services))
     app.include_router(lifecycle_router(store, lifecycle_services))
     app.include_router(gmail_router(gmail))
@@ -254,13 +276,26 @@ def create_app(
             initial_review_enabled=settings.initial_review_enabled,
             automatic_initial_review=settings.initial_review_enabled,
             initial_classification_provider=settings.initial_classification_provider,
+            initial_classification_model=(JEV_CLASSIFICATION_MODEL
+                if settings.initial_classification_provider == "jev" else settings.model),
+            initial_classification_ready=(bool(get_jev_classification_key())
+                if settings.initial_classification_provider == "jev" else bool(settings.api_key)),
             environment_label=settings.environment_label,
         )
 
     @app.get("/api/cases")
     def list_cases(deleted: bool = False):
-        return [{**case, "processing": case_busy(case["id"], lifecycle_services)}
-                for case in management.enrich(store.list(deleted=deleted))]
+        cases = management.inbox(
+            deleted=deleted, initial_review_enabled=initial_review.enabled
+        )
+        stages = saved_stages(
+            [case["id"] for case in cases], drafts=drafts_service.store,
+            reviews=reviews_service.store, offices=offices_service.store,
+        )
+        offices = saved_offices(cases, reviews=reviews_service.store, offices=offices_service.store)
+        return [{**case, "saved_stage": stages[case["id"]],
+                 "office_progress": offices[case["id"]],
+                 "processing": case_busy(case["id"], lifecycle_services)} for case in cases]
 
     def create_case(filename, data, receipt=None):
         case = store.create(filename, data, receipt=receipt)
@@ -304,8 +339,22 @@ def create_app(
 
     @app.get("/api/cases/{case_id}")
     def get_case(case_id: str):
-        return {**store.get(case_id), "analysis_running": case_id in service.active,
-                **({"management": management.get(case_id)} if settings.management_enabled else {})}
+        case = store.get(case_id)
+        managed = management.get(case_id) if settings.management_enabled else None
+        if managed:
+            managed["owner_name"] = next((m["name"] for m in management.managers()
+                                          if m["id"] == managed["owner_id"]), None)
+        navigation = store.workflow_summary(
+            {case_id: case["version"]}, initial_review_enabled=initial_review.enabled
+        )[case_id]
+        stage = saved_stages([case_id], drafts=drafts_service.store,
+                             reviews=reviews_service.store, offices=offices_service.store)[case_id]
+        return {**case, **navigation, "saved_stage": stage,
+                "office_progress": saved_offices(
+                    [case], reviews=reviews_service.store, offices=offices_service.store
+                )[case_id],
+                "analysis_running": case_id in service.active,
+                **({"management": managed} if managed else {})}
 
     @app.post("/api/cases/{case_id}/analyze", status_code=202)
     def analyze(case_id: str):

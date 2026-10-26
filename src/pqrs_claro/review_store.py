@@ -27,6 +27,11 @@ class ReviewStore:
                 CREATE TABLE IF NOT EXISTS review_approvals (
                     id TEXT PRIMARY KEY, case_id TEXT NOT NULL,
                     request_id TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS response_readings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    case_id TEXT NOT NULL, body TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS response_readings_case
+                    ON response_readings(case_id, id DESC);
             """)
 
     @contextmanager
@@ -121,6 +126,34 @@ class ReviewStore:
         if not row:
             raise KeyError("No se encontró la versión aprobada.")
         return json.loads(row[0])
+
+    def reading(self, case_id):
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT body FROM response_readings WHERE case_id=? ORDER BY id DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def save_reading(self, value, revisions):
+        """Persist once, only while every response still has the revision displayed."""
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            actual = dict(conn.execute(
+                "SELECT request_id,revision FROM review_requests WHERE case_id=?",
+                (value["case_id"],),
+            ))
+            if any(actual.get(key) != revision for key, revision in revisions.items()):
+                raise Conflict("Las respuestas cambiaron. Recarga y revisa la versión actual.")
+            last = conn.execute(
+                "SELECT body FROM response_readings WHERE case_id=? ORDER BY id DESC LIMIT 1",
+                (value["case_id"],),
+            ).fetchone()
+            if last and json.loads(last[0])["content_hash"] == value["content_hash"]:
+                return json.loads(last[0])
+            conn.execute("INSERT INTO response_readings(case_id,body) VALUES (?,?)",
+                         (value["case_id"], json.dumps(value, ensure_ascii=False)))
+        return value
 
     def recover(self):
         for row in self.list():

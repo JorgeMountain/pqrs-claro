@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 from test_app import pdf_bytes, upload, wait_ready
+from test_preanalysis import FakePreanalysis, approval, check
 from test_unified_app import unified
 
 from pqrs_claro.management import ManagementAction, ManagementStore
@@ -18,6 +19,7 @@ def action(client, cid, revision, kind, actor="gestor-1", **kwargs):
 def test_receive_take_start_preserves_entire_case(unified, pdf_bytes):
     app, client, identifier, settings = unified
     app.state.service.management = app.state.management
+    app.state.preanalysis.engine = FakePreanalysis()
     received = client.post(
         "/api/cases",
         files={"file": ("original.pdf", pdf_bytes, "application/pdf")},
@@ -37,7 +39,11 @@ def test_receive_take_start_preserves_entire_case(unified, pdf_bytes):
     assert action(client, cid, 0, "claim").status_code == 200
     assert identifier.calls == 0
     assert action(client, cid, 1, "start", actor="gestor-2").status_code == 409
-    assert action(client, cid, 1, "start").status_code == 200
+    assert action(client, cid, 1, "start").status_code == 409
+    checked = check(client, cid)
+    assert identifier.calls == 0
+    assert client.post(f"/api/cases/{cid}/preanalysis/start",
+                       json=approval(checked)).status_code == 200
     wait_ready(client, cid)
     assert identifier.calls == 1
     assert client.get(f"/api/cases/{cid}/original").content == pdf_bytes

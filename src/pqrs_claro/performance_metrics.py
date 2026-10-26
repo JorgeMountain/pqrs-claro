@@ -164,6 +164,49 @@ def provider_call(name, function, **kwargs):
         _attempts.reset(token)
 
 
+def record_jev_attempt(*, model, seconds, status, error_type=None, usage=None,
+                       retry=False, http_status=None):
+    """Record one TypeSafe HTTP attempt in the current case/request context.
+
+    Call once per attempt, including failed attempts and retries. Only explicit
+    numeric usage is retained; absent usage/cache stays unknown. The caller
+    supplies an exception class name, never its message or the HTTP body.
+    """
+    scope = _scope.get()
+    if scope is None:
+        return
+    try:
+        if (not isinstance(seconds, (int, float)) or isinstance(seconds, bool)
+                or not math.isfinite(seconds) or seconds < 0):
+            return
+        # Do not allow free-form status/error strings to become content logs.
+        safe_status = status if status in {
+            "ok", "http_error", "transport_error", "invalid_response",
+        } else "unknown"
+        safe_error = (error_type if isinstance(error_type, str) and re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]{0,127}", error_type) else None)
+        safe_model = (model if isinstance(model, str) and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}", model) else None)
+        code = _count(http_status)
+        _save(scope, {
+            "kind": "provider", "provider": "typesafe",
+            "operation": "identification.classify", "model": safe_model,
+            "status": safe_status, "error_type": safe_error,
+            "http_status": code if code is not None and 100 <= code <= 599 else None,
+            "seconds": round(seconds, 6), "http_attempts": 1,
+            "http_retries": 1 if retry is True or type(retry) is int and retry == 1 else 0,
+            "input_tokens": _count(_get(usage, "input_tokens")),
+            "output_tokens": _count(_get(usage, "output_tokens")),
+            "cached_input_tokens": _count(_get(
+                _get(usage, "input_tokens_details"), "cached_tokens")),
+            "reasoning_tokens": _count(_get(
+                _get(usage, "output_tokens_details"), "reasoning_tokens")),
+        })
+    except Exception:
+        # A malformed usage object or telemetry failure must not mask a result.
+        logger.warning("No se pudo registrar un intento de clasificación JEV.")
+
+
 def _cost(event, prices):
     rate = prices.get(event.get("model"))
     if not isinstance(rate, dict):
@@ -218,7 +261,7 @@ def read_metrics(root, case_id):
         "case_id": case_id, "recorded_events": len(events),
         "coverage": "Eventos registrados desde la activación; no reconstruye consumo histórico.",
         "timing_note": "Las operaciones anidadas o paralelas no se suman como duración total.",
-        "instrumented_providers": ["openai"],
+        "instrumented_providers": ["openai", "typesafe"],
         "cost_note": "Estimación del consumo reportado, no una factura; tarifas configurables.",
         "pricing_status": pricing_status,
         "provider_calls": len(calls),

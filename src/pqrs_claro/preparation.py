@@ -148,10 +148,15 @@ class PreparationService:
             return self.start(case_id, self.cases.get(case_id)["version"])
 
     def wait(self, service, job):
+        read = getattr(service, "progress", service.get)
         while True:
-            self.check(job)
-            result = service.get(job["case_id"])
+            if self.stop.is_set():
+                raise InterruptedError()
+            result = read(job["case_id"])
             if result["status"] != "running":
+                # La espera no inicia acciones. Validamos la revisión y versión
+                # al salir, antes de que el siguiente paso pueda ejecutarse.
+                self.check(job)
                 return result
             self.stop.wait(0.3)
 
@@ -159,7 +164,7 @@ class PreparationService:
         case_id, version = job["case_id"], job["version"]
         try:
             self.check(job)
-            mapping = self.sources.get(case_id)
+            mapping = self.sources.get(case_id, compact=True)
             if mapping["status"] == "running" and job.get("retry_failed_only"):
                 raise Conflict("Ya hay otra búsqueda en curso. Espera a que termine.")
             if mapping["status"] != "running":

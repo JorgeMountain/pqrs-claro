@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .review_models import FactInput, ReviewApprove, ReviewEdit
+from .review_models import FactInput, ResponseReading, ReviewApprove, ReviewEdit
 
 
 class StartReview(BaseModel):
@@ -33,6 +33,10 @@ def review_router(service):
     @router.get("")
     def get_review(case_id: str):
         return service.get(case_id)
+
+    @router.post("/reading-confirmation")
+    def confirm_reading(case_id: str, body: ResponseReading):
+        return service.confirm_reading(case_id, body)
 
     @router.post("/start")
     def start(case_id: str, body: StartReview):

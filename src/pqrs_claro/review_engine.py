@@ -13,6 +13,7 @@ from pydantic import Field, ValidationError
 from .draft_engine import aliased_sufficiency, citation_context
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
+from .response_scope import RESPONSE_SCOPE_GUIDANCE
 from .review_models import FactInput, PendingResolutionInput, ReviewParagraph
 from .source_assessment import _allowed_roles, _historical_document_status
 from .source_documents import requested_document
@@ -33,7 +34,8 @@ class _Assessment(StrictModel):
     issues: list[_Issue] = Field(max_length=60)
 
 
-_INSTRUCTIONS = """Eres el comprobador crítico de UNA respuesta institucional en edición.
+_INSTRUCTIONS = RESPONSE_SCOPE_GUIDANCE + """
+Eres el comprobador crítico de UNA respuesta institucional en edición.
 Evalúa exclusivamente la solicitud, los párrafos guardados, sus citas concretas y las
 resoluciones de pendientes. NO redactas, corriges, agregas hechos, resuelves pendientes,
 apruebas, firmas ni envías. Devuelve solo status e issues del esquema.

@@ -276,10 +276,15 @@ def materialize(value, payload):
                 raise DomainError("Solo la consulta de antecedentes puede quedar no disponible.")
             historical = any(s.get("category") == "historical_response" for s in check["sources"])
             if check["key"] == "repetition" and not history_available:
+                classification_only = (
+                    payload.get("scope", {}).get("library_search") == "not_requested")
                 check.update(
                     state="unavailable",
-                    summary="Consulta de antecedentes no disponible.",
-                    reason="No se recuperaron respuestas anteriores para comparar. "
+                    summary="Antecedentes no consultados en esta etapa." if classification_only
+                    else "Consulta de antecedentes no disponible.",
+                    reason="La búsqueda de fuentes se realiza al continuar a Redacción."
+                    if classification_only else
+                    "No se recuperaron respuestas anteriores para comparar. "
                     "Esto no permite concluir si la petición se ha presentado antes.",
                     pending=[],
                     sources=[],

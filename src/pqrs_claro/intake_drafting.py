@@ -2,8 +2,10 @@
 
 from copy import deepcopy
 
+from .repetition_scope import optional_repetition
 
-def drafting_context(review, request_id):
+
+def drafting_context(review, request_id, request=None):
     """Select only this request and shared observations; omit global revision counters.
 
     The caller enforces current human confirmation. Stable per-request content lets
@@ -13,14 +15,22 @@ def drafting_context(review, request_id):
     decision = next(r for r in review["decisions"] if r["request_id"] == request_id)
     assessment = next(r for r in report["requests"] if r["request_id"] == request_id)
 
-    def observations(item):
-        return [
-            {
+    def observations(item, current_request=None):
+        result = []
+        for check in item.get("checks", []):
+            value = {
                 key: deepcopy(check.get(key))
                 for key in ("key", "state", "summary", "reason", "pending")
             }
-            for check in item.get("checks", [])
-        ]
+            if optional_repetition(check, decision, current_request):
+                value.update(
+                    pending=[], required_for_response=False,
+                    reason="No se estableció reiteración. La consulta pide información general; "
+                           "no requiere buscar antecedentes personales para responderla. "
+                           "Esto no afirma que no existan consultas anteriores.",
+                )
+            result.append(value)
+        return result
 
     def choice(item):
         return {
@@ -40,7 +50,7 @@ def drafting_context(review, request_id):
         "request": {
             "request_id": request_id,
             "decision": choice(decision),
-            "observations": observations(assessment),
+            "observations": observations(assessment, request),
         },
         "special_treatment": deepcopy(report.get("special_treatment")),
         "warnings": deepcopy(report.get("warnings", [])),

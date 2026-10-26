@@ -24,6 +24,9 @@ harness = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(harness)
 
 
+# Runtime-shaped sentinel for redaction tests; never a provider credential.
+FAKE_PROVIDER_KEY = "sk-" + "SYNTHETIC_TEST_00000000"
+
 @pytest.fixture
 def reference_fixture(tmp_path):
     data = tmp_path / "live"
@@ -189,7 +192,7 @@ def test_attempt_archives_are_distinct_and_preserve_previous_files(tmp_path):
 
 def test_execution_metadata_identifies_code_without_saving_key(reference_fixture):
     _, reference, settings = reference_fixture
-    settings = replace(settings, api_key="sk-private-test-marker")
+    settings = replace(settings, api_key=FAKE_PROVIDER_KEY)
     first = harness.execution_info(settings, reference, "development", ["V01"])
     second = harness.execution_info(settings, reference, "development", ["V01"])
     assert first["attempt_id"] != second["attempt_id"]
@@ -197,7 +200,7 @@ def test_execution_metadata_identifies_code_without_saving_key(reference_fixture
     assert first["reference_sha256"] == harness.digest(reference)
     assert first["code_sha256"][str(Path("scripts") / "validate_history.py")]
     assert first["dependencies"]["langgraph"]
-    assert "sk-private-test-marker" not in json.dumps(first)
+    assert FAKE_PROVIDER_KEY not in json.dumps(first)
 
 
 def test_script_error_is_sanitized_and_next_sample_and_summary_are_saved(
@@ -223,7 +226,7 @@ def test_script_error_is_sanitized_and_next_sample_and_summary_are_saved(
         def start(self, case_id, version):
             started.append(case_id)
             if len(started) == 1:
-                raise ValueError("Provider accidentally included sk-never-save-this-secret")
+                raise ValueError(f"Provider accidentally included {FAKE_PROVIDER_KEY}")
             return {"id": "run-two", "fingerprint": "test", "case_id": case_id,
                     "status": "ready", "results": []}
 
@@ -249,5 +252,5 @@ def test_script_error_is_sanitized_and_next_sample_and_summary_are_saved(
     assert harness.read_json(attempt / "execution.json")["status"] == "completed"
     assert harness.read_json(attempt / "execution.json")["technical_error_count"] == 1
     assert (output / "technical-summary.json").is_file()
-    assert all("sk-never-save-this-secret" not in path.read_text("utf-8")
+    assert all(FAKE_PROVIDER_KEY not in path.read_text("utf-8")
                for path in output.rglob("*.json"))

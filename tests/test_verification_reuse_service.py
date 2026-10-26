@@ -41,7 +41,7 @@ class NoSemantic:
     warning = None
     diagnostics = {"status": "test-double"}
 
-    def __init__(self, _path):
+    def __init__(self, _path, **kwargs):
         pass
 
     def prepare(self, _chunks, **kwargs):

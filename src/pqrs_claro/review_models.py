@@ -118,3 +118,16 @@ class ReviewApprove(StrictModel):
         if value is not True:
             raise ValueError("La aprobación requiere confirmación explícita.")
         return value
+
+
+class ResponseReading(StrictModel):
+    content_hash: InputHash
+    reviewed_by: Actor
+    confirmed: StrictBool
+
+    @field_validator("confirmed")
+    @classmethod
+    def explicit_confirmation(cls, value):
+        if value is not True:
+            raise ValueError("Confirma expresamente que revisaste todas las respuestas.")
+        return value

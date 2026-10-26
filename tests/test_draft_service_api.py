@@ -399,6 +399,45 @@ def test_original_change_rejected_before_model_calls(draft_app):
     assert not engine.calls
 
 
+def test_draft_inputs_materialize_only_selected_sources(draft_app, monkeypatch):
+    app, _, _, _ = draft_app
+    case, _ = prepared_case(app, with_map=False, count=1)
+    app.state.library.add("otra.txt", b"Otra norma ficticia no seleccionada.",
+                          title="Otra norma", category="institutional_norm", origin="Prueba")
+    run = ready_map(app, case)
+    selected = {s["source_id"] for s in run["results"][0]["supports"]}
+    snapshot = app.state.library.snapshot
+    reads = []
+
+    def selected_snapshot(case_id, *, source_ids=None):
+        reads.append(source_ids)
+        assert source_ids == selected
+        return snapshot(case_id, source_ids=source_ids)
+
+    def no_full_scan(*_):
+        pytest.fail("La preparación volvió a materializar toda la biblioteca")
+
+    monkeypatch.setattr(app.state.library, "snapshot", selected_snapshot)
+    monkeypatch.setattr(app.state.sources, "inputs", no_full_scan)
+    _, _, findings, fingerprint = app.state.drafts._inputs(case["id"], case["version"])
+    assert reads == [selected]
+    assert findings["P1"]["supports"][0]["quote"] == run["results"][0]["supports"][0]["quote"]
+    app.state.drafts._ensure_current(case["id"], fingerprint, full=True)
+    assert reads == [selected, selected]
+
+
+def test_final_validation_still_reconciles_citations_after_cached_validation(draft_app):
+    app, _, _, _ = draft_app
+    case, source = prepared_case(app, count=1)
+    fingerprint = app.state.drafts._current(case["id"])[2]
+    # External extraction changes must not evade the final citation comparison.
+    with app.state.library.connect() as conn:
+        conn.execute("UPDATE sources SET pages='[]' WHERE id=?", (source["id"],))
+    from pqrs_claro.draft_service import _InputsChanged
+    with pytest.raises(_InputsChanged):
+        app.state.drafts._ensure_current(case["id"], fingerprint, full=True)
+
+
 @pytest.mark.parametrize("tamper", [None, "foreign", "quote", "version"])
 def test_non_citable_candidates_are_reconciled_before_context(draft_app, tamper):
     app, client, engine, _ = draft_app

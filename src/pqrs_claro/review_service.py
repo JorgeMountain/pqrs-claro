@@ -12,6 +12,7 @@ from .document_decisions import canonical_document_decision
 from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError
 from .performance_metrics import track_case
+from .response_reading import reading_state
 from .review_store import ReviewStore
 from .service import user_error
 from .source_assessment import _allowed_roles
@@ -93,6 +94,7 @@ class ReviewService:
         self.lock = threading.RLock()
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reviews")
         self.active = set()
+        self._approval_inputs_cache = {}
 
     def _base(self, case_id):
         case, sources, fingerprint, current = self.drafts_service._current(case_id)
@@ -175,12 +177,35 @@ class ReviewService:
                 requests=requests,
                 approved_count=count,
                 total_count=len(ids),
+                reading_confirmation=reading_state(case, requests, self.store.reading(case_id)),
                 error=None,
             )
 
+    def confirm_reading(self, case_id, confirmation):
+        body = confirmation.model_dump()
+        with self.lock, self.library.lock:
+            self.cases.assert_open(case_id)
+            review = self.get(case_id)
+            state = review["reading_confirmation"]
+            if not state["eligible"]:
+                raise Conflict("Espera a que estén guardadas todas las respuestas actuales.")
+            if body["content_hash"] != state["content_hash"]:
+                raise Conflict("Las respuestas cambiaron. Recarga y revisa la versión actual.")
+            self.store.save_reading({
+                "case_id": case_id, "content_hash": state["content_hash"],
+                "response_count": state["response_count"],
+                "reviewed_by": body["reviewed_by"], "reviewed_at": now(),
+            }, {row["request_id"]: row["revision"] for row in review["requests"]})
+            return self.get(case_id)
+
     def _inputs(self, case_id, version):
         case, source_run, findings, _ = self.drafts_service._inputs(case_id, version)
-        _, _, chunks, _ = self.sources_service.inputs(case_id)
+        # El mapa ya valida el catálogo completo. La revisión sólo materializa y
+        # vuelve a cotejar los originales de sus soportes/candidatos concretos.
+        selected = {source["source_id"] for finding in findings.values()
+                    for source in [*finding.get("supports", []),
+                                   *finding.get("candidate_documents", [])]}
+        _, chunks = self.library.snapshot(case_id, source_ids=selected)
         return (
             case,
             source_run,
@@ -628,14 +653,48 @@ class ReviewService:
             with self.lock:
                 self.active.discard(key)
 
+    def _validate_approval_inputs(self, case_id):
+        """Reuse the common map check, only while its committed inputs match.
+
+        Called under review/library locks. Keep hashing selected originals on
+        every approval: filesystem changes do not advance the catalog revision.
+        No response assessment, graph pause or human decision is cached here.
+        """
+        key = self.drafts_service._validation_key(case_id)
+        cached = self._approval_inputs_cache.get(case_id)
+        try:
+            if cached and cached[0] == key:
+                self.cases.original(case_id)
+                for source_id in cached[1]:
+                    self.library.original(source_id, case_id)
+                if self.drafts_service._validation_key(case_id) == key:
+                    return
+                raise Conflict("Las fuentes cambiaron durante la aprobación. Recarga el oficio.")
+            if getattr(self, "initial_review", None):
+                self.initial_review.assert_allowed(case_id)
+            case = self.cases.get(case_id)
+            # _inputs already reconciles every selected passage. Approval does
+            # not need the second materialization performed by review._inputs.
+            _, run, _, _ = self.drafts_service._inputs(case_id, case["version"])
+            selected = frozenset(source["source_id"] for finding in run.get("results", [])
+                                 for source in [*finding.get("supports", []),
+                                                *finding.get("candidate_documents", [])])
+            if self.drafts_service._validation_key(case_id) != key:
+                raise Conflict("Las fuentes cambiaron durante la aprobación. Recarga el oficio.")
+            if len(self._approval_inputs_cache) >= 8 and case_id not in self._approval_inputs_cache:
+                self._approval_inputs_cache.pop(next(iter(self._approval_inputs_cache)))
+            self._approval_inputs_cache[case_id] = key, selected
+        except Exception:
+            self._approval_inputs_cache.pop(case_id, None)
+            raise
+
     def approve(self, case_id, request_id, approval):
-        if getattr(self, "initial_review", None):
-            self.initial_review.assert_allowed(case_id)
         from .review_graph import build_review_graph
 
         body = approval.model_dump(mode="json") if hasattr(approval, "model_dump") else approval
         with self.lock, self.library.lock:
             self.cases.assert_open(case_id)
+            self._validate_approval_inputs(case_id)
             row = self._row(case_id, request_id, body["revision"])
             assessment, fingerprint = row["assessment"], input_hash(row)
             if (
@@ -658,7 +717,6 @@ class ReviewService:
             if issues:
                 raise Conflict("Corrige las citas y resoluciones de esta versión antes de aprobar.")
             case = self.cases.get(case_id)
-            self._inputs(case_id, case["version"])
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "review_checkpoints.sqlite")
             ) as saver:
@@ -732,7 +790,9 @@ class ReviewService:
 
     def approved(self, case_id):
         if getattr(self, "initial_review", None):
-            self.initial_review.assert_allowed(case_id)
+            # Reading the approved snapshot (including downloads) remains available
+            # after closure. Editing and generation keep their assert_open guard.
+            self.initial_review.assert_allowed(case_id, read_only=True)
         with self.lock:
             value = self.get(case_id)
             if value["status"] != "approved" or not value["requests"]:

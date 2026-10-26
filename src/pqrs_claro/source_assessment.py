@@ -13,6 +13,7 @@ from pydantic import Field, ValidationError
 from .evidence_contract import apply_evidence_contract
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
+from .response_scope import RESPONSE_SCOPE_GUIDANCE
 from .source_documents import (
     document_matches,
     named_document_candidates,
@@ -118,7 +119,8 @@ class _LocatedSourceSelection(_SourceSelection):
     declared_checks: list[_LocatedDeclaredCheck] = Field(default_factory=list, max_length=8)
 
 
-INSTRUCTIONS = """Evalúa fuentes candidatas para UNA solicitud de una petición institucional.
+INSTRUCTIONS = RESPONSE_SCOPE_GUIDANCE + """
+Evalúa fuentes candidatas para UNA solicitud de una petición institucional.
 Si recibes citation_repair, corrige la evaluación previa y devuelve una evaluación completa.
 Sus errors identifican inconsistencias de citas: usa solo aliases existentes y seleccionados
 en supports, y selecciona un rango de líneas del mismo candidato. Conserva los componentes

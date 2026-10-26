@@ -332,6 +332,81 @@ _SECTION = re.compile(
 _EMAIL = re.compile(r"[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}")
 
 
+def _topic_variant(word):
+    """Keep the phrase pattern and its finite vocabulary together."""
+    if re.fullmatch(r"constancias?|certificados?|certificaciones?|certificacion", word):
+        return (r"(?:constancias?|certificados?|certificacion(?:es)?)",
+                ("constancia", "constancias", "certificado", "certificados",
+                 "certificacion", "certificaciones"))
+    if word.endswith(("ica", "ico", "icas", "icos")):
+        stem = re.sub(r"ic[oa]s?$", "", word)
+        return (re.escape(stem) + r"ic[oa]s?",
+                tuple(stem + ending for ending in ("ica", "ico", "icas", "icos")))
+    if len(word) > 4 and word.endswith(("as", "os")):
+        return re.escape(word[:-1]) + "s?", (word[:-1], word)
+    return re.escape(word), (word,)
+
+
+def _topic_passages(request, eligible, *, index=None):
+    """Busca el tema breve en el cuerpo, sin que el título del archivo lo suplante.
+
+    Las variantes sólo amplían candidatos. No acreditan equivalencia jurídica,
+    pertinencia, vigencia ni identidad del documento solicitado.
+    """
+    generic = {"tramite", "obtener", "pasos", "seguir", "necesarios", "necesarias",
+               "solicitante", "persona", "identificar", "explicar", "solicitud"}
+    words = [word for word in tokenize(str(request.get("title") or ""))
+             if word not in generic]
+    if len(words) < 2:
+        return []
+
+    variants = {word: _topic_variant(word) for word in words}
+    pairs = list(zip(words, words[1:]))[:4]
+    patterns = [re.compile(r"\b" + variants[left][0] + r"\b(?:\W+\w+){0,3}\W+\b"
+                           + variants[right][0] + r"\b") for left, right in pairs]
+    candidates = eligible
+    if index is not None:
+        required = dict.fromkeys(word for pair in pairs for word in pair)
+        # A true phrase match contains both ASCII words as whole tokens in the
+        # same normalized body. The lexical index also includes titles and splits
+        # letters/digits: these can only add false positives, which the unchanged
+        # phrase regex below rejects. If tokenization ever drops a variant (for
+        # example a stopword), fall back to scanning rather than lose that match.
+        if all(tokenize(form) == [form] for word in required for form in variants[word][1]):
+            postings = index.statistics(eligible)[2]
+            positions = {}
+            for word in required:
+                positions[word] = set()
+                for form in variants[word][1]:
+                    entry = postings.get(form)
+                    if entry is not None:
+                        positions[word].update(entry[0])
+            selected = set()
+            for left, right in pairs:
+                selected.update(positions[left].intersection(positions[right]))
+            # Original order matters when equal normalized bodies are deduplicated.
+            candidates = (eligible[position] for position in sorted(selected))
+    matches, expanded, seen = [], set(words), set()
+    for row in candidates:
+        body = unicodedata.normalize("NFKD", row["quote"].casefold()).translate(_COMBINING_MARKS)
+        if any(pattern.search(body) for pattern in patterns):
+            normalized = " ".join(body.split())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            # Las formas que activaron la coincidencia también deben puntuar;
+            # «certificados académicos» no contiene literalmente «constancia académica».
+            for word in words:
+                expanded.update(re.findall(r"\b" + variants[word][0] + r"\b", body))
+            # Puntuar el contenido del pasaje; un nombre largo no añade evidencia.
+            matches.append({**row, "title": ""})
+    if not matches:
+        return []
+    originals = {row["chunk_id"]: row for row in eligible}
+    ranked = _rank({}, matches, query=" ".join(sorted(expanded)))
+    return [originals[row["chunk_id"]] for row in _document_budget(ranked, 12)]
+
+
 def _adjacent_answer(anchor, eligible):
     """Una pregunta explícita en un oficio y su contestación contigua, sin sintetizar.
 
@@ -517,9 +592,13 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     # apartados que repitan "presentación", "calendario" o "convocatoria".
     for row in _date_passages(request, eligible, index=index):
         add(row, "calendar")
+    ranked_by_id = {row["chunk_id"]: row for row in general}
+    # Reserva el tema del título atómico antes del cupo de contestaciones previas.
+    # Así las fórmulas genéricas de otros trámites no ocupan toda la selección.
+    for row in _topic_passages(request, eligible, index=index)[:6]:
+        add(ranked_by_id.get(row["chunk_id"], row), "topic")
     # El asunto ayuda a localizar el documento; la pregunta atómica selecciona
     # su contenido. Una portada coincidente no sustituye el pasaje de respuesta.
-    ranked_by_id = {row["chunk_id"]: row for row in general}
     for row in _document_content(request, eligible):
         add(ranked_by_id.get(row["chunk_id"], row), "document_content")
     # Protege resultados ya útiles, incluida la prioridad del objeto pedido.
@@ -623,6 +702,26 @@ def _calendar_features(quote):
     return features
 
 
+def _calendar_candidates(event, eligible, index):
+    """A lexical superset of calendar hits, including clipped/raw Unicode words."""
+    if index is None or any(word in stopword for word in event for stopword in _STOPWORDS):
+        # Raw word boundaries and the 180-character window can expose part of a
+        # stopword absent from the index: e.g. "infor" inside "informacion".
+        return eligible
+    postings = index.statistics(eligible)[2]
+    positions = set()
+    for term, (matches, _) in postings.items():
+        # Calendar features split raw Unicode before normalizing and may clip a
+        # word at either window edge. The resulting ASCII event (>3 characters)
+        # is still a substring of a full lexical token, even when combining
+        # marks join words, letters/digits split, or _search_words trims a suffix.
+        # Exact-token lookup would lose those hits. Titles may add candidates;
+        # unchanged date/window/proximity checks below decide actual relevance.
+        if any(word in term for word in event):
+            positions.update(matches)
+    return (eligible[position] for position in sorted(positions))
+
+
 def _date_passages(request, eligible, *, index=None):
     """Reserva dos candidatos fechados; no interpreta la fecha ni su vigencia.
 
@@ -643,7 +742,7 @@ def _date_passages(request, eligible, *, index=None):
     if not event:
         return []
     candidates, originals, proximity = [], {}, {}
-    for row in eligible:
+    for row in _calendar_candidates(event, eligible, index):
         # Tokenizar toda la página diluye la relación. La ventana admite títulos
         # y celdas consecutivas en calendarios extraídos de PDF.
         cache_key = (row["chunk_id"], row["quote"])

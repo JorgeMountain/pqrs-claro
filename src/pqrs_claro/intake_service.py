@@ -12,7 +12,7 @@ from fastapi import APIRouter
 
 from .classification_questions import QUESTIONS
 from .intake_cache import CACHE_VERSION, reuse_plan
-from .intake_engine import INSTRUCTIONS, OpenAIIntakeEngine, materialize
+from .intake_engine import INSTRUCTIONS, materialize
 from .intake_models import (
     POLICY_VERSION,
     TERM_REFERENCE,
@@ -20,14 +20,23 @@ from .intake_models import (
     IntakeStart,
     PilotReviewMode,
 )
-from .jev_client import MODEL as JEV_MODEL
-from .jev_client import get_key as get_jev_key
-from .jev_intake import CLASSIFICATION_VERSION, JevIntakeEngine
+from .jev_classification import CLASSIFICATION_VERSION as JEV_CLASSIFICATION_VERSION
+from .jev_classification import ENDPOINT as JEV_ENDPOINT
+from .jev_classification import MODEL as JEV_MODEL
+from .jev_classification import SCOPE as JEV_INSTRUCTIONS
+from .jev_classification import get_key as get_jev_key
+from .jev_intake import CLASSIFICATION_VERSION
 from .performance_metrics import track_case
+from .petition_classification import (
+    CLASSIFICATION_SCOPE,
+    PetitionClassificationEngine,
+)
+from .petition_classification import (
+    INSTRUCTIONS as CLASSIFICATION_INSTRUCTIONS,
+)
 from .service import user_error
-from .source_context import build_source_requests
+from .source_context import CONTEXT_VERSION, build_source_requests
 from .source_library import digest
-from .source_retrieval import RetrievalIndex, retrieve
 from .storage import Conflict, now
 
 
@@ -47,8 +56,44 @@ class IntakeService:
             )
             conn.execute("CREATE TABLE IF NOT EXISTS intake_history (case_id TEXT, body TEXT)")
 
-    def fingerprint(self, case_id, *, identification=None):
+    @staticmethod
+    def analysis_scope(row):
+        # Existing reports retain their original validity rules and decisions.
+        return row.get("analysis_scope") or (
+            "legacy" if row.get("fingerprint") else CLASSIFICATION_SCOPE)
+
+    def preanalysis(self, case):
+        with self.cases.connect() as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                                "AND name='case_preanalysis'").fetchone():
+                return {}
+            row = conn.execute("SELECT body FROM case_preanalysis WHERE case_id=?",
+                               (case["id"],)).fetchone()
+        record = json.loads(row[0]) if row else {}
+        if record.get("sha256") != case["sha256"]:
+            return {}
+        return {k: record.get(k) for k in ("checks", "approval", "revision")}
+
+    def fingerprint(self, case_id, *, identification=None, _catalog=None, scope=None):
         case = self.cases.get(case_id)
+        scope = scope or self.analysis_scope(self.saved(case_id))
+        if scope == CLASSIFICATION_SCOPE:
+            return digest({
+                "original": case["sha256"], "pages": case.get("pages"),
+                "identification": identification if identification is not None
+                else case.get("identification"),
+                "preanalysis": self.preanalysis(case), "scope": scope,
+                "provider": self.settings.initial_classification_provider,
+                "model": JEV_MODEL if self.settings.initial_classification_provider == "jev"
+                else self.settings.model,
+                "instructions": CLASSIFICATION_INSTRUCTIONS,
+                "classification_version": CLASSIFICATION_VERSION,
+                "question": QUESTIONS["petition_type"],
+                **({"jev_contract": {
+                    "version": JEV_CLASSIFICATION_VERSION, "endpoint": JEV_ENDPOINT,
+                    "instructions": JEV_INSTRUCTIONS, "context_version": CONTEXT_VERSION,
+                }} if self.settings.initial_classification_provider == "jev" else {}),
+            })
         return digest(
             {
                 "original": case["sha256"],
@@ -56,7 +101,8 @@ class IntakeService:
                 "identification": (
                     identification if identification is not None else case.get("identification")
                 ),
-                "catalog": sorted(self.sources.catalog(case_id), key=lambda s: s["id"]),
+                "catalog": sorted(self.sources.catalog(case_id) if _catalog is None
+                                  else _catalog, key=lambda s: s["id"]),
                 "collections": self.library.linked_collections(case_id),
                 "model": self.settings.model,
                 "policy": POLICY_VERSION,
@@ -72,11 +118,11 @@ class IntakeService:
             }
         )
 
-    def analysis_plan(self, case_id, row, *, full=False):
+    def analysis_plan(self, case_id, row, *, full=False, _catalog=None):
         identification = self.cases.get(case_id)["identification"]
         context = self.fingerprint(case_id, identification={
             k: v for k, v in identification.items() if k != "requests"
-        })
+        }, _catalog=_catalog, scope=self.analysis_scope(row))
         return context, reuse_plan(row.get("analysis_cache"), context, identification, full=full)
 
     def saved(self, case_id):
@@ -97,22 +143,28 @@ class IntakeService:
             }
         )
 
-    def get(self, case_id):
+    def get(self, case_id, *, _catalog=None, include_plan=True):
         case = self.cases.get(case_id)
         row = self.saved(case_id)
+        # Reuse only this call's catalog, retaining the original fingerprint.
+        # Downstream eligibility needs the decision, not a new analysis plan.
+        has_plan = include_plan and case.get("identification") and row["status"] != "running"
+        catalog = _catalog
+        if (catalog is None and self.analysis_scope(row) != CLASSIFICATION_SCOPE
+                and (row.get("fingerprint") or has_plan)):
+            catalog = self.sources.catalog(case_id)
         legacy = bool(row.get("report") and row.get("policy_version") != POLICY_VERSION)
         stale = legacy or bool(
-            row.get("fingerprint") and row["fingerprint"] != self.fingerprint(case_id)
+            row.get("fingerprint") and row["fingerprint"] != self.fingerprint(
+                case_id, _catalog=catalog)
         )
         bypass = self.pilot_bypassed(case_id)
-        allowed = not self.enabled or (
-            row["status"] == "approved" and not stale and case["status"] == "confirmed"
-        ) or (bypass and case["status"] == "confirmed")
+        allowed = self._decision_allows_preparation(case, row, stale, bypass)
         if self.cases.management and self.cases.management.get(case_id)["state"] == "closed":
             allowed = False
         work = row.get("analysis_work")
-        if case.get("identification") and row["status"] != "running":
-            _, plan = self.analysis_plan(case_id, row)
+        if has_plan:
+            _, plan = self.analysis_plan(case_id, row, _catalog=catalog)
             work = {"pending": plan["pending"], "reused": list(plan["reused"]),
                     "reason": plan["reason"]}
         return {
@@ -123,6 +175,8 @@ class IntakeService:
             "can_prepare": allowed,
             "pilot_bypass_active": bypass,
             "classification_provider": self.settings.initial_classification_provider,
+            "classification_model": (JEV_MODEL
+                if self.settings.initial_classification_provider == "jev" else self.settings.model),
             "next_analysis": work,
         }
 
@@ -140,9 +194,21 @@ class IntakeService:
             )
         return result
 
-    def assert_allowed(self, case_id):
-        self.cases.assert_open(case_id)
-        if self.enabled and not self.get(case_id)["can_prepare"]:
+    def _decision_allows_preparation(self, case, row, stale, bypass):
+        return not self.enabled or (
+            case["status"] == "confirmed"
+            and (row["status"] == "approved" and not stale or bypass)
+        )
+
+    def assert_allowed(self, case_id, *, read_only=False):
+        if not read_only:
+            self.cases.assert_open(case_id)
+        if not self.enabled:
+            return
+        row = self.get(case_id, include_plan=False)
+        if not self._decision_allows_preparation(
+            self.cases.get(case_id), row, row["stale"], row["pilot_bypass_active"]
+        ):
             raise Conflict(
                 "Completa la revisión inicial y confirma continuar en todas las solicitudes."
             )
@@ -209,9 +275,10 @@ class IntakeService:
             except Exception as exc:
                 self.save(
                     self.saved(case["id"]),
+                    analysis_scope=CLASSIFICATION_SCOPE,
                     status="error",
                     error=user_error(exc),
-                    fingerprint=self.fingerprint(case["id"]),
+                    fingerprint=self.fingerprint(case["id"], scope=CLASSIFICATION_SCOPE),
                     report=None,
                     decisions=None,
                 )
@@ -319,7 +386,8 @@ class IntakeService:
                 return self.get(case_id)
             if previous["revision"] != body.revision:
                 raise Conflict("La revisión inicial cambió. Actualiza antes de reanalizar.")
-            if not self.settings.api_key and self.engine is None:
+            if (self.settings.initial_classification_provider == "openai"
+                    and not self.settings.api_key and self.engine is None):
                 raise ValueError(
                     "Configura la IA para analizar la revisión inicial; no se simulan resultados."
                 )
@@ -329,20 +397,24 @@ class IntakeService:
                 and not get_jev_key()
             ):
                 raise ValueError(
-                    "Configura AI_GATEWAY_API_KEY en .env.jev.local para clasificar con JEV."
+                    "Configura TYPESAFE_API_KEY en el archivo indicado por "
+                    "PQRS_CLARO_JEV_KEY_FILE (o .env.jev.local) para clasificar con JEV 1.14."
                 )
-            _, plan = self.analysis_plan(case_id, previous, full=body.mode == "full")
-            if (not plan["pending"] and previous.get("fingerprint") == self.fingerprint(case_id)
+            next_row = {**previous, "analysis_scope": CLASSIFICATION_SCOPE}
+            _, plan = self.analysis_plan(case_id, next_row, full=body.mode == "full")
+            fingerprint = self.fingerprint(case_id, scope=CLASSIFICATION_SCOPE)
+            if (not plan["pending"] and previous.get("fingerprint") == fingerprint
                     and previous["status"] in {"needs_review", "approved", "routed"}):
                 return self.get(case_id)
             row = self.save(
                 previous,
+                analysis_scope=CLASSIFICATION_SCOPE,
                 analysis_cache=None if body.mode == "full" else previous.get("analysis_cache"),
                 analysis_work={"pending": plan["pending"], "reused": list(plan["reused"]),
                                "reason": plan["reason"], "mode": body.mode},
                 status="running",
                 policy_version=POLICY_VERSION,
-                fingerprint=self.fingerprint(case_id),
+                fingerprint=fingerprint,
                 error=None,
                 report=None,
                 decisions=None,
@@ -356,57 +428,24 @@ class IntakeService:
             self.pool.submit(self.run, row)
             return self.get(case_id)
 
-    @track_case("initial_retrieval", "case_id")
+    @track_case("classification_inputs", "case_id")
     def payload(self, case_id):
         case = self.cases.get(case_id)
         if hashlib.sha256(self.cases.original(case_id).read_bytes()).hexdigest() != case["sha256"]:
             raise ValueError("El original de la petición cambió en disco.")
-        sources, chunks = self.library.snapshot(case_id)
-        linked = self.library.linked_collections(case_id)
-        candidates = {}
-        prepared = getattr(self.library, "prepared_terms", lambda _: {})(chunks)
-        index = RetrievalIndex(chunks, prepared_terms=prepared)
-        base = {"case_id": case_id, "allowed_collection_ids": linked}
-        queries = [
-            *case["identification"]["requests"],
-            {
-                "id": "INITIAL",
-                "title": "Revisión de requisitos y trámite de PQRS",
-                "description": "petición incompleta datos contacto lenguaje respetuoso "
-                "reiteración antecedentes clasificación requisitos atención ciudadano",
-            },
-        ]
-        matches = [retrieve({**query, **base}, chunks, limit=16, index=index) for query in queries]
-        # Repartir el contexto entre TODAS las peticiones, sin recortar el original.
-        # Los candidatos son una selección de consulta, nunca prueba de exhaustividad.
-        retrieved_count = len({c["chunk_id"] for group in matches for c in group})
-        for rank in range(16):
-            for group in matches:
-                if rank < len(group) and len(candidates) < 96:
-                    candidate = group[rank]
-                    candidates.setdefault(candidate["chunk_id"], candidate)
-        catalog = self.sources.catalog(case_id)
         return {
             "identification": case["identification"],
             "pages": case["pages"],
-            "candidates": list(candidates.values()),
+            "preanalysis": self.preanalysis(case),
+            "candidates": [],
             "scope": {
-                "linked_collections": linked,
-                "readable_sources": len(sources),
-                "history_available": any(
-                    c.get("category") == "historical_response" for c in candidates.values()
-                ),
-                "catalog": [
-                    {
-                        k: s.get(k)
-                        for k in ("id", "title", "category", "validity", "extraction_status")
-                    }
-                    for s in catalog
-                ],
-                "retrieved_candidates": retrieved_count,
-                "selected_candidates": len(candidates),
-                "candidates_limited": retrieved_count > len(candidates),
-                "note": "Consulta local parcial; no es una búsqueda institucional exhaustiva.",
+                "mode": CLASSIFICATION_SCOPE, "library_search": "not_requested",
+                "linked_collections": [], "readable_sources": 0,
+                "history_available": False, "catalog": [],
+                "retrieved_candidates": 0, "selected_candidates": 0,
+                "candidates_limited": False,
+                "note": "Identificación y tipo de cada petición a partir del original. "
+                        "Las fuentes se consultan al continuar a Redacción.",
             },
         }
 
@@ -414,6 +453,7 @@ class IntakeService:
     def run(self, row):
         case_id = row["case_id"]
         started = perf_counter()
+        owned_engine = None
         try:
             context, plan = self.analysis_plan(case_id, row,
                                                full=row["analysis_work"]["mode"] == "full")
@@ -427,12 +467,10 @@ class IntakeService:
             retrieval_seconds = round(perf_counter() - started, 3)
             if self.settings.initial_classification_provider not in {"openai", "jev"}:
                 raise ValueError("Proveedor de clasificación no válido.")
-            engine = self.engine or (
-                JevIntakeEngine(self.settings)
-                if self.settings.initial_classification_provider == "jev"
-                else OpenAIIntakeEngine(self.settings)
-            )
             if plan["pending"]:
+                engine = self.engine
+                if engine is None:
+                    owned_engine = engine = PetitionClassificationEngine(self.settings)
                 report = materialize(engine.assess(payload), payload)
             else:
                 report = deepcopy(row["analysis_cache"]["report"])
@@ -480,6 +518,8 @@ class IntakeService:
             with self.lock:
                 self.save(row, status="error", error=user_error(exc), decisions=None)
         finally:
+            if owned_engine:
+                owned_engine.close()
             with self.lock:
                 self.active.discard(case_id)
 
@@ -550,6 +590,7 @@ class IntakeService:
                         "legacy_report",
                         "can_prepare",
                         "classification_provider",
+                        "classification_model",
                         "next_analysis",
                     }
                     },

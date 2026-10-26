@@ -41,6 +41,21 @@ def pdf_bytes(page_count):
         return document.tobytes()
 
 
+def test_selected_snapshot_preserves_scope_and_checks_selected_originals(library):
+    first = add_text(library, "Primer soporte para la revisión.")
+    second = add_text(library, "Otra norma fuera de los candidatos de esta revisión.")
+    sources, chunks = library.snapshot("case", source_ids={first["id"]})
+    assert [s["id"] for s in sources] == [first["id"]]
+    assert {c["source_id"] for c in chunks} == {first["id"]}
+    assert library.snapshot("case", source_ids=set()) == ([], [])
+    with pytest.raises(DomainError, match="no pertenece"):
+        library.snapshot("case", source_ids={"fuente-ajena"})
+    library.original(first["id"]).write_bytes(b"Original alterado")
+    with pytest.raises(DomainError, match="cambió o falta"):
+        library.snapshot("case", source_ids={first["id"]})
+    assert library.snapshot("case", source_ids={second["id"]})[0][0]["id"] == second["id"]
+
+
 def test_collection_reading_counts_reflect_current_extraction_instead_of_import_totals(library):
     library.save_collection({"id":"archivo", "name":"Archivo ficticio",
                              "extraction_counts":{"pending":99}})

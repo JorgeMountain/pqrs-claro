@@ -7,7 +7,7 @@ from typing import Any, Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from .models import Identification, Page, validate_identification
+from .models import Identification, Page, validate_identification, validate_pages
 
 
 class Extractor(Protocol):
@@ -31,7 +31,9 @@ def build_graph(extractor: Extractor, identifier: Identifier, checkpointer: Any)
     """El checkpointer guarda el avance; el expediente original lo administra storage."""
 
     def read_pdf(state: CaseState) -> dict:
-        pages = extractor.extract(state["pdf_path"])
+        pages = ([Page.model_validate(p) for p in state["pages"]]
+                 if state.get("pages") else extractor.extract(state["pdf_path"]))
+        validate_pages(pages)
         return {
             "pages": [page.model_dump(mode="json") for page in pages],
             "confirmed": False,

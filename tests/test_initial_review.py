@@ -246,6 +246,7 @@ def test_automatic_configuration_failure_keeps_identification_retryable(fiaga, p
     row = wait_intake(app, client, case)
     assert row["status"] == "error" and not row["can_prepare"]
     assert "Configura" in row["error"]
+    assert row["analysis_scope"] == "petition_types_v1" and not row["stale"]
     prefix = f"/api/cases/{case['id']}"
     assert client.get(prefix).json()["status"] == "needs_review"
     service.engine = engine
@@ -256,7 +257,7 @@ def test_automatic_configuration_failure_keeps_identification_retryable(fiaga, p
     assert wait_intake(app, client, case)["status"] == "needs_review"
 
 
-def test_decisions_persist_and_invalidate_when_sources_change(fiaga, pdf_bytes):
+def test_classification_decisions_survive_source_changes(fiaga, pdf_bytes):
     app, client, _, _ = fiaga
     case, row = analyze(fiaga, pdf_bytes)
     prefix = f"/api/cases/{case['id']}/initial-review"
@@ -268,10 +269,10 @@ def test_decisions_persist_and_invalidate_when_sources_change(fiaga, pdf_bytes):
     assert len(client.get(prefix + "/history").json()["events"]) == 3
     assert not app.state.preparation.active  # Saving never sends or starts drafting.
     upload_source(client)
-    stale = client.get(prefix).json()
-    assert stale["stale"] and not stale["can_prepare"]
-    with pytest.raises(Conflict):
-        app.state.preparation.start(case["id"], case["version"])
+    current = client.get(prefix).json()
+    assert not current["stale"] and current["can_prepare"]
+    assert current["decisions"] == saved["decisions"]
+    assert current["revision"] == saved["revision"]
 
 
 @pytest.mark.parametrize(
@@ -365,13 +366,14 @@ def test_fabricated_source_or_original_reference_is_rejected(fiaga, pdf_bytes):
         materialize(result, payload)
 
 
-def test_change_during_analysis_rejects_stale_result(fiaga, pdf_bytes):
+def test_model_change_during_classification_rejects_stale_result(fiaga, pdf_bytes):
     app, client, engine, _ = fiaga
     engine.block = True
     case = make_case(client, pdf_bytes)
     try:
         assert engine.entered.wait(5)
-        upload_source(client)
+        service = app.state.initial_review
+        service.settings = replace(service.settings, model="changed-during-classification")
     finally:
         engine.release.set()
     row = wait_intake(app, client, case)
@@ -423,7 +425,7 @@ def test_new_initial_decision_invalidates_response_fingerprint(fiaga, pdf_bytes)
     assert app.state.drafts._fingerprint(case, {}) != before
 
 
-def test_only_linked_history_enters_initial_context(fiaga, pdf_bytes):
+def test_no_library_history_enters_identification_even_when_linked(fiaga, pdf_bytes):
     app, client, _, _ = fiaga
     case = make_case(client, pdf_bytes)
     library = app.state.library
@@ -443,8 +445,10 @@ def test_only_linked_history_enters_initial_context(fiaga, pdf_bytes):
     library.link_collections(case["id"], ["permitted-history"])
     payload = app.state.initial_review.payload(case["id"])
     serialized = str(payload)
-    assert "permitted-history" in serialized
+    assert "permitted-history" not in serialized
     assert "private-other-history" not in serialized
+    assert payload["candidates"] == []
+    assert payload["scope"]["library_search"] == "not_requested"
 
 
 def test_one_document_decision_applies_to_all_requests(fiaga, pdf_bytes):
@@ -536,7 +540,11 @@ def test_available_history_still_requires_a_cited_comparison(fiaga, pdf_bytes):
         collection_id="history",
     )
     payload = app.state.initial_review.payload(case["id"])
-    assert payload["scope"]["history_available"]
+    # Historic reports still require a specific comparison. This manually
+    # supplies their old contract; new identification does not search history.
+    _, chunks = app.state.library.snapshot(case["id"])
+    payload["candidates"] = chunks
+    payload["scope"] = {"history_available": True}
     report = engine.assess(payload)
     result = materialize(report, payload)
     assert result["requests"][0]["checks"][0]["state"] == "unverified"

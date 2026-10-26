@@ -300,7 +300,8 @@ def test_real_service_uses_jev_persists_metadata_and_invalidates_old_provider(
     context = FakeContext()
     classifier = JevPetitionClassifier(key="test", transport=httpx.MockTransport(reply))
     monkeypatch.setattr("pqrs_claro.jev_intake.OpenAIIntakeEngine", lambda *a, **k: context)
-    monkeypatch.setattr("pqrs_claro.jev_intake.JevPetitionClassifier", lambda: classifier)
+    monkeypatch.setattr("pqrs_claro.petition_classification.JevPetitionClassifier",
+                        lambda: classifier)
     monkeypatch.setattr("pqrs_claro.intake_service.get_jev_key", lambda: "test")
     settings = Settings(
         data_dir=tmp_path,
@@ -316,6 +317,9 @@ def test_real_service_uses_jev_persists_metadata_and_invalidates_old_provider(
         row = wait_intake(app, client, case)
         assert row["status"] == "needs_review", row
         assert row["classification_provider"] == "jev"
+        assert context.calls == 0  # Classification never starts a general OpenAI review.
+        assert row["analysis_scope"] == "petition_types_v1"
+        assert row["scope"]["library_search"] == "not_requested"
         assert not row["can_prepare"]
         assert row["report"]["requests"][1]["petition_type"] == "documents"
         assert row["report"]["requests"][0]["checks"][1]["original_refs"][0]["quote"]

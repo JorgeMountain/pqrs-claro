@@ -207,7 +207,7 @@ def test_repaired_semantic_channel_retrieves_again_instead_of_reusing_fallback_c
     instances = []
 
     class RetrySemantic:
-        def __init__(self, _path):
+        def __init__(self, _path, **kwargs):
             self.warning = "Fallo local simulado" if not instances else None
             self.diagnostics = {}
             instances.append(self)
@@ -247,6 +247,46 @@ def test_policy_change_does_not_reuse_completed_source_checkpoint(
     second = wait_search(app, client, case["id"])
     assert first["analysis_fingerprint"] != second["analysis_fingerprint"]
     assert assessor.calls == {"P1": 2, "P2": 2}
+
+
+def test_partial_semantic_search_keeps_lexical_results_if_background_queue_fails(
+    source_app, pdf_bytes, monkeypatch
+):
+    app, client, assessor, settings = source_app
+    model_path = (settings.data_dir / "semantic" / "models" / source_service.MODEL_REVISION
+                  / source_service.MODEL_FILE)
+    model_path.parent.mkdir(parents=True)
+    model_path.write_bytes(b"fixture: no real model")
+
+    class PartialSemantic:
+        warning = "Cobertura semántica parcial; búsqueda léxica completa."
+        diagnostics = {"budget_exhausted": True, "pending": 1, "total": 1,
+                       "prepared": 0, "complete": False}
+
+        def __init__(self, _path, **kwargs):
+            assert kwargs["preparation_budget_seconds"] == 15
+
+        def prepare(self, _chunks, progress=None):
+            return False
+
+        def rank(self, query, eligible, limit):
+            return []
+
+    class BrokenQueue:
+        def enqueue(self, snapshot):
+            assert snapshot
+            raise OSError("Temporary queue failure")
+
+    monkeypatch.setattr(source_service, "SemanticIndex", PartialSemantic)
+    app.state.sources.semantic_preparation = BrokenQueue()
+    case = make_case(client, pdf_bytes)
+    assert upload_source(client).status_code == 201
+    start_search(client, case)
+    result = wait_search(app, client, case["id"])
+    assert result["status"] == "ready"
+    assert result["retrieval_warning"] == PartialSemantic.warning
+    assert any(row["supports"] for row in result["results"])
+    assert assessor.calls == {"P1": 1, "P2": 1}
 
 
 def review_source(client, source_id, *, case_id=None, note="Contrastado con el original ficticio"):
@@ -422,10 +462,16 @@ def test_library_change_while_running_marks_final_result_stale(source_app, pdf_b
         review_source(client, source["id"], note="Revisión efectuada durante la búsqueda")
         running = client.get(f"/api/cases/{case['id']}/sources").json()
         assert running["status"] == "running" and running["stale"] is True
+        compact = client.get(f"/api/cases/{case['id']}/sources?compact=true").json()
+        assert compact["status"] == "running" and compact["stale"] is None
+        assert compact["freshness_checked"] is False and "source_snapshot" not in compact
     finally:
         assessor.release.set()
     final = wait_search(app, client, case["id"])
     assert final["status"] == "stale" and final["stale"] is True
+    compact = client.get(f"/api/cases/{case['id']}/sources?compact=true").json()
+    assert compact["status"] == "stale" and compact["stale"] is True
+    assert compact["results"] == final["results"] and "source_snapshot" not in compact
     assert len(final["results"]) == 2
     assert all(
         support["review_status"] == "pending"

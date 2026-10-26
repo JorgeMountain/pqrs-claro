@@ -24,6 +24,10 @@ MAX_SOURCE_PAGES = 300
 MAX_SOURCE_TEXT = 2_000_000
 
 
+class SourceScopeError(DomainError):
+    """Un candidato ya no pertenece al alcance permitido de su expediente."""
+
+
 def digest(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
@@ -182,6 +186,12 @@ class SourceLibrary:
                 CREATE TABLE IF NOT EXISTS source_reviews(id TEXT, created_at TEXT, body TEXT);
                 CREATE TABLE IF NOT EXISTS source_runs(
                     id TEXT PRIMARY KEY, case_id TEXT, body TEXT);
+                CREATE TABLE IF NOT EXISTS source_run_progress(
+                    run_id TEXT PRIMARY KEY, body TEXT NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS source_runs_delete_progress
+                    AFTER DELETE ON source_runs BEGIN
+                        DELETE FROM source_run_progress WHERE run_id=OLD.id;
+                    END;
                 CREATE TABLE IF NOT EXISTS source_collections(id TEXT PRIMARY KEY, body TEXT);
                 CREATE TABLE IF NOT EXISTS case_source_collections(
                     case_id TEXT, collection_id TEXT, PRIMARY KEY(case_id,collection_id));
@@ -191,6 +201,30 @@ class SourceLibrary:
                 CREATE INDEX IF NOT EXISTS sources_collection_scope
                     ON sources(COALESCE(json_extract(body,'$.collection_id'),''));
                 CREATE INDEX IF NOT EXISTS source_runs_case ON source_runs(case_id);
+                CREATE TABLE IF NOT EXISTS source_catalog_revision(
+                    id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+                INSERT OR IGNORE INTO source_catalog_revision VALUES(1,0);
+                CREATE TRIGGER IF NOT EXISTS catalog_source_added AFTER INSERT ON sources BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS catalog_source_changed AFTER UPDATE ON sources BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS catalog_source_removed AFTER DELETE ON sources BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS catalog_scope_added
+                AFTER INSERT ON case_source_collections BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS catalog_scope_changed
+                AFTER UPDATE ON case_source_collections BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
+                CREATE TRIGGER IF NOT EXISTS catalog_scope_removed
+                AFTER DELETE ON case_source_collections BEGIN
+                    UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
+                END;
             """)
             from .source_preparation import install
             install(conn)
@@ -204,6 +238,17 @@ class SourceLibrary:
                 yield conn
         finally:
             conn.close()
+
+    def catalog_revision(self):
+        """Content/scope changes invalidate validation, including external OCR/imports.
+
+        Progress writes and index preparation do not change the source catalog.
+        This is a committed revision, not a time-based freshness assumption.
+        """
+        with self.connect() as conn:
+            return conn.execute(
+                "SELECT revision FROM source_catalog_revision WHERE id=1"
+            ).fetchone()[0]
 
     def list(self, case_id=None):
         with self.connect() as conn:
@@ -428,9 +473,14 @@ class SourceLibrary:
                 )
         return source
 
-    def snapshot(self, case_id):
+    def snapshot(self, case_id, *, source_ids=None):
         with self.lock:
             sources = self.eligible(case_id)
+            if source_ids is not None:
+                wanted = set(source_ids)
+                if wanted.difference(source["id"] for source in sources):
+                    raise SourceScopeError("Una fuente seleccionada ya no pertenece al expediente.")
+                sources = [source for source in sources if source["id"] in wanted]
             source_ids = [s["id"] for s in sources]
             pages = {}
             with self.connect() as conn:
@@ -527,20 +577,52 @@ class SourceLibrary:
                 "ON CONFLICT(id) DO UPDATE SET body=excluded.body",
                 (run["id"], run["case_id"], json.dumps(run)),
             )
+            self._save_run_progress(conn, run)
 
-    def latest_run(self, case_id):
+    @staticmethod
+    def _save_run_progress(conn, run):
+        # El catálogo inmutable puede contener miles de fuentes. El progreso no
+        # debe volver a serializarlo ni escribirlo por cada lote/petición.
+        compact = {key: value for key, value in run.items() if key != "source_snapshot"}
+        conn.execute(
+            "INSERT INTO source_run_progress(run_id,body) "
+            "SELECT id,? FROM source_runs WHERE id=? "
+            "ON CONFLICT(run_id) DO UPDATE SET body=excluded.body",
+            (json.dumps(compact), run["id"]),
+        )
+
+    def save_run_progress(self, run):
         with self.connect() as conn:
+            self._save_run_progress(conn, run)
+
+    def latest_run(self, case_id, *, compact=False):
+        with self.connect() as conn:
+            # Las ejecuciones anteriores a esta tabla siguen siendo legibles.
+            fields = ("COALESCE(p.body,json_remove(r.body,'$.source_snapshot'))"
+                      if compact else "r.body,p.body")
             row = conn.execute(
-                "SELECT body FROM source_runs WHERE case_id=? ORDER BY rowid DESC LIMIT 1",
+                f"SELECT {fields} FROM source_runs r "
+                "LEFT JOIN source_run_progress p ON p.run_id=r.id "
+                "WHERE r.case_id=? ORDER BY r.rowid DESC LIMIT 1",
                 (case_id,),
             ).fetchone()
-        return json.loads(row[0]) if row else None
+        if not row:
+            return None
+        run = json.loads(row[0])
+        if not compact and row[1]:
+            run.update(json.loads(row[1]))
+        return run
 
     def recover(self):
         with self.connect() as conn:
-            rows = conn.execute("SELECT body FROM source_runs").fetchall()
+            rows = conn.execute(
+                "SELECT r.body,p.body FROM source_runs r "
+                "LEFT JOIN source_run_progress p ON p.run_id=r.id"
+            ).fetchall()
         for row in rows:
             run = json.loads(row[0])
+            if row[1]:
+                run.update(json.loads(row[1]))
             if run["status"] == "running":
                 run.update(
                     status="error",

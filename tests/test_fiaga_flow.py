@@ -142,7 +142,12 @@ def test_complete_fiaga_export_and_invalidation(full_flow, information_pdf, chan
             upload_source(client, content="Nueva versión ficticia sobre las prácticas.").status_code
             == 201
         )
-        assert client.get(prefix + "/initial-review").json()["stale"]
+        # Identification/classification is independent of the source library.
+        # The response approvals and generated office must still be invalidated below.
+        initial = client.get(prefix + "/initial-review").json()
+        assert not initial["stale"]
+        assert initial["revision"] == intake["revision"]
+        assert initial["report"] == intake["report"]
     elif change == "response":
         row = current(client, case)
         paragraphs = [{**p, "text": p["text"] + " Ajuste de prueba."} for p in row["paragraphs"]]

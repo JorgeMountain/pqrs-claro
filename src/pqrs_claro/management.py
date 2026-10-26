@@ -120,10 +120,10 @@ class ManagementStore:
                 self.normalize_receipt(json.loads(row[0]), case, db) if row else self.default(case)
             )
 
-    def normalize_receipt(self, record, case, db):
+    def normalize_receipt(self, record, case, db, *, metadata_edited=None):
         if "received_date_source" not in record:
             # Preserve old manual metadata edits; repair only untouched defaults.
-            edited = db.execute(
+            edited = metadata_edited if metadata_edited is not None else db.execute(
                 "SELECT 1 FROM management_events WHERE case_id=? "
                 "AND json_extract(body, '$.action')='metadata' LIMIT 1",
                 (case["id"],),
@@ -132,6 +132,60 @@ class ManagementStore:
                 record["received_date"] = receipt_date(case)
             record["received_date_source"] = "manual" if edited else "origin"
         return record
+
+    def inbox(self, *, deleted=False, initial_review_enabled=True):
+        """Read the queue in batches; neither reports nor freshness checks belong here."""
+        rows = self.store.inbox_cases(deleted=deleted)
+        if not rows:
+            return []
+        versions = {item["id"]: item["version"] for item, _, _ in rows}
+        saved, edited = {}, set()
+        with self.store.connect() as db:
+            names = dict(db.execute("SELECT id,name FROM managers"))
+            ids = list(versions)
+            for start in range(0, len(ids), 500):
+                batch = ids[start:start + 500]
+                placeholders = ",".join("?" for _ in batch)
+                saved.update({case_id: json.loads(body) for case_id, body in db.execute(
+                    f"SELECT case_id,body FROM case_management "
+                    f"WHERE case_id IN ({placeholders})", batch
+                )})
+                legacy = [case_id for case_id in batch if case_id in saved
+                          and "received_date_source" not in saved[case_id]]
+                if legacy:
+                    legacy_slots = ",".join("?" for _ in legacy)
+                    edited.update(row[0] for row in db.execute(
+                        "SELECT DISTINCT case_id FROM management_events "
+                        f"WHERE case_id IN ({legacy_slots}) "
+                        "AND json_extract(body,'$.action')='metadata'", legacy
+                    ))
+            for _, case, _ in rows:
+                case_id = case["id"]
+                saved[case_id] = (
+                    self.normalize_receipt(saved[case_id], case, db,
+                                           metadata_edited=case_id in edited)
+                    if case_id in saved else self.default(case)
+                )
+        activity = latest_activity(self.store, case_ids=versions)
+        workflow = self.store.workflow_summary(
+            versions, deleted=deleted, initial_review_enabled=initial_review_enabled
+        )
+        result = []
+        for item, _, event_at in rows:
+            case_id = item["id"]
+            management = saved[case_id]
+            item.update(
+                last_activity=max(management["updated_at"], activity.get(case_id, ""), event_at),
+                management={**management, "owner_name": names.get(management["owner_id"])},
+                subject=management["subject"] or item["subject"],
+                case_number=management["reference"] or item["case_number"],
+                internal_number="PQRS-" + case_id[:12].upper(),
+                preanalysis_status=workflow[case_id]["preanalysis_status"],
+                initial_review_status=workflow[case_id]["initial_review_status"],
+                preparation=workflow[case_id]["preparation"],
+            )
+            result.append(item)
+        return result
 
     def enrich(self, items):
         names = {m["id"]: m["name"] for m in self.managers()}
@@ -307,6 +361,9 @@ def management_router(management, service, services=()):
                 raise ValueError(
                     "Falta configurar OpenAI; el expediente sigue pendiente de iniciar."
                 )
+            if (body.action == "start" and service.preanalysis
+                    and not management.store.get(case_id).get("identification")):
+                service.preanalysis.require_approved(case_id)
             result = management.change(case_id, body)
             if body.action == "start":
                 case = management.store.get(case_id)

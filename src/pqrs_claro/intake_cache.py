@@ -1,4 +1,4 @@
-"""Persistent request-level reuse, bound to original, sources and model policy."""
+"""Persistent request-level reuse, bound to the inputs of each analysis scope."""
 
 from copy import deepcopy
 

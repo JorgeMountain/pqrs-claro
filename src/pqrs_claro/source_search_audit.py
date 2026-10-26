@@ -156,7 +156,10 @@ def target_document_search(request, finding, catalog, chunks, *, retrieval_error
         for source in named_document_candidates(reference, list(inventory.values())):
             # La identidad por nombre sigue sirviendo aunque la lectura haya fallado.
             add(source, reference, "filename")
-    for sid, source in inventory.items():
+    # Sin referencias numeradas no existe ningún encabezado objetivo que buscar.
+    # Conservamos arriba la auditoría de lectura/alcance, evitando normalizar de
+    # nuevo todo el corpus sólo para comparar contra una lista vacía.
+    for sid, source in (inventory.items() if references else ()):
         message = _email(source, grouped[sid])
         for chunk in grouped[sid]:
             for reference in _header_references(chunk["quote"], references):

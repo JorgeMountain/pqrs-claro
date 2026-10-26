@@ -15,7 +15,8 @@ from .models import DomainError
 from .performance_metrics import operation, submit_context, track_case
 from .service import user_error
 from .source_context import build_source_requests
-from .source_library import digest
+from .source_library import SourceScopeError, digest
+from .source_service import retrieval_signature
 from .storage import Conflict, now
 
 DRAFT_VERSION = 12
@@ -66,6 +67,7 @@ class DraftService:
         self.lock = threading.RLock()
         self.active = set()
         self.reviews = None
+        self._validation_cache = {}
 
     def _fingerprint(self, case, source_run):
         intake = getattr(self, "initial_review", None)
@@ -90,18 +92,44 @@ class DraftService:
             }
         )
 
+    def _validation_key(self, case_id):
+        intake = getattr(self, "initial_review", None)
+        return digest({
+            "case": self.cases.get(case_id),
+            "catalog_revision": self.library.catalog_revision(),
+            "source_run": self.library.latest_run(case_id, compact=True),
+            "verifications": self.sources_service.verification_fingerprint(case_id, None),
+            "initial_review": intake.saved(case_id) if intake and intake.enabled else None,
+            "management": self.cases.management.get(case_id) if self.cases.management else None,
+            "model": self.settings.model,
+            "retrieval": retrieval_signature(self.settings.data_dir),
+        })
+
     def _current(self, case_id):
         with self.library.lock:
+            key = self._validation_key(case_id)
+            cached = self._validation_cache.get(case_id)
+            if cached and cached[0] == key:
+                return deepcopy(cached[1])
             case = self.cases.get(case_id)
-            source_run = self.sources_service.get(case_id)
+            catalog = self.sources_service.catalog(case_id)
+            source_run = self.sources_service.get(case_id, compact=True, _catalog=catalog)
             current = (
                 case["status"] == "confirmed"
                 and source_run["status"] in {"ready", "error"}
                 and not source_run.get("stale")
             )
             if getattr(self, "initial_review", None) and self.initial_review.enabled:
-                current = current and self.initial_review.get(case_id)["can_prepare"]
-            return case, source_run, self._fingerprint(case, source_run), current
+                current = current and self.initial_review.get(
+                    case_id, _catalog=catalog, include_plan=False)["can_prepare"]
+            result = case, source_run, self._fingerprint(case, source_run), current
+            # A separate process may update the library while we read it. Only
+            # reuse a validation whose inputs remained identical throughout.
+            if self._validation_key(case_id) == key:
+                if len(self._validation_cache) >= 8 and case_id not in self._validation_cache:
+                    self._validation_cache.pop(next(iter(self._validation_cache)))
+                self._validation_cache[case_id] = key, deepcopy(result)
+            return result
 
     def get(self, case_id):
         case, _, fingerprint, current = self._current(case_id)
@@ -146,11 +174,17 @@ class DraftService:
                     "Actualiza y completa el mapa de fuentes antes de preparar borradores."
                 )
             self.cases.original(case_id)
-            _, _, chunks, source_fingerprint = self.sources_service.inputs(case_id)
-            if source_fingerprint != source_run["fingerprint"]:
-                raise Conflict("Las fuentes cambiaron. Actualiza su mapa antes de continuar.")
-            by_chunk = {chunk["chunk_id"]: chunk for chunk in chunks}
             findings = source_run.get("results", [])
+            # _current valida todo el catálogo. Para cotejar citas materializamos
+            # únicamente los originales usados por el mapa, no la biblioteca entera.
+            selected = {source["source_id"] for finding in findings
+                        for source in [*finding.get("supports", []),
+                                       *finding.get("candidate_documents", [])]}
+            try:
+                _, chunks = self.library.snapshot(case_id, source_ids=selected)
+            except SourceScopeError as exc:
+                raise Conflict(str(exc)) from exc
+            by_chunk = {chunk["chunk_id"]: chunk for chunk in chunks}
             request_ids = [request["id"] for request in case["identification"]["requests"]]
             if len(findings) != len(request_ids) or {
                 finding.get("request_id") for finding in findings
@@ -380,16 +414,18 @@ class DraftService:
         return value
 
     def _ensure_current(self, case_id, fingerprint, finding=None, *, full=False):
-        if getattr(self, "initial_review", None):
-            self.initial_review.assert_allowed(case_id)
-        _, source_run, current_fingerprint, current = self._current(case_id)
+        # _current already checks the initial decision and its exact inputs.
+        self.cases.assert_open(case_id)
+        case, source_run, current_fingerprint, current = self._current(case_id)
         if not current or current_fingerprint != fingerprint:
             raise _InputsChanged()
         try:
             self.cases.original(case_id)
             if full:
-                _, _, _, source_fingerprint = self.sources_service.inputs(case_id)
-                if source_fingerprint != source_run["fingerprint"]:
+                # Reconcile every selected citation/candidate and hash its original.
+                # Rebuilding chunks for unrelated documents cannot validate a draft.
+                _, _, _, final_fingerprint = self._inputs(case_id, case["version"])
+                if final_fingerprint != fingerprint:
                     raise _InputsChanged()
             else:
                 source_ids = {s["source_id"] for s in (finding or {}).get("supports", [])}
@@ -451,7 +487,9 @@ class DraftService:
             if intake and intake.enabled and not intake.pilot_bypassed(case["id"]):
                 initial_review = intake.saved(case["id"])
                 requests = [
-                    {**request, "initial_review": drafting_context(initial_review, request["id"])}
+                    {**request, "initial_review": drafting_context(
+                        initial_review, request["id"], request
+                    )}
                     for request in requests
                 ]
             order = {r["id"]: i for i, r in enumerate(case["identification"]["requests"])}

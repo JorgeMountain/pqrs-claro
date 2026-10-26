@@ -44,7 +44,7 @@ def test_discard_and_undo_preserve_reports_without_model_calls(fiaga, pdf_bytes)
     assert engine.calls == calls
 
 
-def test_changed_sources_do_not_become_valid_or_trigger_paid_call_on_discard(fiaga, pdf_bytes):
+def test_source_changes_do_not_invalidate_classification_on_discard(fiaga, pdf_bytes):
     app, client, engine, case, _ = setup_case(fiaga, pdf_bytes)
     upload_source(client)
     selected = copy.deepcopy(case['identification'])
@@ -53,7 +53,7 @@ def test_changed_sources_do_not_become_valid_or_trigger_paid_call_on_discard(fia
     case = edit(client, case, selected)
     row = wait_intake(app, client, case)
     assert engine.calls == calls
-    assert row['stale'] and not row['can_prepare']
+    assert not row['stale'] and not row['can_prepare']
 
 
 def test_real_content_edit_still_reanalyzes_and_clears_selection_cache(fiaga, pdf_bytes):

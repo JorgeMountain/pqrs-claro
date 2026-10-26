@@ -171,6 +171,7 @@ def purge_case(store, case_id, version, lifecycle_revision, management_revision=
                 (
                     "review_requests",
                     "review_history",
+                    "response_readings",
                     "review_approvals",
                     "response_proposals",
                     "office_workspace",
@@ -191,6 +192,7 @@ def purge_case(store, case_id, version, lifecycle_revision, management_revision=
                     "intake_history",
                     "case_management",
                     "management_events",
+                    "case_preanalysis",
                     "revisions",
                     "case_lifecycle_events",
                     "case_lifecycle",

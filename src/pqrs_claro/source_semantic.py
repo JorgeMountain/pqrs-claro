@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import sqlite3
@@ -120,7 +121,13 @@ class SemanticIndex:
         batch_size: int = 8,
         threads: int | None = None,
         matrix_cache_bytes: int = 64 * 1024 * 1024,
+        preparation_budget_seconds: float | None = None,
+        stop_event: threading.Event | None = None,
     ) -> None:
+        if preparation_budget_seconds is not None and (
+            not math.isfinite(preparation_budget_seconds) or preparation_budget_seconds < 0
+        ):
+            raise ValueError("El presupuesto de preparación debe ser finito y no negativo")
         self.cache_dir = Path(cache_dir)
         self.model_key = model_key
         self.batch_size = max(1, batch_size)
@@ -130,6 +137,11 @@ class SemanticIndex:
             "cached": 0,
             "encoded": 0,
             "prepared": 0,
+            "total": 0,
+            "pending": 0,
+            "complete": False,
+            "budget_exhausted": False,
+            "cancelled": False,
             "queries": 0,
             "matrix_builds": 0,
             "matrix_hits": 0,
@@ -143,6 +155,39 @@ class SemanticIndex:
         self._matrix_budget = max(0, matrix_cache_bytes)
         self._failed = False
         self._lock = threading.RLock()
+        self._preparation_budget = preparation_budget_seconds
+        self._preparation_deadline: float | None = None
+        self._preparation_deferred = False
+        self._stop_event = stop_event
+
+    def _cancelled(self) -> bool:
+        return bool(self._stop_event is not None and self._stop_event.is_set())
+
+    def _progress(self, total: int, pending: int, progress=None) -> None:
+        self.diagnostics.update(total=total, pending=pending, prepared=total - pending,
+                                complete=pending == 0)
+        if progress:
+            progress(dict(self.diagnostics))
+
+    def _complete(self, total: int, progress=None) -> None:
+        self._preparation_deferred = False
+        self.warning = None
+        self.diagnostics.update(budget_exhausted=False, cancelled=False)
+        self._progress(total, 0, progress)
+
+    def _defer(self, *, cancelled: bool) -> None:
+        self._preparation_deferred = True
+        self.diagnostics.update(cancelled=cancelled, budget_exhausted=not cancelled)
+        self.warning = (
+            "La búsqueda por significado tiene cobertura parcial: "
+            f"{self.diagnostics['prepared']} de {self.diagnostics['total']} fragmentos "
+            "únicos preparados. "
+            + ("La preparación se interrumpió. " if cancelled else
+               "La preparación pendiente superó el tiempo disponible para esta consulta. ")
+            + "La búsqueda por texto e identificadores conserva todo el alcance autorizado; "
+            "la falta de una coincidencia no acredita ausencia documental. "
+            "Los vectores terminados se conservan para completar el índice después."
+        )
 
     def _embedding_model(self) -> Any:
         if self._model is None:
@@ -175,19 +220,28 @@ class SemanticIndex:
         *,
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> bool:
-        """Completa sólo vectores faltantes; confirma cada lote para poder reanudar."""
+        """Reutiliza primero toda la caché autorizada y confirma cada lote nuevo.
+
+        Sin presupuesto completa el corpus, como la preparación explícita por CLI.
+        El modo interactivo comparte un único plazo entre todas sus llamadas;
+        al agotarlo conserva los vectores y comunica cobertura parcial. El plazo
+        se comprueba entre lotes, sin interrumpir una inferencia ONNX a medias.
+        """
         with self._lock:
             if self._failed:
                 return False
+            if self._preparation_budget is not None and self._preparation_deadline is None:
+                self._preparation_deadline = time.monotonic() + self._preparation_budget
             try:
                 import numpy as np
 
-                texts = {
-                    _text_key(_document_text(chunk)): _document_text(chunk) for chunk in eligible
-                }
+                texts = {}
+                for chunk in eligible:
+                    text = _document_text(chunk)
+                    texts[_text_key(text)] = text
                 pending = set(texts).difference(self._vectors)
                 if not pending:
-                    self.diagnostics["prepared"] = len(texts)
+                    self._complete(len(texts), progress)
                     return True
                 self.cache_dir.mkdir(parents=True, exist_ok=True)
                 with closing(sqlite3.connect(
@@ -217,11 +271,25 @@ class SemanticIndex:
                                 self._vectors[key] = self._normalize(vector)
                                 pending.remove(key)
                                 self.diagnostics["cached"] += 1
+                        if self._cancelled():
+                            self._progress(len(texts), len(pending))
+                            self._defer(cancelled=True)
+                            self._progress(len(texts), len(pending), progress)
+                            return False
+                    # Report the real cold-cache workload before the first ONNX batch.
+                    # Even a zero budget loads every reusable, authorized vector.
+                    self._progress(len(texts), len(pending), progress)
                     # El padding de ONNX alcanza el texto más largo del lote.
                     # Agrupar longitudes evita rellenar párrafos breves de DOCX
                     # hasta 512 tokens, sin recortar ni cambiar su contenido.
                     keys = sorted(pending, key=lambda key: (len(texts[key]), key))
                     for offset in range(0, len(keys), self.batch_size):
+                        cancelled = self._cancelled()
+                        if cancelled or (self._preparation_deadline is not None
+                                         and time.monotonic() >= self._preparation_deadline):
+                            self._defer(cancelled=cancelled)
+                            self._progress(len(texts), len(keys) - offset, progress)
+                            return False
                         batch = keys[offset : offset + self.batch_size]
                         vectors = list(
                             self._embedding_model().embed(
@@ -248,10 +316,8 @@ class SemanticIndex:
                         )
                         connection.commit()
                         self.diagnostics["encoded"] += len(batch)
-                        self.diagnostics["prepared"] = len(texts) - len(keys) + offset + len(batch)
-                        if progress:
-                            progress(dict(self.diagnostics))
-                self.diagnostics["prepared"] = len(texts)
+                        self._progress(len(texts), len(keys) - offset - len(batch), progress)
+                self._complete(len(texts), progress)
                 return True
             except Exception as error:
                 self._fail(error)
@@ -261,16 +327,27 @@ class SemanticIndex:
         self, query: str, eligible: list[dict[str, Any]], limit: int = 60
     ) -> list[dict[str, Any]]:
         with self._lock:
-            if self._failed or not query.strip() or not eligible or limit <= 0:
+            if self._failed or self._cancelled() or not query.strip() or not eligible or limit <= 0:
                 return []
             try:
                 import numpy as np
 
                 keys = tuple(_text_key(_document_text(chunk)) for chunk in eligible)
+                if not self._preparation_deferred and any(key not in self._vectors for key in keys):
+                    self.prepare(eligible)
+                if self._failed or self._cancelled():
+                    return []
+                # A bounded prepare must not be undone by rank implicitly encoding
+                # the rest of the library. Only cached vectors in this call's scope
+                # can contribute; metadata and citations still come from eligible.
+                prepared = [(chunk, key) for chunk, key in zip(eligible, keys)
+                            if key in self._vectors]
+                if not prepared:
+                    return []
+                eligible = [chunk for chunk, _ in prepared]
+                keys = tuple(key for _, key in prepared)
                 matrix = self._matrices.get(keys)
                 if matrix is None:
-                    if not self.prepare(eligible):
-                        return []
                     matrix = np.stack([self._vectors[key] for key in keys])
                     self.diagnostics["matrix_builds"] += 1
                     # Account for numeric storage and the key strings; cap the

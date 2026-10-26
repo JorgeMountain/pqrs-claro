@@ -22,7 +22,10 @@ def test_compact_progress_preserves_decisions_errors_and_full_audit_response():
     original_initial, original_sources = deepcopy(initial), deepcopy(sources)
     app = FastAPI()
     app.include_router(intake_router(SimpleNamespace(get=lambda _: initial)))
-    app.include_router(source_router(None, SimpleNamespace(get=lambda _: sources), None))
+    app.include_router(source_router(None, SimpleNamespace(
+        get=lambda _: sources,
+        progress=lambda _: {k: v for k, v in sources.items() if k != "source_snapshot"},
+    ), None))
     with TestClient(app) as client:
         compact = client.get("/api/cases/example/initial-review?compact=true").json()
         assert compact == {**{k: v for k, v in initial.items() if k != "consulted_sources"},

@@ -13,6 +13,12 @@ def test_pilot_continues_stale_review_without_approving_it(full_flow, informatio
     report = wait_intake(app, client, case)
     prefix = f"/api/cases/{case['id']}"
     assert upload_source(client).status_code == 201
+    assert not client.get(prefix + "/initial-review").json()["stale"]
+    # Library changes no longer invalidate classification-only identification.
+    # Change its own input to exercise the explicit stale-review pilot exception.
+    changed = deepcopy(app.state.store.get(case["id"])["identification"])
+    changed["requests"][0]["description"] += " Aclaración ficticia posterior."
+    case = app.state.store.update(case["id"], identification=changed)
     assert client.get(prefix + "/initial-review").json()["stale"]
     before = deepcopy(app.state.initial_review.saved(case["id"]))
     body = dict(version=case["version"], revision=report["revision"], enabled=True)

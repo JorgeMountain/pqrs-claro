@@ -44,6 +44,7 @@ def start(client, case, row, mode='incremental'):
 @pytest.mark.parametrize('change', ['sources', 'model'])
 def test_global_dependency_invalidates_all(fiaga, pdf_bytes, change):
     app, client, engine, case, row = setup_case(fiaga, pdf_bytes)
+    calls, revision = engine.calls, row['revision']
     if change == 'sources':
         upload_source(client)
     else:
@@ -51,6 +52,11 @@ def test_global_dependency_invalidates_all(fiaga, pdf_bytes, change):
         service.settings = replace(service.settings, model='another-fake')
     start(client, case, row)
     row = wait_intake(app, client, case)
+    if change == 'sources':
+        assert engine.calls == calls and row['revision'] == revision
+        assert not row['stale']
+        return
+    assert engine.calls == calls + 1
     assert not row['stale'] and row['timings']['evaluated_requests'] == 2
     assert len(engine.payload['identification']['requests']) == 2
 

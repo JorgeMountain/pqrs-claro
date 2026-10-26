@@ -38,6 +38,24 @@ def test_generic_filename_with_document_header_is_found_in_full_text():
     assert result["search_audit"]["negative_sufficient_references"] == []
 
 
+def test_no_numbered_target_keeps_readability_audit_without_rescanning_headers(monkeypatch):
+    from pqrs_claro import source_search_audit
+
+    def unexpected_scan(*args):
+        pytest.fail("No hay referencias numeradas que justifiquen recorrer encabezados")
+
+    monkeypatch.setattr(source_search_audit, "_header_references", unexpected_scan)
+    monkeypatch.setattr(source_search_audit, "_email", unexpected_scan)
+    unread = source(id="unread", source_id="unread", document_id="unread",
+                    extraction_status="error")
+    result = target_document_search(request("Informe los pasos para solicitar una constancia."),
+                                    {}, [source(), unread], [chunk("Trámite de constancias.")])
+    assert result["catalog_matches"] == []
+    assert result["search_audit"]["targeted_references"] == []
+    assert result["search_audit"]["unread_source_ids"] == ["unread"]
+    assert not result["search_audit"]["content_search_complete"]
+
+
 @pytest.mark.parametrize("quote", [
     "ACTA DEL CONSEJO DE FACULTAD No. 15\nContenido.",
     "ACTA 0015\nContenido.",

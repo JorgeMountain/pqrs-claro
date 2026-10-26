@@ -23,6 +23,7 @@ from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
 from .request_intent import classify_request_intent
+from .response_scope import RESPONSE_SCOPE_GUIDANCE
 from .source_assessment import _allowed_roles, _historical_document_status
 from .source_documents import requested_document
 from .source_retrieval import source_in_scope
@@ -94,7 +95,8 @@ class _Checks(StrictModel):
     issues: list[_Issue] = Field(max_length=60)
 
 
-_COMMON = """Si request.initial_review está presente, contiene decisiones humanas confirmadas
+_COMMON = RESPONSE_SCOPE_GUIDANCE + """
+Si request.initial_review está presente, contiene decisiones humanas confirmadas
 del trámite y observaciones preliminares del análisis. Ten en cuenta la clasificación
 corregida, notas y tratamiento especial al planificar, redactar y comprobar.
 Son contexto atribuido, NO pruebas documentales ni hechos acreditados. No los cites
@@ -947,7 +949,19 @@ class OpenAIDraftEngine:
             for field in ("difference", "affected_claim", "why_unresolved"):
                 if item.get(field):
                     item[field] = _checked_text(_materialize_prose(item[field], index, aliases))
-        result["pending"] = _pending(request, finding, result["pending"])
+        from .repetition_scope import optional_history_proposal
+
+        unnecessary = [item for item in result["pending"] if optional_history_proposal(
+            request, finding, item, result["paragraphs"]
+        )]
+        if unnecessary:
+            result["pending_not_required"] = [
+                {"proposal": item, "reason": "general_information_no_prior_comparison"}
+                for item in unnecessary
+            ]
+        result["pending"] = _pending(
+            request, finding, [item for item in result["pending"] if item not in unnecessary]
+        )
         if not result["paragraphs"] and not result["pending"]:
             result["pending"].append(
                 {

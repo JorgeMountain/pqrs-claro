@@ -43,6 +43,7 @@ class CaseService:
         self.active = set()
         self.initial_review = None
         self.management = None
+        self.preanalysis = None
 
     def graph(self, saver):
         extractor = self.extractor or PDFExtractor(
@@ -57,6 +58,8 @@ class CaseService:
             case = self.store.get(case_id)
             if self.management:
                 self.management.require_started(case_id)
+                if self.preanalysis and not case.get("identification"):
+                    self.preanalysis.require_approved(case_id)
             if case_id in self.active or case["status"] not in {"uploaded", "error"}:
                 raise Conflict("Este expediente ya se está procesando o está listo para revisar.")
             if not self.settings.api_key and self.identifier is None:
@@ -107,6 +110,11 @@ class CaseService:
                 initial = (
                     None if snapshot.values else {"case_id": case_id, "pdf_path": str(pdf_path)}
                 )
+                if initial and self.preanalysis:
+                    checked = self.preanalysis.saved(case_id)
+                    if (checked.get("approval")
+                            and checked["sha256"] == self.store.get(case_id)["sha256"]):
+                        initial["pages"] = checked["pages"]
                 for update in graph.stream(initial, config, stream_mode="updates"):
                     if "read_pdf" in update:
                         values = update["read_pdf"]

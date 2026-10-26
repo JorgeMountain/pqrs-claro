@@ -1,5 +1,6 @@
 """Coordina búsquedas por solicitud sin modificar la identificación confirmada."""
 
+import logging
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -21,7 +22,9 @@ from .source_retrieval import RetrievalIndex, retrieve
 from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 19
+SOURCE_ANALYSIS_VERSION = 20
+INTERACTIVE_SEMANTIC_BUDGET_SECONDS = 15
+logger = logging.getLogger(__name__)
 
 
 def failed_finding(request_id, exc):
@@ -46,6 +49,7 @@ class SourceService:
         self.settings, self.cases, self.library = settings, cases, library
         self.assessor = assessor
         self.verifications = verifications
+        self.semantic_preparation = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sources")
         self.lock = threading.RLock()
         self.active = set()
@@ -75,13 +79,31 @@ class SourceService:
             )
         return case, sources, chunks, fingerprint
 
-    def get(self, case_id):
+    def progress(self, case_id):
+        """Estado para sondeo; un resultado terminal siempre valida su vigencia."""
+        self.cases.get(case_id)
+        run = self.library.latest_run(case_id, compact=True)
+        if run and run["status"] == "running":
+            # Este estado no autoriza redacción. Evita recalcular la huella del
+            # catálogo por cada sondeo; get conserva la validación completa.
+            return {**run, "stale": None, "freshness_checked": False}
+        return self.get(case_id, compact=True)
+
+    def get(self, case_id, *, compact=False, _catalog=None):
         case = self.cases.get(case_id)
-        run = self.library.latest_run(case_id)
-        sources = self.library.eligible(case_id)
+        run = self.library.latest_run(case_id, compact=compact)
+        # A caller already holding library.lock may share this exact read within
+        # one validation. Nothing is cached across requests or changes of scope.
+        catalog = self.catalog(case_id) if _catalog is None else _catalog
+        # Es el mismo alcance de scoped(evidence_only=True), sin decodificar
+        # dos veces los metadatos del catálogo para una sola validación.
+        sources = [source for source in catalog
+                   if source.get("category") != "archive_only"
+                   and ("extraction_status" not in source
+                        or source["extraction_status"] in {"ready", "partial"})]
         fingerprint_inputs = {
             "identification": case["identification"],
-            "catalog": self.catalog(case_id),
+            "catalog": catalog,
             "verifications": self.verification_fingerprint(case_id, sources),
             "sources": sources,
             "model": self.settings.model,
@@ -107,7 +129,7 @@ class SourceService:
         # v17 recupera fechas explícitas; v16 busca dentro de documentos.
         # Un resultado anterior ya satisfactorio sigue siendo utilizable si TODAS sus
         # entradas actuales coinciden. No se promueven errores ni se reescribe el run.
-        if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18, 19}
+        if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18, 19, 20}
                 and run.get("status") == "ready" and not run.get("error")):
             results = run.get("results", [])
             compatible = len(results) == case["request_count"] and all(
@@ -239,7 +261,7 @@ class SourceService:
             self.library.save_run(run)
             self.active.add(case_id)
             self.pool.submit(self.run, case, chunks, run)
-            return self.get(case_id)
+            return self.progress(case_id)
 
     @track_case("sources", "case")
     def run(self, case, chunks, run):
@@ -251,20 +273,34 @@ class SourceService:
             applications = (self.verifications.active_applications(case)
                             if self.verifications else [])
             lexical = RetrievalIndex(chunks, prepared_terms=self.library.prepared_terms(chunks))
-            semantic = SemanticIndex(self.settings.data_dir / "semantic")
+            # No bloquear la primera consulta hasta indexar toda la biblioteca.
+            # La recuperación léxica mantiene su alcance completo y el canal
+            # semántico declara su cobertura real; el resto se prepara aparte.
+            semantic = SemanticIndex(
+                self.settings.data_dir / "semantic",
+                preparation_budget_seconds=INTERACTIVE_SEMANTIC_BUDGET_SECONDS,
+            )
             last_progress_save = 0.0
 
             def index_progress(progress):
                 nonlocal last_progress_save
                 run["retrieval_progress"] = {"phase": "indexing", **progress}
                 if time.monotonic() - last_progress_save >= 2:
-                    self.library.save_run(run)
+                    self.library.save_run_progress(run)
                     last_progress_save = time.monotonic()
 
             with operation("library.semantic_prepare"):
                 semantic.prepare(chunks, progress=index_progress)
             run["retrieval_warning"] = semantic.warning
             run["retrieval_progress"] = {"phase": "searching", **semantic.diagnostics}
+            if (semantic.diagnostics.get("budget_exhausted") and self.semantic_preparation
+                    and retrieval_signature(self.settings.data_dir)["semantic_installed"]):
+                try:
+                    self.semantic_preparation.enqueue(run["source_snapshot"])
+                except Exception:
+                    # Una cola auxiliar no debe perder pasajes recuperables ni
+                    # convertir una limitación de cobertura en un fallo del caso.
+                    logger.warning("No se pudo encolar la preparación semántica pendiente.")
             requests = build_source_requests(
                 case, allowed_collection_ids=run.get("allowed_collection_ids", []))
             order = {request["id"]: i for i, request in enumerate(requests)}
@@ -346,7 +382,7 @@ class SourceService:
                             break
                         run["request_states"][request["id"]] = "searching"
                         pending[submit_context(workers, evaluate, request)] = request
-                    self.library.save_run(run)
+                    self.library.save_run_progress(run)
 
                 fill_slots()
                 while pending:
