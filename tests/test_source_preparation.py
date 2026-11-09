@@ -43,7 +43,8 @@ def test_prepared_index_preserves_exact_ranking_scores_and_passages(library):
     prepared = library.prepared_terms(chunks)
     index = RetrievalIndex(chunks, prepared_terms=prepared)
     assert [retrieve(q, chunks, index=index) for q in queries] == expected
-    assert index.diagnostics == {"prepared_hits": len(chunks), "computed": 0}
+    assert index.diagnostics["prepared_hits"] == len(chunks)
+    assert index.diagnostics["computed"] == 0
     assert worker.status()["ready"] == 2
     assert worker.status()["prepared_chunks"] == len(chunks)
     # The cache never adds metadata to passages sent to the model.

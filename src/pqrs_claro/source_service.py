@@ -278,6 +278,7 @@ class SourceService:
             # semántico declara su cobertura real; el resto se prepara aparte.
             semantic = SemanticIndex(
                 self.settings.data_dir / "semantic",
+                matrix_cache_bytes=self.settings.semantic_matrix_cache_mb * 1024 * 1024,
                 preparation_budget_seconds=INTERACTIVE_SEMANTIC_BUDGET_SECONDS,
             )
             last_progress_save = 0.0

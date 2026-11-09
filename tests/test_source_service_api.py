@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import Counter
+from dataclasses import replace
 
 import pymupdf
 import pytest
@@ -247,6 +248,39 @@ def test_policy_change_does_not_reuse_completed_source_checkpoint(
     second = wait_search(app, client, case["id"])
     assert first["analysis_fingerprint"] != second["analysis_fingerprint"]
     assert assessor.calls == {"P1": 2, "P2": 2}
+
+
+@pytest.mark.parametrize("budget_mb", [0, 1])
+def test_source_search_honors_matrix_cache_budget(source_app, pdf_bytes, monkeypatch, budget_mb):
+    from test_source_semantic import CountingModel
+
+    from pqrs_claro.source_semantic import SemanticIndex
+
+    app, client, assessor, settings = source_app
+    app.state.sources.settings = replace(settings, semantic_matrix_cache_mb=budget_mb)
+    indexes = []
+
+    def local_index(*args, **kwargs):
+        index = SemanticIndex(*args, **kwargs, model_factory=lambda _: CountingModel())
+        indexes.append(index)
+        return index
+
+    monkeypatch.setattr(source_service, "SemanticIndex", local_index)
+    case = make_case(client, pdf_bytes)
+    assert upload_source(client).status_code == 201
+    start_search(client, case)
+    result = wait_search(app, client, case["id"])
+    assert result["status"] == "ready"
+    assert not result["retrieval_warning"]
+    assert assessor.calls == {"P1": 1, "P2": 1}
+    assert len(indexes) == 1
+    diagnostics = indexes[0].diagnostics
+    assert diagnostics["matrix_cache_budget_bytes"] == budget_mb * 1024**2
+    if budget_mb:
+        assert diagnostics["matrix_hits"] >= 1
+    else:
+        assert diagnostics["matrix_cache_bytes"] == 0
+        assert diagnostics["matrix_hits"] == 0
 
 
 def test_partial_semantic_search_keeps_lexical_results_if_background_queue_fails(
