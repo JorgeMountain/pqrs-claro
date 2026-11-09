@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import heapq
 import json
 import math
 import os
@@ -28,6 +29,7 @@ MODEL_FILE = "onnx/model_qint8_avx512_vnni.onnx"
 MODEL_SHA256 = "dd476dd0c2514e9b9be83aeb3853fac0763e0bdf4a71645407587d77c48a2d88"
 MODEL_KEY = f"{MODEL_NAME}@{MODEL_REVISION}:{MODEL_FILE}:mean-l2:e5-prefix:v1"
 DEFAULT_CACHE_DIR = Path("data/semantic")
+DEFAULT_MATRIX_CACHE_BYTES = 512 * 1024 * 1024
 
 
 def _model_path(cache_dir: Path) -> Path:
@@ -102,6 +104,28 @@ def _text_key(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _top_positions(scores, eligible, limit):
+    """Exact top-k, including boundary ties and the original stable ID ordering."""
+    import numpy as np
+
+    def order(position):
+        return -float(scores[position]), str(eligible[position].get("chunk_id", ""))
+
+    if limit >= len(scores):
+        return sorted(range(len(scores)), key=order)
+    boundary = len(scores) - limit
+    threshold = np.partition(scores, boundary)[boundary]
+    better = np.flatnonzero(scores > threshold).tolist()
+    # argpartition alone can discard the smaller chunk_id at the cutoff. Keep
+    # every threshold tie eligible; nsmallest also keeps input order for equal IDs.
+    tied = np.flatnonzero(scores == threshold)
+    selected = heapq.nsmallest(
+        limit - len(better), tied,
+        key=lambda position: str(eligible[position].get("chunk_id", "")),
+    )
+    return sorted([*better, *selected], key=order)
+
+
 class SemanticIndex:
     """Índice reutilizable por ejecución y persistente por huella de contenido.
 
@@ -120,7 +144,7 @@ class SemanticIndex:
         model_key: str = MODEL_KEY,
         batch_size: int = 8,
         threads: int | None = None,
-        matrix_cache_bytes: int = 64 * 1024 * 1024,
+        matrix_cache_bytes: int = DEFAULT_MATRIX_CACHE_BYTES,
         preparation_budget_seconds: float | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
@@ -146,6 +170,7 @@ class SemanticIndex:
             "matrix_builds": 0,
             "matrix_hits": 0,
             "matrix_cache_bytes": 0,
+            "matrix_cache_budget_bytes": max(0, matrix_cache_bytes),
         }
         self._factory = model_factory or (lambda path: _load_model(path, threads=threads))
         self._model: Any = None
@@ -301,14 +326,16 @@ class SemanticIndex:
                             raise ValueError("El modelo no devolvió todos los fragmentos del lote")
                         rows = []
                         for key, vector in zip(batch, vectors, strict=True):
-                            normalized = self._normalize(vector)
-                            self._vectors[key] = normalized
+                            stored = self._normalize(vector)
+                            # Use the same float32 representation for scoring as a cache
+                            # reload. A second normalization can move an exact tie by one ULP.
+                            self._vectors[key] = self._normalize(stored)
                             rows.append(
                                 (
                                     self.model_key,
                                     key,
-                                    len(normalized),
-                                    normalized.astype("<f4").tobytes(),
+                                    len(stored),
+                                    stored.astype("<f4").tobytes(),
                                 )
                             )
                         connection.executemany(
@@ -348,20 +375,23 @@ class SemanticIndex:
                 keys = tuple(key for _, key in prepared)
                 matrix = self._matrices.get(keys)
                 if matrix is None:
+                    # Budget the full matrix before allocating it. Evict first,
+                    # including when this scope is too large to retain, so an old
+                    # scope does not coexist unnecessarily with the new matrix.
+                    size = (len(keys) * self._vectors[keys[0]].nbytes
+                            + sum(len(key) + 64 for key in keys) + 128)
+                    while self._matrices and (
+                        self.diagnostics["matrix_cache_bytes"] + size > self._matrix_budget
+                        or len(self._matrices) >= 4
+                    ):
+                        old_keys, old_matrix = self._matrices.popitem(last=False)
+                        self.diagnostics["matrix_cache_bytes"] -= (
+                            old_matrix.nbytes + sum(len(key) + 64 for key in old_keys) + 128
+                        )
+                        del old_matrix, old_keys
                     matrix = np.stack([self._vectors[key] for key in keys])
                     self.diagnostics["matrix_builds"] += 1
-                    # Account for numeric storage and the key strings; cap the
-                    # number of scopes too. Large scopes still work without caching.
-                    size = matrix.nbytes + sum(len(key) + 64 for key in keys) + 128
                     if size <= self._matrix_budget:
-                        while self._matrices and (
-                            self.diagnostics["matrix_cache_bytes"] + size > self._matrix_budget
-                            or len(self._matrices) >= 4
-                        ):
-                            old_keys, old_matrix = self._matrices.popitem(last=False)
-                            self.diagnostics["matrix_cache_bytes"] -= (
-                                old_matrix.nbytes + sum(len(key) + 64 for key in old_keys) + 128
-                            )
                         self._matrices[keys] = matrix
                         self.diagnostics["matrix_cache_bytes"] += size
                 else:
@@ -379,13 +409,7 @@ class SemanticIndex:
                 # Matrices cache only vectors in eligible order, never metadata.
                 # Current identifiers, permissions and citations come from eligible.
                 scores = matrix @ self._queries[query]
-                positions = sorted(
-                    range(len(eligible)),
-                    key=lambda index: (
-                        -float(scores[index]),
-                        str(eligible[index].get("chunk_id", "")),
-                    ),
-                )[:limit]
+                positions = _top_positions(scores, eligible, limit)
                 return [
                     {**eligible[index], "semantic_score": round(float(scores[index]), 8)}
                     for index in positions

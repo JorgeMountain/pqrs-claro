@@ -76,12 +76,7 @@ def test_deadline_stops_between_committed_batches_and_reports_unique_total(tmp_p
     assert resumed.diagnostics["encoded"] == 3
     assert resumed.diagnostics["complete"] and resumed.diagnostics["pending"] == 0
     fresh = SemanticIndex(tmp_path / "fresh", model_factory=lambda _: CountingModel())
-    # Loading persisted float32 vectors renormalizes them; tied scores can differ
-    # by one rounding unit. Check complete coverage and the actual cosine scores.
-    def scores(rows):
-        return {row["chunk_id"]: row["semantic_score"] for row in rows}
-    assert scores(resumed.rank("docente", pieces)) == pytest.approx(
-        scores(fresh.rank("docente", pieces)), abs=1e-6)
+    assert resumed.rank("docente", pieces) == fresh.rank("docente", pieces)
 
 
 def test_deadline_is_shared_across_explicit_prepare_calls(tmp_path, monkeypatch):

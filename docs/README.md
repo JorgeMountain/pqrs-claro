@@ -27,6 +27,7 @@ para colaborar están en [CONTRIBUTING.md](../CONTRIBUTING.md).
 ## Fuentes e integraciones
 
 - [Recuperación de fuentes](RECUPERACION.md) y [búsqueda semántica local](busqueda-semantica-local.md).
+- [Seguimiento y mediciones de optimización del RAG](OPTIMIZACION_RAG.md).
 - [Biblioteca integrada](BIBLIOTECA_RECORRIDO.md), [preparación de biblioteca](PREPARACION_BIBLIOTECA.md).
 - [Históricos](HISTORICOS.md), [OCR local](OCR_LOCAL.md), [Gmail](GMAIL.md).
 - [Drive](DRIVE.md) y [opciones de almacenamiento](ALMACENAMIENTO.md): describen

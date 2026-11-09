@@ -5,9 +5,10 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import sys
 import unicodedata
 from array import array
-from collections import Counter
+from collections import Counter, OrderedDict, defaultdict
 from functools import lru_cache
 from typing import Any
 
@@ -71,6 +72,8 @@ def tokenize(text: str) -> list[str]:
 
 
 TERMS_VERSION = "lexical-nfkd-v1"
+DEFAULT_CONTEXT_CACHE_BYTES = 64 * 1024 * 1024
+DEFAULT_BODY_STATISTICS_CACHE_BYTES = 64 * 1024 * 1024
 
 
 def terms_key(chunk):
@@ -78,16 +81,102 @@ def terms_key(chunk):
     return hashlib.sha256((TERMS_VERSION + "\n" + text).encode("utf-8")).hexdigest()
 
 
+def _build_statistics(rows, document_terms):
+    # Posting positions refer to this exact sequence of rows.
+    lengths, postings = [], {}
+    for position, row in enumerate(rows):
+        document = document_terms(row)
+        lengths.append(sum(document.values()))
+        for term, count in document.items():
+            entry = postings.get(term)
+            if entry is None:
+                entry = postings[term] = (array("I"), array("I"))
+            entry[0].append(position)
+            entry[1].append(count)
+    return lengths, sum(lengths) / max(1, len(lengths)) or 1, postings
+
+
+def _body_statistics_bytes(quotes, statistics):
+    lengths, average, postings = statistics
+    # Include referenced strings and numbers even if shared by other entries.
+    return (256 + sys.getsizeof(quotes) + sum(map(sys.getsizeof, quotes))
+            + sys.getsizeof(statistics) + sys.getsizeof(lengths) + sum(map(sys.getsizeof, lengths))
+            + sys.getsizeof(average) + sys.getsizeof(postings)
+            + sum(sys.getsizeof(term) + sys.getsizeof(entry) + sys.getsizeof(entry[0])
+                  + sys.getsizeof(entry[1]) for term, entry in postings.items()))
+
+
 class RetrievalIndex:
     """Reutiliza estadísticas por alcance, sin mezclar colecciones ni expedientes."""
 
-    def __init__(self, chunks, *, prepared_terms=None):
+    def __init__(self, chunks, *, prepared_terms=None,
+                 context_cache_bytes=DEFAULT_CONTEXT_CACHE_BYTES,
+                 body_statistics_cache_bytes=DEFAULT_BODY_STATISTICS_CACHE_BYTES):
         self.chunks = chunks
         self._statistics = {}
+        self._body_statistics = OrderedDict()
+        self._body_statistics_budget = max(0, body_statistics_cache_bytes)
         self._identities = {}
         self._calendar = {}
+        self._context = OrderedDict()
+        self._context_budget = max(0, context_cache_bytes)
         self._prepared_terms = prepared_terms or {}
-        self.diagnostics = {"prepared_hits": 0, "computed": 0}
+        self.diagnostics = {"prepared_hits": 0, "computed": 0,
+                            "context_hits": 0, "context_computed": 0,
+                            "context_cache_bytes": 0,
+                            "context_body_prepared_hits": 0, "context_body_computed": 0,
+                            "body_statistics_builds": 0, "body_statistics_hits": 0,
+                            "body_statistics_oversized": 0, "body_statistics_evictions": 0,
+                            "body_statistics_cache_bytes": 0}
+
+    def normalized_text(self, text):
+        """Prepare context on demand, after scope filtering; never cache metadata."""
+        cached = self._context.get(text)
+        if cached is not None:
+            self._context.move_to_end(text)
+            self.diagnostics["context_hits"] += 1
+            return cached[:2]
+        normalized = _search_words(text)
+        terms = Counter(tokenize(normalized))
+        self.diagnostics["context_computed"] += 1
+        # Conservative estimate includes the original key even if the corpus
+        # already owns it, plus token/count objects and an LRU entry allowance.
+        size = (sys.getsizeof(text) + sys.getsizeof(normalized) + sys.getsizeof(terms)
+                + sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in terms.items()) + 256)
+        if size <= self._context_budget:
+            while (self._context and
+                   self.diagnostics["context_cache_bytes"] + size > self._context_budget):
+                _, (_, _, old_size) = self._context.popitem(last=False)
+                self.diagnostics["context_cache_bytes"] -= old_size
+            self._context[text] = normalized, terms, size
+            self.diagnostics["context_cache_bytes"] += size
+        return normalized, terms
+
+    def calendar_features(self, quote):
+        """Share only date features of identical text, never source metadata."""
+        if quote not in self._calendar:
+            self._calendar[quote] = _calendar_features(quote)
+        return self._calendar[quote]
+
+    def body_context_terms(self, row):
+        """Derive normalized body counts from the content-keyed lexical index."""
+        document = self._prepared_terms.get(terms_key(row))
+        if document is None:
+            document = Counter(tokenize(row["quote"]))
+            title = {}
+            self.diagnostics["context_body_computed"] += 1
+        else:
+            title = Counter(tokenize(str(row.get("title", ""))))
+            self.diagnostics["context_body_prepared_hits"] += 1
+        terms = Counter()
+        for word, count in document.items():
+            frequency = count - title.get(word, 0)
+            if frequency > 0:
+                # _search_words transforms each lexical token independently.
+                # The second tokenization also removes any resulting stopword.
+                for normalized in _calendar_word_tokens(word):
+                    terms[normalized] += frequency
+        return terms
 
     def identity(self, request, chunk, kind, number):
         if not kind or kind == "documento":
@@ -95,40 +184,63 @@ class RetrievalIndex:
         query_key = (request.get("title", ""), request.get("description", ""))
         identities = self._identities.setdefault(query_key, {})
         key = chunk["chunk_id"]
-        if key not in identities:
-            identity = document_matches(request, chunk, kind)
-            named = bool(identity and number and re.search(
-                rf"(?<!\d){re.escape(number)}(?!\d)",
-                f"{chunk.get('title', '')} {chunk.get('filename', '')}",
-            ))
-            identities[key] = int(identity) + int(named)
-        return identities[key]
+        title, filename, quote = chunk.get("title", ""), chunk.get("filename", ""), chunk["quote"]
+        cached = identities.get(key)
+        if cached and cached[0] == title and cached[1] == filename and cached[2] == quote:
+            return cached[3]
+        identity = document_matches(request, chunk, kind)
+        named = bool(identity and number and re.search(
+            rf"(?<!\d){re.escape(number)}(?!\d)", f"{title} {filename}",
+        ))
+        rank = int(identity) + int(named)
+        identities[key] = (title, filename, quote, rank)
+        return rank
+
+    def _document_terms(self, chunk):
+        document = self._prepared_terms.get(terms_key(chunk))
+        if document is None:
+            self.diagnostics["computed"] += 1
+            return Counter(tokenize(f"{chunk.get('title', '')} {chunk['quote']}"))
+        self.diagnostics["prepared_hits"] += 1
+        return document
 
     def statistics(self, eligible):
         key = tuple((str(chunk["chunk_id"]), chunk.get("title", ""), chunk["quote"])
                     for chunk in eligible)
-        if key not in self._statistics:
-            # Consume one passage at a time, avoiding a second full corpus of Counters.
-            lengths, postings = [], {}
-            for index, chunk in enumerate(eligible):
-                document = self._prepared_terms.get(terms_key(chunk))
-                if document is None:
-                    document = Counter(tokenize(f"{chunk.get('title', '')} {chunk['quote']}"))
-                    self.diagnostics["computed"] += 1
-                else:
-                    self.diagnostics["prepared_hits"] += 1
-                lengths.append(sum(document.values()))
-                for term, count in document.items():
-                    entry = postings.get(term)
-                    if entry is None:
-                        entry = postings[term] = (array("I"), array("I"))
-                    entry[0].append(index)
-                    entry[1].append(count)
-            self._statistics[key] = lengths, sum(lengths) / max(1, len(lengths)) or 1, postings
-        return self._statistics[key]
+        statistics = self._statistics.get(key)
+        if statistics is None:
+            statistics = self._statistics[key] = _build_statistics(eligible, self._document_terms)
+        return statistics
+
+    def body_statistics(self, rows):
+        """Reuse numeric postings for an ordered sequence of normalized bodies."""
+        # Ranking reads identifiers and citations from the current rows. For
+        # body-only BM25, identical ordered quotes yield identical frequencies.
+        budget = self._body_statistics_budget
+        quotes = tuple(row["quote"] for row in rows) if budget else ()
+        entry = self._body_statistics.get(quotes)
+        if entry is not None:
+            self._body_statistics.move_to_end(quotes)
+            self.diagnostics["body_statistics_hits"] += 1
+            return entry[0]
+        self.diagnostics["body_statistics_builds"] += 1
+        statistics = _build_statistics(rows, self.body_context_terms)
+        if not budget:
+            return statistics
+        size = _body_statistics_bytes(quotes, statistics)
+        if size > budget:
+            self.diagnostics["body_statistics_oversized"] += 1
+            return statistics
+        while self.diagnostics["body_statistics_cache_bytes"] + size > budget:
+            _, evicted = self._body_statistics.popitem(last=False)
+            self.diagnostics["body_statistics_cache_bytes"] -= evicted[1]
+            self.diagnostics["body_statistics_evictions"] += 1
+        self._body_statistics[quotes] = (statistics, size)
+        self.diagnostics["body_statistics_cache_bytes"] += size
+        return statistics
 
 
-def _rank(request, eligible, *, index=None, query=None):
+def _rank(request, eligible, *, index=None, query=None, statistics=None):
     """BM25 con estadísticas del corpus autorizado y consultas independientes."""
     if not eligible:
         return []
@@ -144,7 +256,9 @@ def _rank(request, eligible, *, index=None, query=None):
     if not query_terms:
         return []
     index = index or RetrievalIndex(eligible)
-    lengths, average_length, postings = index.statistics(eligible)
+    if statistics is None:
+        statistics = index.statistics(eligible)
+    lengths, average_length, postings = statistics
     scores = Counter()
     matches = {}
     for term in sorted(query_terms):
@@ -203,12 +317,48 @@ _REPRODUCED_REQUEST = re.compile(
 )
 
 
-def _answer_chunks(eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _eligible_chunks(request, chunks):
+    return [row for row in chunks if row.get("category") in _EVIDENCE_CATEGORIES
+            and row.get("validity") != "superseded" and str(row.get("quote") or "").strip()
+            and source_in_scope(request, row)]
+
+
+class _PassageGroups:
+    """Rows of one authorized request, grouped in input order by source version."""
+
+    def __init__(self, eligible):
+        self.rows = eligible
+        self.by_id = {}
+        self.by_source = defaultdict(list)
+        self.historical = []
+        self._ordered = {}
+        for row in eligible:
+            self.by_id[row["chunk_id"]] = row
+            self.by_source[row["source_id"]].append(row)
+            if row.get("category") == "historical_response":
+                self.historical.append(row)
+
+    def following(self, anchor, limit):
+        source = anchor["source_id"]
+        if source not in self._ordered:
+            # Stable sort retains input order when PDF coordinates coincide.
+            ordered = sorted(self.by_source[source], key=lambda row: (
+                int(row.get("page", 0)), int(row.get("line_start", 1))))
+            positions = {}
+            for position, row in enumerate(ordered):
+                positions.setdefault(row["chunk_id"], position)
+            self._ordered[source] = ordered, positions
+        ordered, positions = self._ordered[source]
+        start = positions[anchor["chunk_id"]] + 1
+        return ordered[start:start + limit]
+
+
+def _answer_chunks(eligible: list[dict[str, Any]], *, historical=None) -> list[dict[str, Any]]:
     """Detecta un inicio literal de contestación; no infiere por posición final."""
     boundaries: dict[str, tuple[int, int]] = {}
-    for chunk in eligible:
-        if chunk.get("category") != "historical_response":
-            continue
+    if historical is None:
+        historical = (row for row in eligible if row.get("category") == "historical_response")
+    for chunk in historical:
         match = _ANSWER_START.search(chunk["quote"])
         if not match:
             continue
@@ -218,6 +368,8 @@ def _answer_chunks(eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         document_id = str(chunk["document_id"])
         boundaries[document_id] = min(position, boundaries.get(document_id, position))
+    if not boundaries:
+        return []
     return [
         chunk for chunk in eligible
         if str(chunk["document_id"]) in boundaries
@@ -243,7 +395,7 @@ def _document_budget(rows: list[dict[str, Any]], limit: int) -> list[dict[str, A
 
 def _baseline(
     request: dict[str, Any], chunks: list[dict[str, Any]], limit: int = 24, *, index=None,
-    ranked=None,
+    ranked=None, passages=None,
 ) -> list[dict[str, Any]]:
     """Combina búsqueda general y contestaciones, hasta 24 fragmentos originales.
 
@@ -257,18 +409,15 @@ def _baseline(
     if limit <= 0:
         return []
     limit = min(limit, 24)
-    eligible = [
-        chunk for chunk in chunks
-        if chunk.get("category") in _EVIDENCE_CATEGORIES
-        and chunk.get("validity") != "superseded"
-        and str(chunk.get("quote") or "").strip()
-        and source_in_scope(request, chunk)
-    ]
+    if passages is None:
+        passages = _PassageGroups(_eligible_chunks(request, chunks))
+    eligible = passages.rows
     general = _document_budget(
         ranked if ranked is not None else _rank(request, eligible, index=index), max(32, limit)
     )
     answers = _document_budget(
-        _rank(request, _answer_chunks(eligible), index=index), max(32, limit)
+        _rank(request, _answer_chunks(eligible, historical=passages.historical), index=index),
+        max(32, limit),
     )
     selected: list[dict[str, Any]] = []
     requested_documents = {
@@ -347,7 +496,7 @@ def _topic_variant(word):
     return re.escape(word), (word,)
 
 
-def _topic_passages(request, eligible, *, index=None):
+def _topic_passages(request, eligible, *, index=None, postings=None, originals=None):
     """Busca el tema breve en el cuerpo, sin que el título del archivo lo suplante.
 
     Las variantes sólo amplían candidatos. No acreditan equivalencia jurídica,
@@ -373,7 +522,8 @@ def _topic_passages(request, eligible, *, index=None):
         # phrase regex below rejects. If tokenization ever drops a variant (for
         # example a stopword), fall back to scanning rather than lose that match.
         if all(tokenize(form) == [form] for word in required for form in variants[word][1]):
-            postings = index.statistics(eligible)[2]
+            if postings is None:
+                postings = index.statistics(eligible)[2]
             positions = {}
             for word in required:
                 positions[word] = set()
@@ -402,12 +552,13 @@ def _topic_passages(request, eligible, *, index=None):
             matches.append({**row, "title": ""})
     if not matches:
         return []
-    originals = {row["chunk_id"]: row for row in eligible}
+    if originals is None:
+        originals = {row["chunk_id"]: row for row in eligible}
     ranked = _rank({}, matches, query=" ".join(sorted(expanded)))
     return [originals[row["chunk_id"]] for row in _document_budget(ranked, 12)]
 
 
-def _adjacent_answer(anchor, eligible):
+def _adjacent_answer(anchor, eligible, *, passages=None):
     """Una pregunta explícita en un oficio y su contestación contigua, sin sintetizar.
 
     Los párrafos DOCX pueden ser secciones distintas. PDF conserva cada fragmento
@@ -415,13 +566,10 @@ def _adjacent_answer(anchor, eligible):
     """
     if anchor.get("category") != "historical_response" or not _QUESTION.match(anchor["quote"]):
         return []
-    siblings = sorted(
-        (c for c in eligible if c["source_id"] == anchor["source_id"]),
-        key=lambda c: (int(c.get("page", 0)), int(c.get("line_start", 1))),
-    )
-    start = next(i for i, c in enumerate(siblings) if c["chunk_id"] == anchor["chunk_id"])
+    if passages is None:
+        passages = _PassageGroups(eligible)
     result, size = [anchor], len(anchor["quote"])
-    for following in siblings[start + 1 : start + 8]:
+    for following in passages.following(anchor, 7):
         if _QUESTION.match(following["quote"]) or _SECTION.match(following["quote"]):
             break
         # Los números solo sirven como coordenadas; no saltar páginas omitidas.
@@ -434,7 +582,7 @@ def _adjacent_answer(anchor, eligible):
     return result if len(result) > 1 else []
 
 
-def _targeted_passages(request, eligible, *, index):
+def _targeted_passages(request, eligible, *, index, passages=None):
     """Prioriza una ubicación explícita de un archivo nombrado, con citas intactas.
 
     Solo resuelve una referencia documental inequívoca en la pregunta atómica.
@@ -472,20 +620,17 @@ def _targeted_passages(request, eligible, *, index):
         int(row.get("page", 0)), int(row.get("line_start", 1)), row["chunk_id"],
     ))
     targets = matching[:4]
+    if not targets:
+        return []
+    if passages is None:
+        passages = _PassageGroups(eligible)
     result = [(row, "requested_passage") for row in targets]
     # Si el literal termina justo antes de «Respuesta», conservar su continuación
     # inmediata aunque no repita entidades y BM25 le dé pocos puntos.
     for anchor in targets[:1]:
         if not literal_rows or anchor not in literal_rows:
             continue
-        siblings = sorted(
-            [row for row in eligible if row["source_id"] == anchor["source_id"]],
-            key=lambda row: (int(row.get("page", 0)), int(row.get("line_start", 1))),
-        )
-        position = next(i for i, row in enumerate(siblings)
-                        if row["chunk_id"] == anchor["chunk_id"])
-        following = siblings[position + 1:position + 2]
-        for row in following:
+        for row in passages.following(anchor, 1):
             same_page = row.get("page") == anchor.get("page")
             next_page = int(row.get("page", 0)) == int(anchor.get("page", 0)) + 1
             near_line = int(row.get("line_start", 1)) <= int(anchor.get("line_end", 1)) + 1
@@ -497,7 +642,7 @@ def _targeted_passages(request, eligible, *, index):
     identity_request = {"description": references[0]}
     target_sources = {row["source_id"] for row in targets}
     for source_id in sorted(target_sources)[:2]:
-        siblings = [row for row in eligible if row["source_id"] == source_id]
+        siblings = passages.by_source[source_id]
         first_page = min(int(row.get("page", 0)) for row in siblings)
         headers = [row for row in siblings if int(row.get("page", 0)) == first_page
                    and document_matches(identity_request, row, kind)]
@@ -517,15 +662,17 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     if limit <= 0:
         return []
     limit = min(24, limit)
-    eligible = [c for c in chunks if c.get("category") in _EVIDENCE_CATEGORIES
-                and c.get("validity") != "superseded" and str(c.get("quote") or "").strip()
-                and source_in_scope(request, c)]
+    eligible = _eligible_chunks(request, chunks)
     query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
     if not tokenize(query) or not eligible:
         return []
+    passages = _PassageGroups(eligible)
     index = index or RetrievalIndex(eligible)
-    general = _rank(request, eligible, index=index)
-    baseline = _baseline(request, eligible, limit, index=index, ranked=general)
+    # These channels read the same ordered, permission-filtered rows. Resolve
+    # their shared postings once. Subset rankings below resolve their own IDF.
+    statistics = index.statistics(eligible)
+    general = _rank(request, eligible, index=index, statistics=statistics)
+    baseline = _baseline(request, eligible, limit, index=index, ranked=general, passages=passages)
     channels = {"lexical": baseline}
     context_queries = request.get("retrieval_queries") or [request.get("retrieval_context", "")]
     if isinstance(context_queries, str):
@@ -533,7 +680,8 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     context_rows = []
     for context_query in context_queries[:3]:
         if isinstance(context_query, str) and context_query.strip():
-            context_rows.extend(_rank(request, eligible, index=index, query=context_query)[:24])
+            context_rows.extend(_rank(request, eligible, index=index, query=context_query,
+                                      statistics=statistics)[:24])
     channels["context"] = context_rows
     identity_text = query + " " + str(request.get("retrieval_context") or "")
     named = {c["chunk_id"] for c in named_document_candidates(identity_text, eligible)}
@@ -544,7 +692,8 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     entities = []
     if emails:
         entity_query = " ".join(sorted(emails))
-        entities = [c for c in _rank(request, eligible, index=index, query=entity_query)
+        entities = [c for c in _rank(request, eligible, index=index, query=entity_query,
+                                     statistics=statistics)
                     if emails.intersection(_EMAIL.findall(c["quote"].casefold()))]
         entities.sort(key=lambda c: (
             len(set(_EMAIL.findall(c["quote"].casefold()))) > 4,
@@ -553,7 +702,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     channels["entity"] = entities
     channels["semantic"] = semantic.rank(query, eligible, limit=40) if semantic else []
     # Revalida IDs e identidad del fragmento incluso para proveedores enchufables.
-    authorized = {c["chunk_id"]: c for c in eligible}
+    authorized = passages.by_id
     channels = {name: [
         {**authorized[row["chunk_id"]], **{key: row[key] for key in (
             ("semantic_score",) if name == "semantic"
@@ -583,23 +732,24 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
 
     # Una ubicación explícita domina las coincidencias léxicas con otros numerales.
     # Cada elemento sigue siendo un candidato original, con su alcance y metadatos.
-    for row, channel in _targeted_passages(request, eligible, index=index):
+    for row, channel in _targeted_passages(request, eligible, index=index, passages=passages):
         add(row, channel, expanded=True)
     for row in baseline[:8]:
         if row.get("document_identity_rank", 0):
             add(row, "lexical")
     # Las preguntas por fechas necesitan pasajes con fechas explícitas, no solo
     # apartados que repitan "presentación", "calendario" o "convocatoria".
-    for row in _date_passages(request, eligible, index=index):
+    for row in _date_passages(request, eligible, index=index, postings=statistics[2]):
         add(row, "calendar")
     ranked_by_id = {row["chunk_id"]: row for row in general}
     # Reserva el tema del título atómico antes del cupo de contestaciones previas.
     # Así las fórmulas genéricas de otros trámites no ocupan toda la selección.
-    for row in _topic_passages(request, eligible, index=index)[:6]:
+    for row in _topic_passages(request, eligible, index=index, postings=statistics[2],
+                               originals=authorized)[:6]:
         add(ranked_by_id.get(row["chunk_id"], row), "topic")
     # El asunto ayuda a localizar el documento; la pregunta atómica selecciona
     # su contenido. Una portada coincidente no sustituye el pasaje de respuesta.
-    for row in _document_content(request, eligible):
+    for row in _document_content(request, eligible, index=index, passages=passages):
         add(ranked_by_id.get(row["chunk_id"], row), "document_content")
     # Protege resultados ya útiles, incluida la prioridad del objeto pedido.
     for row in baseline[:8]:
@@ -608,9 +758,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     # La prioridad de identidad localiza el archivo pedido; no debe esconder la
     # pregunta casi literal de un oficio cuando buscamos su contestación contigua.
     question_chunks = []
-    for candidate in eligible:
-        if candidate.get("category") != "historical_response":
-            continue
+    for candidate in passages.historical:
         if _QUESTION.match(candidate["quote"]):
             # Puntuar la pregunta y no todas las respuestas diferentes que puedan
             # compartir su fragmento PDF. Solo se devuelve después el original.
@@ -630,7 +778,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         ))
     for candidate in anchors[:24]:
         anchor = authorized[candidate["chunk_id"]]
-        adjacent = _adjacent_answer(anchor, eligible)
+        adjacent = _adjacent_answer(anchor, eligible, passages=passages)
         if adjacent and len(adjacent) <= limit - len(selected) + int(anchor["chunk_id"] in seen):
             for row in adjacent:
                 add({**row, "adjacent_to": anchor["chunk_id"]}, "adjacent_answer", expanded=True)
@@ -702,13 +850,14 @@ def _calendar_features(quote):
     return features
 
 
-def _calendar_candidates(event, eligible, index):
+def _calendar_candidates(event, eligible, index, postings=None):
     """A lexical superset of calendar hits, including clipped/raw Unicode words."""
     if index is None or any(word in stopword for word in event for stopword in _STOPWORDS):
         # Raw word boundaries and the 180-character window can expose part of a
         # stopword absent from the index: e.g. "infor" inside "informacion".
         return eligible
-    postings = index.statistics(eligible)[2]
+    if postings is None:
+        postings = index.statistics(eligible)[2]
     positions = set()
     for term, (matches, _) in postings.items():
         # Calendar features split raw Unicode before normalizing and may clip a
@@ -722,7 +871,28 @@ def _calendar_candidates(event, eligible, index):
     return (eligible[position] for position in sorted(positions))
 
 
-def _date_passages(request, eligible, *, index=None):
+def _normalized_passage(row, text, index, prepared, *, body=False):
+    if index is None:
+        return {**row, "title": "", "quote": _search_words(text)}
+    if body:
+        # Body statistics read the original title/content key to derive counts.
+        return row
+    normalized, terms = index.normalized_text(text)
+    passage = {**row, "title": "", "quote": normalized}
+    prepared[terms_key(passage)] = terms
+    return passage
+
+
+def _rank_context(rows, query, index, prepared, *, body=False):
+    if not rows:
+        return []
+    if body and index is not None:
+        return _rank({}, rows, query=query, index=index, statistics=index.body_statistics(rows))
+    local = RetrievalIndex(rows, prepared_terms=prepared) if index is not None else None
+    return _rank({}, rows, query=query, index=local)
+
+
+def _date_passages(request, eligible, *, index=None, postings=None):
     """Reserva dos candidatos fechados; no interpreta la fecha ni su vigencia.
 
     Los fragmentos ya están filtrados por permisos. Se exige una coincidencia
@@ -741,18 +911,13 @@ def _date_passages(request, eligible, *, index=None):
     event = {w for w in words - generic if len(w) > 3 and not w.isdigit()}
     if not event:
         return []
-    candidates, originals, proximity = [], {}, {}
-    for row in _calendar_candidates(event, eligible, index):
+    candidates, originals, proximity, prepared = [], {}, {}, {}
+    for row in _calendar_candidates(event, eligible, index, postings):
         # Tokenizar toda la página diluye la relación. La ventana admite títulos
         # y celdas consecutivas en calendarios extraídos de PDF.
-        cache_key = (row["chunk_id"], row["quote"])
-        if index is None:
-            features = _calendar_features(row["quote"])
-        else:
-            if cache_key not in index._calendar:
-                index._calendar[cache_key] = _calendar_features(row["quote"])
-            features = index._calendar[cache_key]
         relations = []
+        features = (index.calendar_features(row["quote"]) if index is not None
+                    else _calendar_features(row["quote"]))
         for words_near_date in features:
             hits = [(tokens[0], distance) for tokens, distance in words_near_date
                     if event.intersection(tokens)]
@@ -761,18 +926,18 @@ def _date_passages(request, eligible, *, index=None):
                                   -min(distance for word, distance in hits)))
         if not relations:
             continue
-        text = _search_words(row["quote"])
         proximity[row["chunk_id"]] = max(relations)
         originals[row["chunk_id"]] = row
-        candidates.append({**row, "title": "", "quote": text})
-    ranked = _rank({}, candidates, query=_search_words(query, expand=True))
+        candidates.append(_normalized_passage(row, row["quote"], index, prepared, body=True))
+    ranked = _rank_context(candidates, _search_words(query, expand=True),
+                           index, prepared, body=True)
     # Relate the date to the requested event, not to repeated words elsewhere
     # on the page (e.g. historical regulations or registration deadlines).
     ranked.sort(key=lambda r: proximity[r["chunk_id"]], reverse=True)
     return [originals[r["chunk_id"]] for r in ranked[:2]]
 
 
-def _document_content(request, eligible):
+def _document_content(request, eligible, *, index=None, passages=None):
     """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
 
     El corpus ya está filtrado por permisos y versión. El asunto solo localiza
@@ -782,30 +947,34 @@ def _document_content(request, eligible):
     """
     query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
     subject = str((request.get("context") or {}).get("subject") or "")[:1200]
-    metadata = {}
-    for row in eligible:
-        if row["source_id"] not in metadata:
-            metadata[row["source_id"]] = {**row, "title": "", "quote": _search_words(
-                " ".join(str(row.get(k) or "")
-                         for k in ("title", "filename", "historical_group"))
-            )}
+    if passages is None:
+        passages = _PassageGroups(eligible)
+    metadata, prepared = [], {}
+    for siblings in passages.by_source.values():
+        row = siblings[0]
+        metadata.append(_normalized_passage(row, " ".join(
+            str(row.get(key) or "") for key in ("title", "filename", "historical_group")
+        ), index, prepared))
     topic = _search_words(subject or query)
     generic = {"universidad", "institucional", "documento", "respuesta", "consulta", "solicita"}
     terms = {w for w in tokenize(topic) if len(w) >= 3 and w not in generic}
-    matches = [row for row in metadata.values()
-               if len(terms.intersection(tokenize(row["quote"]))) >= 2]
+    matches = [row for row in metadata
+               if len(terms.intersection(prepared[terms_key(row)] if index is not None
+                                         else tokenize(row["quote"]))) >= 2]
     if not matches:
         return []
     # No favorecer documentos largos por repetir su título en cada fragmento.
-    documents = _rank({}, matches, query=topic)[:3]
-    originals = {row["chunk_id"]: row for row in eligible}
+    documents = _rank_context(matches, topic, index, prepared)[:3]
     result = []
     for document in documents:
-        body = [{**row, "title": "", "quote": _search_words(row["quote"])}
-                for row in eligible if row["source_id"] == document["source_id"]]
+        body = passages.by_source[document["source_id"]]
+        if index is None:
+            body = [_normalized_passage(row, row["quote"], index, prepared, body=True)
+                    for row in body]
         # Reservar más que los dos primeros: títulos de trámite y referencias
         # al portal pueden puntuar por encima del contenido de la respuesta.
         # El cupo semántico conserva espacio adicional dentro del mismo archivo.
-        for hit in _rank({}, body, query=_search_words(query, expand=True))[:4]:
-            result.append(originals[hit["chunk_id"]])
+        for hit in _rank_context(body, _search_words(query, expand=True),
+                                 index, prepared, body=True)[:4]:
+            result.append(passages.by_id[hit["chunk_id"]])
     return result

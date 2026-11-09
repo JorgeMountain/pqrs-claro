@@ -59,6 +59,37 @@ primera vez puede tomar varios minutos; ese coste no se repite por pregunta.
 - Si falta el modelo o falla el canal, se expone `warning` y continúa la búsqueda
   por los demás canales. El canal no inventa candidatos para disimular el fallo.
 
+## Reutilización de matrices y selección exacta
+
+Las matrices de puntuación se reutilizan entre preguntas de una misma ejecución.
+La clave conserva el orden de las huellas del título y texto de los fragmentos
+elegibles. Los identificadores, versiones, citas y metadatos se toman siempre de
+la consulta actual: compartir un vector no incorpora un documento fuera de ámbito.
+
+`PQRS_CLARO_SEMANTIC_MATRIX_CACHE_MB` configura el presupuesto estimado de esta
+caché en MiB. Acepta enteros de 0 a 1024, con 512 como valor predeterminado. Se puede
+definir en `.env.local` o en el entorno del proceso; el entorno tiene prioridad.
+La aplicación lee la opción al arrancar. En código, `SemanticIndex` admite el
+equivalente en bytes mediante `matrix_cache_bytes`.
+
+Se conservan como máximo cuatro matrices dentro del presupuesto, contando sus
+valores numéricos y una estimación del costo de sus claves. Se expulsan matrices
+antes de reservar su reemplazo. El valor 0 desactiva la reutilización; una matriz
+que excede el presupuesto se calcula temporalmente sin conservarse. Este límite
+no cubre toda la RAM: el modelo, vectores, textos, matrices temporales y demás
+componentes necesitan memoria adicional. El servicio procesa un expediente a la
+vez y comparte la instancia semántica entre sus solicitudes.
+
+La selección obtiene el umbral de los mejores candidatos sin ordenar todo el
+corpus. Los empates en ese umbral se resuelven por `chunk_id`, conservando el orden
+de entrada si también coincide el identificador. Se usan las puntuaciones sin
+redondear y el mismo producto matricial; no es una búsqueda aproximada. El cambio
+no modifica el modelo, los embeddings ni la política de evidencia, ni fuerza a
+reprocesar los resultados guardados.
+
+El avance de implementación y sus mediciones se registran en
+[OPTIMIZACION_RAG.md](OPTIMIZACION_RAG.md).
+
 ## Comprobaciones
 
 ```powershell
