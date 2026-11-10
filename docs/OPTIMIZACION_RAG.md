@@ -45,6 +45,55 @@ los pasos 1 a 5.
 - [x] 11. Decidir mediante comparación si conviene incorporar HNSW/FAISS o Qdrant. Se conserva la búsqueda vectorial exacta.
 - [x] 12. Evaluar contexto adicional para citas ausentes. Se conserva el buscador actual y el prototipo queda en el ensayo.
 
+## Mejoras del motor compartido
+
+- [x] Preparar las fuentes autorizadas antes de la primera consulta y actualizar el índice cuando cambia su contenido o su alcance.
+
+Con el modelo E5 local instalado, la biblioteca detecta cargas, cambios de
+versión, correcciones de OCR y vínculos de colecciones. El trabajador prepara
+los documentos en segundo plano y retoma la cola al arrancar. Una búsqueda
+prioriza sus documentos pendientes. La preparación y la recuperación comprueban
+la versión y el ámbito de cada fuente. Los detalles operativos están en
+[búsqueda semántica local](busqueda-semantica-local.md).
+
+La prueba de incorporación usó TXT, DOCX y PDF ficticios y el modelo real.
+Después de corregir una extracción, actualizar una versión y reiniciar con una
+carga pendiente, la primera lectura reutilizó los siete fragmentos vigentes de
+cuatro documentos. En la versión anterior los siete seguían pendientes de
+preparación semántica. El otro expediente solo pudo usar los cuatro fragmentos
+que le correspondían. El ensayo comprobó disponibilidad de vectores y permisos.
+El informe local está en `../experiments/rag-general/preparacion/INFORME.md`.
+
+En otra comprobación, un catálogo ficticio de 10.000 registros y 601 vínculos
+produjo 4.000 documentos elegibles. Veinte sondeos consecutivos reutilizaron
+la revisión del catálogo sin volver a recorrer las fuentes. Una corrección de
+OCR volvió a abrir un solo trabajo. Retirar el vínculo de una colección pasó
+2.000 trabajos a inactivos. Cada cambio del catálogo aún requiere recorrer sus
+metadatos. Esta comprobación midió el trabajo de la cola sin ejecutar inferencia.
+
+- [x] Evitar trabajo repetido en cada búsqueda híbrida.
+
+El recuperador normaliza el texto con menos recorridos, reutiliza la línea de
+inicio de una respuesta histórica cuando el texto coincide y termina de
+seleccionar en cuanto se llenan los puestos disponibles. La caché pertenece
+al índice de la ejecución, admite hasta 4.096 citas de hasta 8 KiB y calcula
+la ubicación a partir de la página y las líneas vigentes. Las mismas reglas
+se aplican a cualquier pregunta o expediente.
+
+Frente a `458be01`, la búsqueda local con índice preparado y vector de pregunta
+recién calculado redujo el tiempo un 14,61 % con igual peso por expediente.
+La mediana por búsqueda pasó de 470 a 381 ms y el percentil 95 de 790 a 642 ms.
+Los siete expedientes mejoraron. La ruta del servicio reprodujo las 475
+posiciones del control con idénticos textos, ubicaciones, puntuaciones y orden.
+La medición cubre recuperación y excluye la redacción con IA. El selector
+alternativo se archivó porque solo añadió una cita en un expediente.
+Las mediciones y la auditoría detallada están en
+`../experiments/rag-general/bench/` y `../experiments/rag-general/quality/`.
+
+La versión local pasó las 1.660 pruebas Python y las 209 pruebas JavaScript
+del proyecto, Ruff y `git diff --check`. Los registros quedan en
+`output/qa/rag-general-20261109/`.
+
 ## Primera entrega implementada y comparada
 
 Los pasos 1 a 5 están verificados. En aquella primera medición, la etapa semántica

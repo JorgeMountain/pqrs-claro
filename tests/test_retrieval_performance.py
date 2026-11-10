@@ -5,13 +5,14 @@ def test_unicode_normalization_preserves_all_combining_marks_and_token_boundarie
     import re
     import unicodedata
 
-    from pqrs_claro.source_retrieval import _STOPWORDS, tokenize
+    from pqrs_claro.source_retrieval import _STOPWORDS, _plain_lexical_text, tokenize
 
-    text = "Matrícula Nº27 A2027 año 中文 ﬃ A\u1ab0x e\u0301q " + "".join(
+    text = "Matrícula Nº27 A2027 año 中文 ﬃ A\u1ab0x \u034f e\u0301q " + "".join(
         "x" + chr(code) for code in range(0x110000) if unicodedata.combining(chr(code))
     )
     old = "".join(c for c in unicodedata.normalize("NFKD", text.casefold())
                   if not unicodedata.combining(c))
+    assert _plain_lexical_text(text) == old
     old = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", old)
     expected = [t for t in re.findall(r"[a-z0-9]+", old)
                 if t not in _STOPWORDS and (len(t) > 1 or t.isdigit())]

@@ -137,3 +137,21 @@ def test_reused_index_refreshes_scope_and_current_line_boundaries_and_citations(
         assert [row["chunk_id"] for row in neighbors] == (["answer"] if attached else [])
         if attached:
             assert {key: neighbors[0][key] for key in updated} == updated
+
+
+def test_answer_marker_cache_rechecks_text_and_current_document_coordinates():
+    marker = piece("marker", 2, 10, "Portada.\nDamos respuesta a su solicitud.", line_end=11)
+    after = piece("answer", 2, 12, "Condiciones de inscripción.")
+    index = retrieval.RetrievalIndex([marker, after])
+    assert retrieval._answer_chunks([marker, after], index=index) == [marker, after]
+
+    moved = {**marker, "line_start": 15, "line_end": 16}
+    assert retrieval._answer_chunks([moved, after], index=index) == [moved]
+    assert index._answer_line_cache.cache_info().hits == 2
+    edited = {**moved, "quote": "Una portada sin marcador."}
+    assert retrieval._answer_chunks([edited, after], index=index) == []
+
+    large = {**marker, "quote": "Damos respuesta a su solicitud." + "z" * 9000}
+    before = index._answer_line_cache.cache_info()
+    assert retrieval._answer_chunks([large, after], index=index) == [large, after]
+    assert index._answer_line_cache.cache_info().misses == before.misses

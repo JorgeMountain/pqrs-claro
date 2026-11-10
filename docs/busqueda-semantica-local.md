@@ -43,6 +43,20 @@ primera vez puede tomar varios minutos; ese coste no se repite por pregunta.
 
 ## Persistencia y límites
 
+Con E5 instalado, el trabajador de la biblioteca detecta fuentes recuperables
+al arrancar y al cambiar el catálogo. Prepara en segundo plano documentos
+nuevos, nuevas versiones y correcciones de OCR antes de que llegue una pregunta.
+Una colección histórica entra en este proceso cuando está vinculada a un
+expediente autorizado. El servicio vuelve a comprobar el ámbito y la vigencia
+al buscar.
+
+La cola se conserva en disco. El equipo dedica CPU local a la indexación mientras
+la aplicación está abierta. La primera búsqueda puede encontrar una preparación
+en curso, especialmente después de incorporar una colección grande. En ese caso
+usa el índice léxico y los vectores ya disponibles, e informa la cobertura
+semántica pendiente. El avance del trabajador se consulta en
+`GET /api/library/semantic-preparation`.
+
 - `data/semantic/models` contiene el modelo público.
 - `data/semantic/embeddings.sqlite` contiene vectores y huellas, en una base
   independiente de los expedientes. La clave incorpora modelo, revisión,

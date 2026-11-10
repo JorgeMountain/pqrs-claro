@@ -36,11 +36,29 @@ HISTORICAL_CATEGORIES = frozenset(
 _EVIDENCE_CATEGORIES = (
     frozenset({"national_norm", "institutional_norm", "case_evidence"}) | HISTORICAL_CATEGORIES
 )
-# The same Unicode normalization as before, applied in C instead of visiting
-# every character in Python for each of the institutional library's passages.
+# Preserve every Unicode character whose combining class is zero.
 _COMBINING_MARKS = dict.fromkeys(
     code for code in range(0x110000) if unicodedata.combining(chr(code))
 )
+_COMMON_MARKS = re.compile("[" + "".join(
+    chr(code) for code in range(0x300, 0x370) if code in _COMBINING_MARKS
+) + "]")
+_NON_ASCII_RUNS = re.compile(r"[^\x00-\x7f]+")
+_LEXICAL_RUNS = re.compile(r"[a-z]+|[0-9]+")
+
+
+def _strip_run_marks(match):
+    return match[0].translate(_COMBINING_MARKS)
+
+
+def _plain_lexical_text(text):
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    if normalized.isascii():
+        return normalized
+    # Strip the common accent block first. Other scripts and non-ASCII
+    # punctuation still use the complete combining-class table.
+    plain = _COMMON_MARKS.sub("", normalized)
+    return plain if plain.isascii() else _NON_ASCII_RUNS.sub(_strip_run_marks, plain)
 
 
 def source_in_scope(request: dict[str, Any], source: dict[str, Any]) -> bool:
@@ -62,11 +80,9 @@ def source_in_scope(request: dict[str, Any], source: dict[str, Any]) -> bool:
 
 def tokenize(text: str) -> list[str]:
     """Normaliza mayúsculas y tildes; no simula comprensión semántica."""
-    normalized = unicodedata.normalize("NFKD", text.casefold()).translate(_COMBINING_MARKS)
-    normalized = re.sub(r"(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])", " ", normalized)
+    # The two alternatives directly split at the same ASCII letter/digit boundaries.
     return [
-        token
-        for token in re.findall(r"[a-z0-9]+", normalized)
+        token for token in _LEXICAL_RUNS.findall(_plain_lexical_text(text))
         if token not in _STOPWORDS and (len(token) > 1 or token.isdigit())
     ]
 
@@ -74,6 +90,8 @@ def tokenize(text: str) -> list[str]:
 TERMS_VERSION = "lexical-nfkd-v1"
 DEFAULT_CONTEXT_CACHE_BYTES = 64 * 1024 * 1024
 DEFAULT_BODY_STATISTICS_CACHE_BYTES = 64 * 1024 * 1024
+_ANSWER_CACHE_ENTRIES = 4096
+_ANSWER_CACHE_QUOTE_BYTES = 8192
 
 
 def terms_key(chunk):
@@ -118,6 +136,9 @@ class RetrievalIndex:
         self._body_statistics_budget = max(0, body_statistics_cache_bytes)
         self._identities = {}
         self._calendar = {}
+        # Keys are exact text, values are relative line offsets. Coordinates and
+        # document identity are read from the current authorized rows every time.
+        self._answer_line_cache = lru_cache(maxsize=_ANSWER_CACHE_ENTRIES)(_answer_line_offset)
         self._context = OrderedDict()
         self._context_budget = max(0, context_cache_bytes)
         self._prepared_terms = prepared_terms or {}
@@ -353,18 +374,29 @@ class _PassageGroups:
         return ordered[start:start + limit]
 
 
-def _answer_chunks(eligible: list[dict[str, Any]], *, historical=None) -> list[dict[str, Any]]:
+def _answer_line_offset(quote):
+    match = _ANSWER_START.search(quote)
+    return quote.count("\n", 0, match.start()) if match else -1
+
+
+def _answer_chunks(
+    eligible: list[dict[str, Any]], *, historical=None, index=None,
+) -> list[dict[str, Any]]:
     """Detecta un inicio literal de contestación; no infiere por posición final."""
+    offset_for = getattr(index, "_answer_line_cache", _answer_line_offset)
     boundaries: dict[str, tuple[int, int]] = {}
     if historical is None:
         historical = (row for row in eligible if row.get("category") == "historical_response")
     for chunk in historical:
-        match = _ANSWER_START.search(chunk["quote"])
-        if not match:
+        quote = chunk["quote"]
+        # Scan oversized imports directly to keep retained text bounded.
+        offset = (offset_for(quote) if sys.getsizeof(quote) <= _ANSWER_CACHE_QUOTE_BYTES
+                  else _answer_line_offset(quote))
+        if offset < 0:
             continue
         position = (
             int(chunk.get("page", 0)),
-            int(chunk.get("line_start", 1)) + chunk["quote"][: match.start()].count("\n"),
+            int(chunk.get("line_start", 1)) + offset,
         )
         document_id = str(chunk["document_id"])
         boundaries[document_id] = min(position, boundaries.get(document_id, position))
@@ -415,10 +447,8 @@ def _baseline(
     general = _document_budget(
         ranked if ranked is not None else _rank(request, eligible, index=index), max(32, limit)
     )
-    answers = _document_budget(
-        _rank(request, _answer_chunks(eligible, historical=passages.historical), index=index),
-        max(32, limit),
-    )
+    answer_chunks = _answer_chunks(eligible, historical=passages.historical, index=index)
+    answers = _document_budget(_rank(request, answer_chunks, index=index), max(32, limit))
     selected: list[dict[str, Any]] = []
     requested_documents = {
         str(row["document_id"]) for row in general
@@ -538,7 +568,7 @@ def _topic_passages(request, eligible, *, index=None, postings=None, originals=N
             candidates = (eligible[position] for position in sorted(selected))
     matches, expanded, seen = [], set(words), set()
     for row in candidates:
-        body = unicodedata.normalize("NFKD", row["quote"].casefold()).translate(_COMBINING_MARKS)
+        body = _plain_lexical_text(row["quote"])
         if any(pattern.search(body) for pattern in patterns):
             normalized = " ".join(body.split())
             if normalized in seen:
@@ -754,6 +784,8 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     # Protege resultados ya útiles, incluida la prioridad del objeto pedido.
     for row in baseline[:8]:
         add(row, "lexical")
+    if len(selected) >= limit:
+        return selected
     # Solo una pareja contigua por consulta: la pregunta atómica sigue dominando.
     # La prioridad de identidad localiza el archivo pedido; no debe esconder la
     # pregunta casi literal de un oficio cuando buscamos su contestación contigua.
@@ -783,12 +815,16 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
             for row in adjacent:
                 add({**row, "adjacent_to": anchor["chunk_id"]}, "adjacent_answer", expanded=True)
             break
+    if len(selected) >= limit:
+        return selected
     for name, quota in (("identifier", 2), ("entity", 2), ("semantic", 3), ("context", 2)):
         added = 0
         for row in channels[name]:
             added += add(row, name)
             if added >= quota:
                 break
+    if len(selected) >= limit:
+        return selected
     # Fusión por rango: BM25 y coseno no se comparan como si fueran la misma escala.
     fusion, representatives = Counter(), {}
     for name, rows in channels.items():
