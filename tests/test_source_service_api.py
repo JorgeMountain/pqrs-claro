@@ -250,6 +250,102 @@ def test_policy_change_does_not_reuse_completed_source_checkpoint(
     assert assessor.calls == {"P1": 2, "P2": 2}
 
 
+@pytest.mark.parametrize("reuse", [False, True], ids=["reader-without-cache", "exact-reader"])
+def test_changed_catalog_rereads_only_changed_evidence_and_refreshes_audit(
+    source_app, pdf_bytes, reuse,
+):
+    app, client, assessor, _ = source_app
+    if reuse:
+        assessor.reader_cache_key = "test-reader-v1"
+    case = make_case(client, pdf_bytes)
+    source = upload_source(client).json()
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    assert first["status"] == "ready" and assessor.calls == {"P1": 1, "P2": 1}
+
+    # A newly cataloged file still awaiting extraction changes the catalog audit.
+    # First verify it does not cause two identical model inputs to be sent again.
+    pending = upload_source(client, title="Anexo en extracción", content="Otro anexo.").json()
+    with app.state.library.connect() as db:
+        db.execute("UPDATE sources SET body=json_set(body,'$.extraction_status','pending') "
+                   "WHERE id=?", (pending["id"],))
+    start_search(client, case)
+    second = wait_search(app, client, case["id"])
+    assert second["id"] != first["id"] and second["status"] == "ready"
+    read_count = 1 if reuse else 2
+    assert assessor.calls == {"P1": read_count, "P2": read_count}
+    for before, after in zip(first["results"], second["results"], strict=True):
+        assert after["supports"] == before["supports"]
+        assert pending["id"] in after["search_audit"]["unread_source_ids"]
+        assert pending["id"] not in before["search_audit"]["unread_source_ids"]
+
+    # An updated metadata field on a selected passage is part of the reader input.
+    review_source(client, source["id"])
+    start_search(client, case)
+    third = wait_search(app, client, case["id"])
+    assert third["status"] == "ready" and assessor.calls == {"P1": read_count + 1,
+                                                            "P2": read_count + 1}
+    assert all(row["review_status"] == "reviewed"
+               for result in third["results"] for row in result["supports"])
+
+    app.state.sources.start(case["id"], case["version"], retry_analysis=True)
+    fourth = wait_search(app, client, case["id"])
+    assert fourth["status"] == "ready" and assessor.calls == {"P1": read_count + 2,
+                                                             "P2": read_count + 2}
+
+
+def test_reader_identity_invalidates_ready_result_and_previous_checkpoint(source_app, pdf_bytes):
+    app, client, assessor, _ = source_app
+    case = make_case(client, pdf_bytes)
+    upload_source(client)
+    assessor.reader_cache_key = "first"
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    assert first["status"] == "ready" and assessor.calls == {"P1": 1, "P2": 1}
+
+    assessor.reader_cache_key = "second"
+    assert app.state.sources.get(case["id"])["status"] == "stale"
+    start_search(client, case)
+    second = wait_search(app, client, case["id"])
+    assert second["status"] == "ready" and assessor.calls == {"P1": 2, "P2": 2}
+    assert second["analysis_fingerprint"] != first["analysis_fingerprint"]
+
+    pending = upload_source(client, title="Anexo en extracción", content="Otro anexo.").json()
+    with app.state.library.connect() as db:
+        db.execute("UPDATE sources SET body=json_set(body,'$.extraction_status','pending') "
+                   "WHERE id=?", (pending["id"],))
+    start_search(client, case)
+    current = wait_search(app, client, case["id"])
+    assert current["status"] == "ready" and assessor.calls == {"P1": 2, "P2": 2}
+
+    # Return to the original catalog under an identity that never assessed it.
+    with app.state.library.connect() as db:
+        db.execute("DELETE FROM sources WHERE id=?", (pending["id"],))
+    assessor.reader_cache_key = "third"
+    start_search(client, case)
+    third = wait_search(app, client, case["id"])
+    assert third["status"] == "ready" and assessor.calls == {"P1": 3, "P2": 3}
+
+
+def test_legacy_saved_read_remains_visible_but_does_not_supply_new_catalog(source_app, pdf_bytes):
+    app, client, assessor, _ = source_app
+    case = make_case(client, pdf_bytes)
+    upload_source(client)
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    first.pop("reader_policy")
+    first.pop("analysis_version")
+    app.state.library.save_run(first)
+    assert app.state.sources.get(case["id"])["status"] == "ready"
+    start_search(client, case)
+    assert wait_search(app, client, case["id"])["id"] == first["id"]
+    assessor.reader_cache_key = "explicit-policy"
+    assert app.state.sources.get(case["id"])["status"] == "stale"
+    start_search(client, case)
+    second = wait_search(app, client, case["id"])
+    assert second["status"] == "ready" and assessor.calls == {"P1": 2, "P2": 2}
+
+
 @pytest.mark.parametrize("budget_mb", [0, 1])
 def test_source_search_honors_matrix_cache_budget(source_app, pdf_bytes, monkeypatch, budget_mb):
     from test_source_semantic import CountingModel

@@ -47,6 +47,64 @@ los pasos 1 a 5.
 
 ## Mejoras del motor compartido
 
+- [x] Acelerar la lectura de evidencia por la IA en el evaluador común de todos los expedientes.
+
+El lector envía cada pasaje completo con líneas numeradas y agrupa los campos
+idénticos de una misma versión documental. El contexto de la petición se envía
+una sola vez cuando permite reconstruir las consultas auxiliares del buscador.
+Conserva el modelo, los candidatos, su orden y la validación de citas. Si el
+catálogo cambia, el servicio vuelve a recuperar los candidatos y comprueba si
+puede reutilizar la lectura anterior de esa solicitud. Los criterios se detallan
+en [citas por ubicación](CITAS_POR_UBICACION.md).
+
+Se comparó con `f030390` usando el modelo real `gpt-6-luna` y documentos
+ficticios. Cuatro situaciones incluyeron una consulta de un dato, una consulta
+con dos fuentes, una regla con una constancia individual ausente y una medición
+sin registrar. Se alternó el orden de ambos lectores en dos rondas.
+
+| Ocho lecturas por versión | Referencia | Lector compacto |
+| --- | ---: | ---: |
+| Tiempo total del evaluador | 62,65 s | 53,79 s |
+| Mediana por lectura | 7,76 s | 6,51 s |
+| Tokens de entrada | 90.500 | 62.710 |
+| Hechos correctos con cita literal, contando ambas rondas | 10/10 | 10/10 |
+| Ausencias de evidencia reconocidas, contando ambas rondas | 4/4 | 4/4 |
+
+Siete de los ocho pares mejoraron. Todos se completaron con una sola llamada
+por lectura. Estos tiempos incluyen la preparación de la entrada, la llamada
+al modelo y la validación local. La recuperación de fuentes y la redacción
+posterior son etapas independientes. En 42 configuraciones sintéticas adicionales
+se reconstruyeron todos los candidatos con los mismos textos y metadatos.
+
+En una copia histórica aislada, 129 de 130 solicitudes tenían datos suficientes
+para reconstruir la entrada con sus candidatos. Abarcaron 16 expedientes y
+2.896 pasajes. Para cada solicitud se presentaron los mismos candidatos con los
+dos formatos. Los bytes de instrucciones y datos disminuyeron en las 129,
+con una reducción mediana del 29,71 %. El registro agrupa los pasajes por
+documento y conserva parte de los metadatos de la llamada original. Esta
+medición local cuantifica el tamaño de la entrada reconstruida. La comparación
+de tiempo e interpretación con la API se hizo con los cuatro escenarios ficticios.
+
+En una prueba por la ruta del servicio, incorporar al catálogo un archivo
+ilegible produjo una nueva auditoría. Cuando la evidencia de la pregunta
+coincidió con la anterior, las llamadas al modelo para releerla pasaron de una
+a cero. En ese expediente ficticio, el tiempo desde solicitar el análisis hasta
+recibir la cita validada pasó de 6,42 s a 1,52 s (una medición por versión).
+Sustituir el documento citado por una nueva versión sí produjo una nueva
+lectura y una cita de la cifra corregida. El ensayo local y sus resultados
+se conservan en `../experiments/rag-reader-general/`.
+
+Para verificar desde un clon la preparación de los pasajes, la reutilización
+de la lectura y su comportamiento en las dos interfaces, ejecuta estas pruebas
+con los lectores de prueba del repositorio.
+
+```powershell
+.\scripts\dev-python.ps1 -m pytest -q tests/test_source_passages.py tests/test_source_context.py tests/test_source_read_reuse.py tests/test_source_service_api.py
+```
+
+La verificación completa de esta versión pasó 1.678 pruebas de Python y 209
+de JavaScript. Los registros locales están en `output/qa/rag-lectura-general-20261110/`.
+
 - [x] Preparar las fuentes autorizadas antes de la primera consulta y actualizar el índice cuando cambia su contenido o su alcance.
 
 Con el modelo E5 local instalado, la biblioteca detecta cargas, cambios de

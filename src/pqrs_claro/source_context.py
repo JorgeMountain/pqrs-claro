@@ -103,6 +103,31 @@ def _entry(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _retrieval_fields(context):
+    # Original request texts used by retrieval to weight context below the atomic query.
+    queries = list(dict.fromkeys(
+        f"{entry.get('title') or ''} {entry['description']}"[:1200].strip()
+        for name in _CONTEXT_GROUPS for entry in context[name]
+    ))[:12]
+    return {"retrieval_queries": queries, "retrieval_context": "\n".join(queries)[:10000]}
+
+
+def request_for_assessment(request):
+    """Omit duplicate retrieval text only when the full context reproduces it exactly."""
+    context = request.get("context")
+    if (not isinstance(context, dict) or context.get("version") != CONTEXT_VERSION
+            or context.get("origin") != "same_petition"
+            or context.get("target_request_id") != request.get("id")):
+        return request
+    try:
+        derived = _retrieval_fields(context)
+    except (AttributeError, KeyError, TypeError):
+        return request  # Older or externally supplied context may have a different shape.
+    if not all(request.get(key) == value for key, value in derived.items()):
+        return request
+    return {key: value for key, value in request.items() if key not in derived}
+
+
 def build_source_requests(
     case: dict[str, Any], *, allowed_collection_ids: list[str] | None = None
 ) -> list[dict[str, Any]]:
@@ -213,15 +238,8 @@ def build_source_requests(
             or any(ref["quote_truncated"] for ref in entry["source_refs"])
             for name in _CONTEXT_GROUPS for entry in context[name]
         )
-        # A separate channel lets retrieval weight context below the atomic query.
-        # It consists of original request texts, not generated facts or new demands.
-        queries = list(dict.fromkeys(
-            f"{entry.get('title') or ''} {entry['description']}"[:1200].strip()
-            for name in _CONTEXT_GROUPS for entry in context[name]
-        ))[:12]
         results.append({
             **deepcopy(item), "case_id": case["id"], "allowed_collection_ids": list(scopes),
-            "context": context, "retrieval_queries": queries,
-            "retrieval_context": "\n".join(queries)[:10000],
+            "context": context, **_retrieval_fields(context),
         })
     return results

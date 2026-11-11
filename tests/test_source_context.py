@@ -18,7 +18,7 @@ from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
 from pqrs_claro.extraction import PDFExtractor
 from pqrs_claro.models import DomainError, Identification, Request, SourceRef, source_quote
-from pqrs_claro.source_context import build_source_requests
+from pqrs_claro.source_context import build_source_requests, request_for_assessment
 from pqrs_claro.source_library import digest
 
 
@@ -27,6 +27,20 @@ def item(identifier, label, description, parent_id=None):
             "description": description, "parent_id": parent_id,
             "source_refs": [{"page": 1, "line_start": 1, "line_end": 1,
                              "quote": description}]}
+
+
+def test_reader_omits_only_reproducible_retrieval_text(hierarchical_case):
+    related = next(r for r in build_source_requests(hierarchical_case) if r["retrieval_queries"])
+    prior = deepcopy(related)
+    projection = request_for_assessment(related)
+    assert projection == {k: v for k, v in related.items()
+                          if k not in {"retrieval_queries", "retrieval_context"}}
+    assert related == prior
+    for key in ("retrieval_queries", "retrieval_context", "context"):
+        custom = {**prior, key: ["Mensaje distinto"] if key == "retrieval_queries" else "Otro"}
+        assert request_for_assessment(custom) == custom
+    partial = {**prior, "context": {**prior["context"], "ancestors": [None]}}
+    assert request_for_assessment(partial) == partial
 
 
 @pytest.fixture

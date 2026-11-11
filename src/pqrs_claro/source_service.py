@@ -23,6 +23,8 @@ from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticInde
 from .storage import Conflict, now
 
 SOURCE_ANALYSIS_VERSION = 20
+# Version the prompt, schema and validation policy used by a reader checkpoint.
+SOURCE_READER_POLICY_VERSION = 1
 INTERACTIVE_SEMANTIC_BUDGET_SECONDS = 15
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,25 @@ def retrieval_signature(data_dir):
     }
 
 
+def _request_checkpoint(case_id, request, context, attempt):
+    key = digest({"context": context, "request": request,
+                  "request_cache_version": SOURCE_READER_POLICY_VERSION})
+    thread_id = f"{case_id}:{request['id']}:{key}"
+    if attempt:
+        thread_id += f":{attempt}"
+    return {"configurable": {"thread_id": thread_id}}
+
+
+def _matches_reader(run, policy):
+    if "reader_policy" in run:
+        return run["reader_policy"] == policy
+    # A previously completed result remains available under the original reader
+    # policy. It cannot supply a raw reading for a new catalog snapshot.
+    return (policy["reader_version"] == 1
+            and run.get("passage_selection_version", 1) == policy["passage_version"]
+            and (policy["provider"] == "openai" or policy["reader"] is None))
+
+
 class SourceService:
     def __init__(self, settings, cases, library, *, assessor=None, verifications=None):
         self.settings, self.cases, self.library = settings, cases, library
@@ -56,6 +77,16 @@ class SourceService:
 
     def catalog(self, case_id):
         return self.library.scoped(case_id)
+
+    def reader_policy(self):
+        provider, key = "openai", "sources"
+        if self.assessor is not None:
+            cls = type(self.assessor)
+            provider = f"{cls.__module__}.{cls.__qualname__}"
+            key = getattr(self.assessor, "reader_cache_key", None)
+        return {"provider": provider, "reader": key, "model": self.settings.model,
+                "reader_version": SOURCE_READER_POLICY_VERSION,
+                "passage_version": PASSAGE_SELECTION_VERSION}
 
     def verification_fingerprint(self, case_id, sources):
         return self.verifications.fingerprint(case_id, sources) if self.verifications else None
@@ -150,6 +181,7 @@ class SourceService:
                     if run["fingerprint"] == digest(previous):
                         stale = False
                         break
+        stale = stale or not _matches_reader(run, self.reader_policy())
         return {
             **run,
             "status": "stale" if stale and run["status"] != "running" else run["status"],
@@ -163,6 +195,7 @@ class SourceService:
         if case["version"] != version or case["status"] != "confirmed":
             raise Conflict("El expediente cambió. Revisa las solicitudes antes de continuar.")
         if (not previous or previous["fingerprint"] != fingerprint
+                or not _matches_reader(previous, self.reader_policy())
                 or previous["status"] == "running"):
             raise Conflict("Las fuentes o el expediente cambiaron. Actualiza la búsqueda completa.")
         ids = {r["id"] for r in case["identification"]["requests"]}
@@ -193,39 +226,37 @@ class SourceService:
                     "Carga al menos una norma o un soporte de este caso antes de buscar."
                 )
             previous = self.library.latest_run(case_id)
+            reader_policy = self.reader_policy()
             if retry_analysis and retry_failed_only:
                 raise Conflict("Elige reintentar los errores o actualizar todo el análisis.")
             if retry_failed_only:
                 previous = self.validate_failed_retry(case_id, version)
                 if previous["fingerprint"] != fingerprint:
                     raise Conflict("Las fuentes cambiaron. Actualiza la búsqueda completa.")
+            retry_semantic = (
+                previous and previous.get("retrieval_warning")
+                and retrieval_signature(self.settings.data_dir)["semantic_installed"]
+            )
             if (
                 previous
                 and not retry_analysis
                 and not retry_failed_only
                 and previous["fingerprint"] == fingerprint
+                and _matches_reader(previous, reader_policy)
                 and previous["status"] == "ready"
-                and not (
-                    previous.get("retrieval_warning")
-                    and retrieval_signature(self.settings.data_dir)["semantic_installed"]
-                )
+                and not retry_semantic
             ):
                 return self.get(case_id)
             retrieval_attempt = ""
             if previous and previous["fingerprint"] == fingerprint:
                 retrieval_attempt = previous.get("retrieval_attempt", "")
-            if (
-                previous
-                and previous.get("retrieval_warning")
-                and retrieval_signature(self.settings.data_dir)["semantic_installed"]
-            ):
-                retrieval_attempt = uuid4().hex
-            if retry_analysis or retry_failed_only:
+            if retry_semantic or retry_analysis or retry_failed_only:
                 retrieval_attempt = uuid4().hex
             # La aplicación de una comprobación humana cambia el resultado, pero
             # no exige repetir recuperación/IA de fuentes idénticas.
             analysis_fingerprint = digest({
                 "analysis_version": SOURCE_ANALYSIS_VERSION,
+                "reader_policy": reader_policy,
                 "original": case["sha256"], "pages": case.get("pages"),
                 "metadata": {k: v for k, v in case["identification"].items()
                              if k != "requests"}, "sources": sources,
@@ -237,9 +268,19 @@ class SourceService:
                         if retry_failed_only else [])
             retry_ids = ([r["request_id"] for r in previous["results"] if r["status"] == "error"]
                          if retry_failed_only else [])
+            prior_read = None
+            if (reader_policy["reader"] and previous and previous.get("status") == "ready"
+                    and previous.get("reader_policy") == reader_policy
+                    and previous.get("analysis_version") == SOURCE_ANALYSIS_VERSION
+                    and previous.get("analysis_fingerprint")
+                    and previous["analysis_fingerprint"] != analysis_fingerprint
+                    and not (retry_analysis or retry_failed_only or retry_semantic)):
+                prior_read = (previous["analysis_fingerprint"], previous.get("retrieval_attempt"))
             run = dict(
                 id=uuid4().hex,
                 analysis_fingerprint=analysis_fingerprint,
+                analysis_version=SOURCE_ANALYSIS_VERSION,
+                reader_policy=reader_policy,
                 case_id=case_id,
                 status="running",
                 fingerprint=fingerprint,
@@ -260,11 +301,11 @@ class SourceService:
             )
             self.library.save_run(run)
             self.active.add(case_id)
-            self.pool.submit(self.run, case, chunks, run)
+            self.pool.submit(self.run, case, chunks, run, prior_read=prior_read)
             return self.progress(case_id)
 
     @track_case("sources", "case")
-    def run(self, case, chunks, run):
+    def run(self, case, chunks, run, *, prior_read=None):
         try:
             assessor = self.assessor or OpenAISourceAssessor(
                 self.settings.api_key, self.settings.model
@@ -329,16 +370,14 @@ class SourceService:
                 with SqliteSaver.from_conn_string(
                     str(self.settings.data_dir / "source_checkpoints.sqlite")
                 ) as saver:
-                    graph = build_source_graph(locate, assessor, saver)
                     request["request_intent"] = classify_request_intent(request)
-                    analysis_key = digest({
-                        "context": run.get("analysis_fingerprint", run["fingerprint"]),
-                        "request": request, "request_cache_version": 1,
-                    })
-                    thread_id = f"{case['id']}:{request['id']}:{analysis_key}"
-                    if run.get("retrieval_attempt"):
-                        thread_id += f":{run['retrieval_attempt']}"
-                    config = {"configurable": {"thread_id": thread_id}}
+                    config = _request_checkpoint(
+                        case["id"], request, run.get("analysis_fingerprint", run["fingerprint"]),
+                        run.get("retrieval_attempt"),
+                    )
+                    prior_config = (_request_checkpoint(case["id"], request, *prior_read)
+                                    if prior_read else None)
+                    graph = build_source_graph(locate, assessor, saver, prior_config=prior_config)
                     try:
                         snapshot = graph.get_state(config)
                         if snapshot.values.get("finding") and not snapshot.next:
