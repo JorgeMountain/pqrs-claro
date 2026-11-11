@@ -1,6 +1,7 @@
 """Closed locations, exact source text and safe diagnostics; no real provider calls."""
 
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -45,6 +46,10 @@ def test_remote_schema_uses_locations_and_program_copies_exact_unicode_crlf():
     sent = json.loads(calls[0]["input"])["candidates"][0]
     assert "quote" not in sent
     assert sent["numbered_lines"] == numbered_lines(source["quote"])
+    assert sent["numbered_lines"] == [
+        [1, "ACTA DEL COMITÉ DE PRÁCTICAS 14\r\n"], [2, "  Acción aprobada: A\u0301.\r\n"],
+        [3, "\r\n"], [4, "Cierre."],
+    ]
     assert calls[0]["text_format"] is _LocatedSourceSelection
     schema = calls[0]["text_format"].model_json_schema()
     assert '"quote"' not in json.dumps(schema)
@@ -89,6 +94,47 @@ def test_location_repair_records_history_and_copies_corrected_range():
         source["quote"].splitlines(True)[0])
     assert '"quote"' not in json.dumps(
         json.loads(calls[1]["input"])["citation_repair"]["previous_selection"])
+
+
+def test_shared_fields_restore_exact_candidates_and_locations_on_repair():
+    source = chunk("a", quote="ACTA DEL COMITÉ DE PRÁCTICAS 14\r\nDetalles exactos.\n ",
+                   sha256="first", extra={"tokens": [1]}, nullable=None)
+    same = {**source, "chunk_id": "b", "page": 4, "line_start": 40, "line_end": 41,
+            "quote": "Otra página.\nUn límite.", "review_status": "pending",
+            "extra": {"tokens": [True]}}
+    del same["nullable"]
+    sources = [source, {**source, "chunk_id": "other", "source_id": "another"}, same,
+               {**source, "chunk_id": "v2", "version": 2},
+               {**source, "chunk_id": "diff", "sha256": "second"},
+               {**source, "chunk_id": "own", "case_id": None},
+               {**source, "chunk_id": "linked", "collection_id": "X"},
+               {**source, "chunk_id": "other-doc", "document_id": "different"}]
+    original = deepcopy(sources)
+    valid = located(source, 2, 2)
+    assessor, calls = assessor_with(located(source, 42, 42), valid)
+    result = assessor.assess(request(allowed_collection_ids=["X"]), sources)
+    assert result["analysis_diagnostic"]["code"] == "validated_after_repair"
+    assert result["sufficiency"]["coverage"][0]["citations"] == [
+        {"chunk_id": "a", "quote": "Detalles exactos.\n"}
+    ]
+    assert sources == original
+    first, repaired = (json.loads(call["input"]) for call in calls)
+    assert first == {key: value for key, value in repaired.items() if key != "citation_repair"}
+    shared, = first["shared_fields"]
+    assert shared["applies_to"] == ["C1", "C3"]
+    assert "review_status" not in shared["fields"] and "extra" not in shared["fields"]
+    for i, (row, expected) in enumerate(zip(first["candidates"], original, strict=True), 1):
+        assert row["chunk_id"] == f"C{i}" and row["allowed_roles"] == ["fact", "document"]
+        fields = shared["fields"] if row["chunk_id"] in shared["applies_to"] else {}
+        assert fields.keys().isdisjoint(row.keys())
+        restored = {**fields, **row}
+        assert restored.pop("numbered_lines") == [
+            [n, line] for n, line in enumerate(expected["quote"].splitlines(True), 1)
+        ]
+        restored.pop("allowed_roles")
+        want = {k: v for k, v in expected.items() if k != "quote"}
+        want["chunk_id"] = f"C{i}"
+        assert json.dumps(restored, sort_keys=True) == json.dumps(want, sort_keys=True)
 
 
 def test_located_citation_does_not_relax_allowed_evidence_use():

@@ -21,7 +21,7 @@ class SourceAnalysisError(DomainError):
 
 def numbered_lines(quote):
     # Keep line endings in the original. Numbers refer to this chunk, not PDF lines.
-    return [{"number": i, "text": text} for i, text in enumerate(quote.splitlines(True), 1)]
+    return [[i, text] for i, text in enumerate(quote.splitlines(True), 1)]
 
 
 def resolve_passages(selection, candidates):

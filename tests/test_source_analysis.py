@@ -264,7 +264,7 @@ def test_api_allowed_roles_and_local_rejection_share_the_same_contract(
         assessor.assess(inquiry, [source])
     sent = json.loads(calls[0]["input"])["candidates"][0]
     assert sent["allowed_roles"] == expected_roles
-    assert "".join(line["text"] for line in sent["numbered_lines"]) == source["quote"]
+    assert "".join(text for _, text in sent["numbered_lines"]) == source["quote"]
     assert "allowed_roles" not in source
 
 

@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+
+from .performance_metrics import operation
+from .source_library import digest
+from .source_retrieval import source_in_scope
+
+logger = logging.getLogger(__name__)
+_VALID_FINDING_STATUSES = {"references_found", "needs_evidence", "no_matches"}
 
 
 class SourceAssessor(Protocol):
@@ -20,7 +28,8 @@ class SourceState(TypedDict, total=False):
 
 
 def build_source_graph(
-    retriever: Callable[..., list[dict]], assessor: SourceAssessor, checkpointer: Any
+    retriever: Callable[..., list[dict]], assessor: SourceAssessor, checkpointer: Any,
+    *, prior_config=None,
 ):
     """El servicio fija un thread_id por solicitud y versión de sus entradas.
 
@@ -35,7 +44,17 @@ def build_source_graph(
         return {"candidates": retriever(state["request"], state["chunks"])}
 
     def assess_sources(state: SourceState) -> dict:
-        return {"finding": assessor.assess(state["request"], state["candidates"])}
+        request, candidates = state["request"], state["candidates"]
+        if previous and all(source_in_scope(request, row) for row in candidates):
+            finding = previous.get("finding") or {}
+            if (finding.get("request_id") == request["id"] and not finding.get("error")
+                    and "analysis_error" not in finding.get("evidence_states", [])
+                    and finding.get("status") in _VALID_FINDING_STATUSES
+                    and digest([previous.get("request"), previous.get("candidates")])
+                    == digest([request, candidates])):
+                with operation("sources.read_reused"):
+                    return {"finding": finding}
+        return {"finding": assessor.assess(request, candidates)}
 
     graph = StateGraph(SourceState)
     graph.add_node("retrieve_sources", retrieve_sources)
@@ -43,4 +62,15 @@ def build_source_graph(
     graph.add_edge(START, "retrieve_sources")
     graph.add_edge("retrieve_sources", "assess_sources")
     graph.add_edge("assess_sources", END)
-    return graph.compile(checkpointer=checkpointer)
+    compiled = graph.compile(checkpointer=checkpointer)
+    previous = None
+    if prior_config:
+        # Only the recorded raw evaluation is reused. Catalog and human checks
+        # are materialized by the service after this graph finishes.
+        try:
+            saved = compiled.get_state(prior_config)
+            if not saved.next:
+                previous = saved.values
+        except Exception:
+            logger.warning("No se pudo leer el checkpoint anterior; se evaluarán las fuentes.")
+    return compiled

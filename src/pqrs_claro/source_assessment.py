@@ -14,6 +14,7 @@ from .evidence_contract import apply_evidence_contract
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
 from .response_scope import RESPONSE_SCOPE_GUIDANCE
+from .source_context import request_for_assessment
 from .source_documents import (
     document_matches,
     named_document_candidates,
@@ -141,6 +142,10 @@ document (archivo concreto pedido), antecedent (contenido atribuido a un trámit
 anterior) o historical_evidence (anexo probatorio del trámite anterior).
 Cada chunk_id es un alias cerrado de esta llamada: C1, C2, ..., C24. Copia exactamente
 el alias del candidato elegido; no uses source_id, document_id, UUID ni números de página.
+Cada entrada de shared_fields, si existe, aporta los campos de fields a todos y solo
+los fragmentos de applies_to. En numbered_lines cada par contiene [número local, texto].
+Escribe motivos y conclusiones concisos, conservando cada afirmación, condición, brecha
+y rango de cita necesarios para responder la solicitud.
 Cada candidato incluye allowed_roles: elige exclusivamente un role de esa lista para
 ese candidato. La lista autoriza un tipo de uso, no demuestra pertinencia ni suficiencia.
 coverage_uses_by_role indica los usos admitidos por CADA pasaje citado. No mezcles en
@@ -377,6 +382,52 @@ def _allowed_roles(category: str | None, document_kind: str | None) -> tuple[str
     return roles.get(category, ())
 
 
+def _compact_json(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _reader_candidates(api_candidates):
+    """Factor equal metadata within one source version and scope. Keep every passage intact."""
+    rows = []
+    groups = {}
+    for candidate in api_candidates:
+        row = {key: value for key, value in candidate.items() if key != "quote"}
+        row["numbered_lines"] = numbered_lines(candidate["quote"])
+        rows.append(row)
+        if row.get("source_id"):
+            identity = _compact_json([row.get(key) for key in (
+                "source_id", "document_id", "version", "sha256", "case_id", "collection_id"
+            )])
+            groups.setdefault(identity, []).append(row)
+
+    shared_fields = []
+    inline = {"chunk_id", "allowed_roles", "numbered_lines", "page", "line_start", "line_end",
+              "method", "location_kind", "needs_review", "retrieval_channel", "semantic_score",
+              "document_identity_rank"}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        common = {}
+        for key, value in group[0].items():
+            if key in inline:
+                continue
+            encoded = _compact_json(value)
+            if all(key in row and _compact_json(row[key]) == encoded for row in group[1:]):
+                common[key] = value
+        if not common:
+            continue
+        entry = {"applies_to": [row["chunk_id"] for row in group], "fields": common}
+        # Each row keeps inline keys, so removing the shared entries also removes a comma.
+        removed = (len(_compact_json(common)) - 1) * len(group)
+        if removed <= len(_compact_json(entry)) + len('"shared_fields":[],'):
+            continue
+        shared_fields.append(entry)
+        for row in group:
+            for key in common:
+                del row[key]
+    return {**({"shared_fields": shared_fields} if shared_fields else {}), "candidates": rows}
+
+
 class OpenAISourceAssessor:
     """Responses API estructurada, sin almacenar respuestas ni reintentos ilimitados."""
 
@@ -425,14 +476,8 @@ class OpenAISourceAssessor:
             for alias, candidate in candidates_by_alias.items()
         ]
         payload = {
-            "request": request,
-            "candidates": [
-                {
-                    **{k: v for k, v in c.items() if k != "quote"},
-                    "numbered_lines": numbered_lines(c["quote"]),
-                }
-                for c in api_candidates
-            ],
+            "request": request_for_assessment(request),
+            **_reader_candidates(api_candidates),
             "coverage_uses_by_role": COVERAGE_USES_BY_ROLE,
         }
         repair_errors = []
@@ -442,7 +487,7 @@ class OpenAISourceAssessor:
                 response = provider_call("sources.assess", self.client.responses.parse,
                     model=self.model,
                     instructions=INSTRUCTIONS,
-                    input=json.dumps(payload, ensure_ascii=False),
+                    input=_compact_json(payload),
                     text_format=_LocatedSourceSelection,
                     store=False,
                     truncation="disabled",

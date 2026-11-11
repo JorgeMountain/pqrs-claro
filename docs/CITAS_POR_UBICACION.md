@@ -1,10 +1,17 @@
 # Citas por ubicación y reintento de errores
 
-El evaluador de fuentes recibe cada fragmento como `numbered_lines` y devuelve
-`chunk_id`, `line_start` y `line_end`. Esas líneas empiezan en 1 dentro del fragmento;
-no son las líneas de la página del PDF. El contrato remoto no admite `quote` ni
-`declaration_quote`: Python obtiene ambos textos de las líneas originales, incluidos
-sus espacios, Unicode y saltos de línea.
+El evaluador de fuentes recibe cada fragmento con sus `numbered_lines`, pares
+`[número, texto]` numerados desde 1 dentro del fragmento. Devuelve `chunk_id`,
+`line_start` y `line_end`. Python obtiene la cita y su ubicación a partir de las
+líneas originales, incluidos los espacios, Unicode y saltos de línea.
+
+Cada candidato conserva su alias y sus roles permitidos. Cuando varios pasajes
+de la misma fuente, versión y ámbito comparten metadatos, `shared_fields`
+envía esos campos una sola vez e identifica los candidatos a los que aplican.
+Los campos que varían y las líneas de cada cita se envían con su candidato.
+El lector recibe la pregunta y su contexto. Las consultas auxiliares utilizadas
+por el buscador se omiten únicamente si ese contexto permite reconstruirlas
+exactamente. La reparación usa el mismo conjunto de candidatos.
 
 Se rechazan identificadores desconocidos, fragmentos no seleccionados como soporte,
 rangos invertidos o fuera de límites, pasajes vacíos y textos que excedan los límites.
@@ -30,10 +37,14 @@ La revisión conserva textos y decisiones al sincronizar el análisis. Como ante
 el cambio de la huella global de fuentes invalida evaluaciones y aprobaciones que
 dependían de esa huella; no se trasladan aprobaciones al nuevo conjunto automáticamente.
 
-Se mantiene la versión 15 de las entradas del análisis: este cambio modifica la forma
-de seleccionar citas, no el contrato probatorio del resultado guardado. El selector
-tiene su propia versión (`passage_selection_version=1`). Esto permite recuperar solo
-los errores de una ejecución anterior sin volver a evaluar resultados ya validados.
+El selector de pasajes tiene su propia versión (`passage_selection_version=1`).
+El servicio registra también el modelo y la versión de la política del lector.
+Cuando cambia el catálogo, vuelve a buscar en el ámbito autorizado. Puede
+reutilizar la lectura terminada de la ejecución anterior de ese expediente si
+coinciden la política, la solicitud con su contexto y la lista completa de
+fragmentos en el mismo orden, incluidos su texto, versión, ubicación y metadatos.
+Entonces aplica la auditoría del catálogo y las verificaciones humanas vigentes.
+Actualizar el análisis de forma explícita vuelve a invocar al lector.
 
 La validación se realiza con fuentes ficticias y dobles de IA en SQLite aislado.
 Implementar o reiniciar el servicio no vuelve a ejecutar un expediente real:
