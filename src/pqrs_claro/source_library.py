@@ -195,6 +195,8 @@ class SourceLibrary:
                 CREATE TABLE IF NOT EXISTS source_collections(id TEXT PRIMARY KEY, body TEXT);
                 CREATE TABLE IF NOT EXISTS case_source_collections(
                     case_id TEXT, collection_id TEXT, PRIMARY KEY(case_id,collection_id));
+                CREATE INDEX IF NOT EXISTS collection_link_owners
+                    ON case_source_collections(collection_id,case_id);
                 CREATE TABLE IF NOT EXISTS source_relationships(
                     source_id TEXT, target_id TEXT, kind TEXT, body TEXT,
                     PRIMARY KEY(source_id,target_id,kind));
@@ -203,6 +205,19 @@ class SourceLibrary:
                 CREATE INDEX IF NOT EXISTS source_runs_case ON source_runs(case_id);
                 CREATE TABLE IF NOT EXISTS source_catalog_revision(
                     id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
+                -- The per-source OCR/index revision restarts on delete/re-import.
+                -- Preserve that distinction even when an importer reuses its ID.
+                CREATE TABLE IF NOT EXISTS source_generations(
+                    generation INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL UNIQUE);
+                CREATE TRIGGER IF NOT EXISTS source_generation_added AFTER INSERT ON sources BEGIN
+                    INSERT OR REPLACE INTO source_generations(source_id) VALUES (NEW.id);
+                END;
+                CREATE TRIGGER IF NOT EXISTS source_generation_removed AFTER DELETE ON sources BEGIN
+                    DELETE FROM source_generations WHERE source_id=OLD.id;
+                END;
+                INSERT OR IGNORE INTO source_generations(source_id)
+                    SELECT id FROM sources s WHERE NOT EXISTS
+                    (SELECT 1 FROM source_generations g WHERE g.source_id=s.id);
                 INSERT OR IGNORE INTO source_catalog_revision VALUES(1,0);
                 CREATE TRIGGER IF NOT EXISTS catalog_source_added AFTER INSERT ON sources BEGIN
                     UPDATE source_catalog_revision SET revision=revision+1 WHERE id=1;
