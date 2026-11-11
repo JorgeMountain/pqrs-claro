@@ -638,35 +638,46 @@ def test_example_sources_are_idempotent_and_do_not_enter_other_cases(source_app,
         )
 
 
-def test_three_parallel_requests_publish_in_order_and_retry_only_failure(source_app, pdf_bytes):
-    from copy import deepcopy
-    app, client, _, _ = source_app
+@pytest.mark.parametrize("configured,limit", [(None, 5), (3, 3)], ids=["default", "three"])
+def test_parallel_requests_publish_in_order_and_retry_only_failure(
+    source_app, pdf_bytes, configured, limit
+):
+    app, client, _, settings = source_app
+    if configured is not None:
+        app.state.sources.settings = replace(settings, source_concurrency=configured)
     case = make_case(client, pdf_bytes)
-    identification = deepcopy(case["identification"])
+    identification = case["identification"]
     original = identification["requests"][0]
-    identification["requests"] = [
-        {**deepcopy(original), "id": f"P{i}", "label": str(i)} for i in range(1, 6)
-    ]
-    case = app.state.store.update(case["id"], identification=identification)
-    assert upload_source(client).status_code == 201
+    ids = [f"P{i}" for i in range(1, limit + 3)]
+    identification["requests"] = [{**original, "id": rid, "label": str(i)}
+                                  for i, rid in enumerate(ids, 1)]
+    case = app.state.store.update(case["id"], identification=identification, request_count=len(ids))
+    text = "El comité confirma los requisitos de prácticas y deja la fecha de entrega pendiente."
+    source = upload_source(client, case_id=case["id"], category="case_evidence", content=text)
+    assert source.status_code == 201
+    failed_id, last_id = ids[-2:]
+    missing = "Falta la constancia de la fecha efectiva de entrega."
 
     class ConcurrentAssessor(FakeSourceAssessor):
         def __init__(self):
-            super().__init__(fail_once="P4")
+            super().__init__(fail_once=failed_id)
             self.guard = threading.Lock()
-            self.gates = {f"P{i}": threading.Event() for i in range(1, 4)}
-            self.three = threading.Event()
+            self.gates = {rid: threading.Event() for rid in ids[:limit]}
+            self.full = threading.Event()
             self.concurrent = self.peak = 0
+
         def assess(self, request, candidates):
             with self.guard:
                 self.concurrent += 1
                 self.peak = max(self.peak, self.concurrent)
-                if self.concurrent == 3:
-                    self.three.set()
+                if self.concurrent == limit:
+                    self.full.set()
             try:
                 if request["id"] in self.gates:
-                    assert self.gates[request["id"]].wait(8)
-                return super().assess(request, candidates)
+                    assert self.gates[request["id"]].wait(15)
+                finding = super().assess(request, candidates)
+                finding["missing"] = [{"kind": "clarification", "description": missing}]
+                return finding
             finally:
                 with self.guard:
                     self.concurrent -= 1
@@ -675,10 +686,10 @@ def test_three_parallel_requests_publish_in_order_and_retry_only_failure(source_
     app.state.sources.assessor = assessor
     try:
         start_search(client, case)
-        assert assessor.three.wait(6), "Three independent assessments should overlap"
+        assert assessor.full.wait(10), "No se alcanzó la concurrencia configurada"
         run = app.state.library.latest_run(case["id"])
-        assert list(run["request_states"].values()).count("searching") == 3
-        assert run["request_states"]["P5"] == "queued"
+        assert list(run["request_states"].values()).count("searching") == limit
+        assert run["request_states"][last_id] == "queued"
         assessor.gates["P2"].set()
         deadline = time.monotonic() + 6
         while time.monotonic() < deadline:
@@ -686,17 +697,22 @@ def test_three_parallel_requests_publish_in_order_and_retry_only_failure(source_
             if run["completed_count"] == 3:
                 break
             time.sleep(.02)
-        assert [r["request_id"] for r in run["results"]] == ["P2", "P4", "P5"]
+        assert [r["request_id"] for r in run["results"]] == ["P2", failed_id, last_id]
         assert run["request_states"]["P1"] == "searching"
     finally:
         for gate in assessor.gates.values():
             gate.set()
     result = wait_search(app, client, case["id"])
-    assert assessor.peak == 3
-    assert [r["request_id"] for r in result["results"]] == ["P1", "P2", "P3", "P4", "P5"]
-    assert result["request_states"]["P4"] == "error"
+    assert assessor.peak == result["concurrency"] == limit
+    assert [r["request_id"] for r in result["results"]] == ids
+    assert result["request_states"][failed_id] == "error"
     assert result["status"] == "error"
     start_search(client, case)
     retried = wait_search(app, client, case["id"])
     assert retried["status"] == "ready"
-    assert assessor.calls == Counter({"P1":1, "P2":1, "P3":1, "P4":2, "P5":1})
+    assert assessor.calls == Counter([*ids, failed_id])
+    for finding in retried["results"]:
+        support, = finding["supports"]
+        assert support["source_id"] == source.json()["id"]
+        assert support["quote"].strip() == text
+        assert any(item["description"] == missing for item in finding["missing"])

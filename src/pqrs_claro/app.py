@@ -270,6 +270,7 @@ def create_app(
             management_enabled=settings.management_enabled,
             validation_mode=settings.data_dir.resolve().is_relative_to(ROOT / "output" / "qa"),
             model=settings.model,
+            source_concurrency=sources_service.request_concurrency,
             draft_concurrency=min(6, max(1, settings.draft_concurrency)),
             max_upload_mb=settings.max_upload_mb,
             max_pages=settings.max_pages,
