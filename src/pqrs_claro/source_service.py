@@ -345,7 +345,8 @@ class SourceService:
     def run(self, case, chunks, run, *, catalog, applications, prior_read=None):
         try:
             assessor = self.assessor or OpenAISourceAssessor(
-                self.settings.api_key, self.settings.model
+                self.settings.api_key, self.settings.model,
+                service_tier=self.settings.source_service_tier,
             )
             lexical = RetrievalIndex(chunks, prepared_terms=self.library.prepared_terms(chunks))
             # No bloquear la primera consulta hasta indexar toda la biblioteca.

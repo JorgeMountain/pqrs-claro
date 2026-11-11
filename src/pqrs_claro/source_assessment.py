@@ -10,6 +10,7 @@ from typing import Any, Literal
 from openai import OpenAI, OpenAIError
 from pydantic import Field, ValidationError
 
+from .config import DEFAULT_SOURCE_SERVICE_TIER
 from .evidence_contract import apply_evidence_contract
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
@@ -431,8 +432,11 @@ def _reader_candidates(api_candidates):
 class OpenAISourceAssessor:
     """Responses API estructurada, sin almacenar respuestas ni reintentos ilimitados."""
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(
+        self, api_key: str, model: str, *, service_tier: str = DEFAULT_SOURCE_SERVICE_TIER
+    ) -> None:
         self.model = model
+        self.service_tier = service_tier
         self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
                              http_client=metrics_http_client())
 
@@ -482,10 +486,12 @@ class OpenAISourceAssessor:
         }
         repair_errors = []
         history = []
+        tier_options = {} if self.service_tier == "default" else {"service_tier": self.service_tier}
         for attempt in range(2):
             try:
                 response = provider_call("sources.assess", self.client.responses.parse,
                     model=self.model,
+                    **tier_options,
                     instructions=INSTRUCTIONS,
                     input=_compact_json(payload),
                     text_format=_LocatedSourceSelection,
