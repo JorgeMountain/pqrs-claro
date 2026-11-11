@@ -149,6 +149,13 @@ class DraftService:
                 requires_human_review=True,
             )
         stale = run.get("stale", False) or not current or run["fingerprint"] != fingerprint
+        ids = {s["source_id"] for result in run["results"] for s in result.get("supports", [])}
+        if self.library.run_scope_revoked(case_id, run.get("source_run_id")) or (
+            stale and self.library.visible_source_ids(case_id, ids) != ids
+        ):
+            # Plans, checks and prose can repeat a passage even without a citation ID.
+            return {**run, "status": "stale", "stale": True, "results": [], "completed_count": 0,
+                    "error": "Cambió el permiso de consulta. Actualiza las fuentes del expediente."}
         if not stale:
             try:
                 self.cases.original(case_id)

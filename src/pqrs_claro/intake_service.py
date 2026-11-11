@@ -143,9 +143,43 @@ class IntakeService:
             }
         )
 
+    def _permitted_report(self, row):
+        """A legacy intake report can repeat a consulted passage in free text."""
+        scope = row.get("scope") or {}
+        case_id = row["case_id"]
+        revoked = self.library.scope_revoked(case_id, scope.get("linked_collections"))
+        if not revoked:
+            # Some older rows only identify the consulted versions. A saved
+            # selection may also hold a copy of a report from a previous scope.
+            basis = (row.get("selection_basis") or {}).get("report") or {}
+            reports = [basis]
+            ids = set()
+            if "linked_collections" not in scope:
+                reports.append(row.get("report") or {})
+                ids.update(s["id"] for s in scope.get("catalog", []) if s.get("id"))
+                ids.update(s["source_id"] for s in row.get("consulted_sources", [])
+                           if s.get("source_id"))
+            for report in reports:
+                for part in [report.get("document") or {}, *report.get("requests", [])]:
+                    ids.update(s["source_id"] for c in part.get("checks", [])
+                               for s in c.get("sources", []) if s.get("source_id"))
+            revoked = bool(ids and ids != self.library.visible_source_ids(case_id, ids))
+        if not revoked:
+            return row
+        return {
+            **{k: row[k] for k in ("case_id", "revision", "status", "policy_version", "updated_at")
+               if k in row},
+            "analysis_scope": self.analysis_scope(row), "scope_revoked": True, "stale": True,
+            "report": None, "decisions": None, "error": None,
+        }
+
     def get(self, case_id, *, _catalog=None, include_plan=True):
+        with self.library.lock:
+            return self._get(case_id, _catalog=_catalog, include_plan=include_plan)
+
+    def _get(self, case_id, *, _catalog, include_plan):
         case = self.cases.get(case_id)
-        row = self.saved(case_id)
+        row = self._permitted_report(self.saved(case_id))
         # Reuse only this call's catalog, retaining the original fingerprint.
         # Downstream eligibility needs the decision, not a new analysis plan.
         has_plan = include_plan and case.get("identification") and row["status"] != "running"
@@ -154,7 +188,7 @@ class IntakeService:
                 and (row.get("fingerprint") or has_plan)):
             catalog = self.sources.catalog(case_id)
         legacy = bool(row.get("report") and row.get("policy_version") != POLICY_VERSION)
-        stale = legacy or bool(
+        stale = row.get("scope_revoked", False) or legacy or bool(
             row.get("fingerprint") and row["fingerprint"] != self.fingerprint(
                 case_id, _catalog=catalog)
         )
@@ -609,13 +643,11 @@ class IntakeService:
 
     def history(self, case_id):
         self.cases.get(case_id)
-        with self.cases.connect() as conn:
-            return [
-                {k: v for k, v in json.loads(r[0]).items() if k != "analysis_cache"}
-                for r in conn.execute(
-                    "SELECT body FROM intake_history WHERE case_id=? ORDER BY rowid", (case_id,)
-                )
-            ]
+        with self.library.lock, self.cases.connect() as conn:
+            rows = conn.execute(
+                "SELECT body FROM intake_history WHERE case_id=? ORDER BY rowid", (case_id,))
+            return [{k: v for k, v in self._permitted_report(json.loads(body)).items()
+                     if k != "analysis_cache"} for (body,) in rows]
 
     def recover(self):
         with self.cases.connect() as conn:

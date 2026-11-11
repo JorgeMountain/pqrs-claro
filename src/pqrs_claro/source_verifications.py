@@ -224,6 +224,10 @@ class SourceVerificationStore:
         return None
 
     def list(self, case_id):
+        with self.library.lock:
+            return self._visible_records(case_id)
+
+    def _visible_records(self, case_id):
         case = self._case(case_id)
         sources = self.library.eligible(case_id)
         eligible = {source["id"]: source for source in sources}
@@ -235,10 +239,15 @@ class SourceVerificationStore:
                 "SELECT body FROM verification_applications WHERE case_id=? ORDER BY rowid DESC",
                 (case_id,),
             ).fetchall()
+        candidates = [record for record in (json.loads(row[0]) for row in rows)
+                      if record["case_id"] == case_id or record["document_id"] in doc_ids]
+        # Changed versions may still be reviewed as history, provided their
+        # originals are accessible. A withdrawn document also withdraws its quote.
+        other_ids = {r["source_id"] for r in candidates if r["source_id"]} - eligible.keys()
+        visible_ids = eligible.keys() | self.library.visible_source_ids(case_id, other_ids)
         records = []
-        for row in rows:
-            record = json.loads(row[0])
-            if (record["case_id"] != case_id and record["document_id"] not in doc_ids):
+        for record in candidates:
+            if record["source_id"] and record["source_id"] not in visible_ids:
                 continue
             problem = self._record_problem(record, case_id, eligible, revocations)
             records.append({**record, "active": problem is None, "inactive_reason": problem})
@@ -247,6 +256,8 @@ class SourceVerificationStore:
         for row in application_rows:
             application = json.loads(row[0])
             record = by_id.get(application["verification_id"])
+            if not record:
+                continue
             problem = self._application_problem(application, record, case, revocations)
             active_ids = self._active_request_ids(application, case) if problem is None else []
             applications.append({**application, "active": problem is None,

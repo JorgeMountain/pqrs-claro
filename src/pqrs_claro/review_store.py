@@ -117,6 +117,14 @@ class ReviewStore:
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def revision(self, case_id, request_id, revision):
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT body FROM review_history WHERE case_id=? AND request_id=? AND revision=?",
+                (case_id, request_id, revision),
+            ).fetchone()
+        return json.loads(row[0])["body"] if row else None
+
     def approval(self, approval_id):
         with self.connect() as conn:
             row = conn.execute(

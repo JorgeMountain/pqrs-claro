@@ -357,7 +357,9 @@ def test_source_search_honors_matrix_cache_budget(source_app, pdf_bytes, monkeyp
     indexes = []
 
     def local_index(*args, **kwargs):
-        index = SemanticIndex(*args, **kwargs, model_factory=lambda _: CountingModel())
+        assert kwargs["model_factory"] is app.state.sources.semantic_model
+        kwargs["model_factory"] = lambda _: CountingModel()
+        index = SemanticIndex(*args, **kwargs)
         indexes.append(index)
         return index
 

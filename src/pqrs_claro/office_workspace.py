@@ -119,7 +119,7 @@ def get_workspace(service, case_id):
                     }
                 except (KeyError, ValueError):
                     continue
-    selected = state.get("attachment_source_ids", [])
+    selected = [sid for sid in state.get("attachment_source_ids", []) if sid in options]
     document = {
         "metadata": display,
         "petition_subject": identification.get("subject") or "",

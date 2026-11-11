@@ -67,7 +67,7 @@ export function responses(current,job,mapping,drafts,review,options={}){
       </div>
       <div class="response-toolbar">
         <div class="response-resources"><button data-action="live-sources" data-index="${i}">${searchingSources?'<span class="source-spinner" aria-hidden="true"></span>':responseIcon('sources')}${searchingSources?'Buscando fuentes…':'Ver fuentes'}</button>${searchState==='queued'?'<span class="response-search-status">En espera</span>':searchState==='completed'?'<span class="response-search-status">Búsqueda terminada</span>':''}<button data-action="live-evidence" data-index="${i}">${responseIcon('add')}Agregar evidencia</button></div>
-        ${row?.paragraphs?.length?`<div class="response-editing"><button data-action="live-proposal" data-index="${i}">${responseIcon('refresh')}Actualizar con IA</button><button class="response-edit" data-action="live-edit" data-index="${i}">${responseIcon('edit')}Editar respuesta</button></div>`:''}
+        ${row?.paragraphs?.length||row?.can_replace_withdrawn_paragraphs?`<div class="response-editing"><button data-action="live-proposal" data-index="${i}">${responseIcon('refresh')}Actualizar con IA</button><button class="response-edit" data-action="live-edit" data-index="${i}">${responseIcon('edit')}Editar respuesta</button></div>`:''}
       </div>
       <details class="response-original"><summary>Qué solicitó la persona</summary><p>${esc(r.description)}</p></details>
     </article>`;

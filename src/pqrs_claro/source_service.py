@@ -19,7 +19,13 @@ from .source_graph import build_source_graph
 from .source_library import digest
 from .source_passages import PASSAGE_SELECTION_VERSION, diagnostic
 from .source_retrieval import RetrievalIndex, retrieve
-from .source_semantic import MODEL_FILE, MODEL_KEY, MODEL_REVISION, SemanticIndex
+from .source_semantic import (
+    MODEL_FILE,
+    MODEL_KEY,
+    MODEL_REVISION,
+    ResidentSemanticModel,
+    SemanticIndex,
+)
 from .storage import Conflict, now
 
 SOURCE_ANALYSIS_VERSION = 20
@@ -72,6 +78,7 @@ class SourceService:
         self.verifications = verifications
         self.semantic_preparation = None
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sources")
+        self.semantic_model = ResidentSemanticModel()
         self.lock = threading.RLock()
         self.active = set()
 
@@ -91,7 +98,7 @@ class SourceService:
     def verification_fingerprint(self, case_id, sources):
         return self.verifications.fingerprint(case_id, sources) if self.verifications else None
 
-    def inputs(self, case_id):
+    def inputs(self, case_id, *, _catalog=None):
         with self.library.lock:
             case = self.cases.get(case_id)
             case["allowed_collection_ids"] = self.library.linked_collections(case_id)
@@ -99,7 +106,7 @@ class SourceService:
             fingerprint = digest(
                 {
                     "identification": case["identification"],
-                    "catalog": self.catalog(case_id),
+                    "catalog": self.catalog(case_id) if _catalog is None else _catalog,
                     "verifications": self.verification_fingerprint(case_id, sources),
                     "sources": sources,
                     "model": self.settings.model,
@@ -112,17 +119,29 @@ class SourceService:
 
     def progress(self, case_id):
         """Estado para sondeo; un resultado terminal siempre valida su vigencia."""
-        self.cases.get(case_id)
-        run = self.library.latest_run(case_id, compact=True)
-        if run and run["status"] == "running":
-            # Este estado no autoriza redacción. Evita recalcular la huella del
-            # catálogo por cada sondeo; get conserva la validación completa.
-            return {**run, "stale": None, "freshness_checked": False}
-        return self.get(case_id, compact=True)
+        with self.library.lock:
+            case = self.cases.get(case_id)
+            run = self.library.latest_run(case_id, compact=True)
+            if run and run["status"] == "running" and not self._scope_revoked(case_id, run):
+                # Partial findings have the same permission boundary as final citations.
+                # Polling a modern run only checks its collection links.
+                return {**run, "stale": None, "freshness_checked": False}
+            return self._checked_map(case, run)
+
+    def _scope_revoked(self, case_id, run, *, current=None):
+        if "allowed_collection_ids" in run:
+            return self.library.scope_revoked(
+                case_id, run["allowed_collection_ids"], current=current)
+        return self.library.run_scope_revoked(case_id, run["id"])
 
     def get(self, case_id, *, compact=False, _catalog=None):
-        case = self.cases.get(case_id)
-        run = self.library.latest_run(case_id, compact=compact)
+        with self.library.lock:
+            case = self.cases.get(case_id)
+            run = self.library.latest_run(case_id, compact=compact)
+            return self._checked_map(case, run, _catalog)
+
+    def _checked_map(self, case, run, _catalog=None):
+        case_id = case["id"]
         # A caller already holding library.lock may share this exact read within
         # one validation. Nothing is cached across requests or changes of scope.
         catalog = self.catalog(case_id) if _catalog is None else _catalog
@@ -132,6 +151,17 @@ class SourceService:
                    if source.get("category") != "archive_only"
                    and ("extraction_status" not in source
                         or source["extraction_status"] in {"ready", "partial"})]
+        collections = self.library.linked_collections(case_id)
+        if run and self._scope_revoked(case_id, run, current=collections):
+            # Free-text findings, pending actions and catalog audits may all quote
+            # the withdrawn source. Only publish process state from this old run.
+            return dict(
+                id=run["id"], case_id=case_id,
+                status="running" if run["status"] == "running" else "stale",
+                stale=True, scope_revoked=True, results=[], shared_checks=[],
+                source_count=len(sources), searched_at=run.get("searched_at"),
+                error=None, completed_count=0, total_count=case["request_count"],
+            )
         fingerprint_inputs = {
             "identification": case["identification"],
             "catalog": catalog,
@@ -140,7 +170,7 @@ class SourceService:
             "model": self.settings.model,
             "analysis_version": SOURCE_ANALYSIS_VERSION,
             "retrieval": retrieval_signature(self.settings.data_dir),
-            "collections": self.library.linked_collections(case_id),
+            "collections": collections,
         }
         fingerprint = digest(fingerprint_inputs)
         if not run:
@@ -210,7 +240,13 @@ class SourceService:
             self.cases.assert_open(case_id)
             if getattr(self, "initial_review", None):
                 self.initial_review.assert_allowed(case_id)
-            case, sources, chunks, fingerprint = self.inputs(case_id)
+            # Every input that can contribute text to a finding belongs to this
+            # same permission snapshot, including catalog-only documents and checks.
+            with self.library.lock:
+                catalog = self.catalog(case_id)
+                case, sources, chunks, fingerprint = self.inputs(case_id, _catalog=catalog)
+                applications = (self.verifications.active_applications(case, sources)
+                                if self.verifications else [])
             if case["status"] != "confirmed":
                 raise Conflict("Confirma primero las solicitudes identificadas.")
             if case["version"] != version:
@@ -260,7 +296,7 @@ class SourceService:
                 "original": case["sha256"], "pages": case.get("pages"),
                 "metadata": {k: v for k, v in case["identification"].items()
                              if k != "requests"}, "sources": sources,
-                "catalog": self.catalog(case_id), "model": self.settings.model,
+                "catalog": catalog, "model": self.settings.model,
                 "retrieval": retrieval_signature(self.settings.data_dir),
                 "collections": case["allowed_collection_ids"],
             })
@@ -301,24 +337,23 @@ class SourceService:
             )
             self.library.save_run(run)
             self.active.add(case_id)
-            self.pool.submit(self.run, case, chunks, run, prior_read=prior_read)
+            self.pool.submit(self.run, case, chunks, run, catalog=catalog,
+                             applications=applications, prior_read=prior_read)
             return self.progress(case_id)
 
     @track_case("sources", "case")
-    def run(self, case, chunks, run, *, prior_read=None):
+    def run(self, case, chunks, run, *, catalog, applications, prior_read=None):
         try:
             assessor = self.assessor or OpenAISourceAssessor(
                 self.settings.api_key, self.settings.model
             )
-            catalog = self.catalog(case["id"])
-            applications = (self.verifications.active_applications(case)
-                            if self.verifications else [])
             lexical = RetrievalIndex(chunks, prepared_terms=self.library.prepared_terms(chunks))
             # No bloquear la primera consulta hasta indexar toda la biblioteca.
             # La recuperación léxica mantiene su alcance completo y el canal
             # semántico declara su cobertura real; el resto se prepara aparte.
             semantic = SemanticIndex(
                 self.settings.data_dir / "semantic",
+                model_factory=self.semantic_model,
                 matrix_cache_bytes=self.settings.semantic_matrix_cache_mb * 1024 * 1024,
                 preparation_budget_seconds=INTERACTIVE_SEMANTIC_BUDGET_SECONDS,
             )
@@ -362,6 +397,10 @@ class SourceService:
                     with operation("library.retrieve", request_id=request["id"]):
                         return retrieve(request, chunks, index=lexical, semantic=semantic)
 
+            def check_scope():
+                if self._scope_revoked(case["id"], run):
+                    raise Conflict("Cambió el permiso de las fuentes. Actualiza la búsqueda.")
+
             def evaluate(request):
                 with operation("sources.request", request_id=request["id"]):
                     return evaluate_request(request)
@@ -377,8 +416,10 @@ class SourceService:
                     )
                     prior_config = (_request_checkpoint(case["id"], request, *prior_read)
                                     if prior_read else None)
-                    graph = build_source_graph(locate, assessor, saver, prior_config=prior_config)
+                    graph = build_source_graph(locate, assessor, saver, prior_config=prior_config,
+                                               check_scope=check_scope)
                     try:
+                        check_scope()
                         snapshot = graph.get_state(config)
                         if snapshot.values.get("finding") and not snapshot.next:
                             finding = snapshot.values["finding"]
@@ -387,6 +428,7 @@ class SourceService:
                                 None if snapshot.values else {"request": request, "chunks": []}
                             )
                             finding = graph.invoke(initial, config)["finding"]
+                        check_scope()
                         scoped_request = catalog_audit(request, finding, catalog, chunks=chunks,
                                                        retrieval_error=semantic.warning)
                         finding = apply_evidence_contract(scoped_request, finding,
@@ -460,3 +502,4 @@ class SourceService:
 
     def close(self):
         self.pool.shutdown(wait=True)
+        self.semantic_model.clear()

@@ -167,7 +167,12 @@ def copy_snapshot(source_data, qa_data, collections):
 
 
 def check_quote(library, citation, case_id=None):
-    detail = library.get(citation["source_id"], case_id)
+    source_id = citation["source_id"]
+    try:
+        detail = library.get(source_id, case_id)
+    except KeyError:
+        # A withdrawn or unknown source cannot validate a citation in this case.
+        return False
     return (
         quote_matches_pages(detail["pages"], citation)
         and citation.get("version", detail["source"]["version"]) == detail["source"]["version"]

@@ -710,6 +710,17 @@ function closeLibrary() {
   $("workspace").focus({ preventScroll: true });
 }
 const sources = createSources({
+  onScopeReduced(caseId) {
+    drafts.discardScope(caseId);
+    reviews.discardScope(caseId);
+    offices.discardScope(caseId);
+    if (state.current?.id === caseId) {
+      if (drawer.open && drawer.dataset.showingSupports) drawer.close();
+      void drafts.load({quiet: true});
+      void reviews.load({quiet: true});
+      if (state.office) void offices.load({quiet: true});
+    }
+  },
   api,
   notify,
   getCase: () => state.current,
@@ -790,7 +801,7 @@ async function poll() {
 }
 
 const drawer=$('drawer');let drawerOpener;
-function openPanel(title,html){drawerOpener=document.activeElement;$('drawer-title').textContent=title;$('drawer-body').innerHTML=html;if(!drawer.open)drawer.showModal();}
+function openPanel(title,html){delete drawer.dataset.showingSupports;drawerOpener=document.activeElement;$('drawer-title').textContent=title;$('drawer-body').innerHTML=html;if(!drawer.open)drawer.showModal();}
 $('close').onclick=()=>drawer.close();
 drawer.addEventListener('close',()=>{if(drawerOpener?.isConnected)drawerOpener.focus();else $('workspace').focus();});
 const intake=createEvidenceUpload({open:openPanel,close:()=>drawer.close(),render,notice:notify,getCase:()=>state.current,getData:()=>({requests:(state.current?.identification?.requests||[]).map(r=>({...r,request_id:r.id}))}),changed:()=>{},onUpdated:async receipt=>{
@@ -799,6 +810,7 @@ const intake=createEvidenceUpload({open:openPanel,close:()=>drawer.close(),rende
 }});
 async function showSupports(request,supports){
   openPanel('Respaldo de la solicitud '+request.label,'');
+  drawer.dataset.showingSupports='true';
   const body=$('drawer-body');body.append(el('p',{},request.description));
   if(!supports.length)body.append(el('p',{},'Todavía no hay pasajes seleccionados para esta solicitud.'));
   for(const support of supports)body.append(el('section',{className:'source'},el('h3',{},support.title),el('p',{},`Versión ${support.version||1} · ${support.location_kind==='section'?'Sección':'Página'} ${support.page}`),el('blockquote',{},support.quote),el('p',{},support.reason||''),button('Abrir fuente y su revisión',()=>{drawer.close();sources.showSource(support.source_id,support);},'quiet')));
@@ -812,16 +824,18 @@ async function prepareResponses(){
   if(state.current?.status!=='confirmed')return;
   await perform(async()=>{
     const current=state.current,prefix='/api/cases/'+encodeURIComponent(current.id),body=JSON.stringify({version:current.version});
+    const scope=sources.state.scopeVersion;
+    function checkScope(){if(scope!==sources.state.scopeVersion||state.current?.id!==current.id)throw new Error('El alcance del expediente cambió. Actualiza las fuentes.');}
     try{
       state.pipelineText='Buscando respaldo para las solicitudes…';render();
       await api(prefix+'/sources/search',{method:'POST',body});
-      const map=await waitStage(prefix+'/sources','running',run=>{sources.state.mapping=run;state.pipelineText=`Revisando fuentes: ${run.completed_count||0} de ${current.request_count} solicitudes`;});
+      const map=await waitStage(prefix+'/sources','running',run=>{checkScope();sources.state.mapping=run;state.pipelineText=`Revisando fuentes: ${run.completed_count||0} de ${current.request_count} solicitudes`;});
       if(map.stale||map.status!=='ready')throw new Error(map.error||'Hay errores de análisis por resolver. Consulta el resultado de cada solicitud.');
       const savedReview=await api(prefix+'/review');
       if(!savedReview.requests?.length){
         state.pipelineText='Redactando las respuestas con los pasajes encontrados…';render();
         await api(prefix+'/drafts/generate',{method:'POST',body});
-        const run=await waitStage(prefix+'/drafts','running',value=>{drafts.state.run=value;drafts.state.loaded=true;state.pipelineText=`Preparando respuestas: ${value.completed_count||0} de ${current.request_count}`;});
+        const run=await waitStage(prefix+'/drafts','running',value=>{checkScope();drafts.state.run=value;drafts.state.loaded=true;state.pipelineText=`Preparando respuestas: ${value.completed_count||0} de ${current.request_count}`;});
         if(run.stale||!['ready','partial'].includes(run.status)||run.results?.some(r=>r.error))throw new Error(run.error||'Revisa los errores de redacción antes de continuar.');
       }
       await api(prefix+'/review/start',{method:'POST',body});

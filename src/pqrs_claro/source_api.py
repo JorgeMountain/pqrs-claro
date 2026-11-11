@@ -42,10 +42,21 @@ def source_router(library, service, cases):
             "linked_collection_ids": library.linked_collections(case_id) if case_id else [],
         }
 
+    @router.get("/api/cases/{case_id}/source-collections")
+    def selected_collections(case_id: str):
+        cases.assert_visible(case_id)
+        return {"collection_ids": library.linked_collections(case_id)}
+
     @router.put("/api/cases/{case_id}/source-collections")
     def link_collections(case_id: str, body: LinkCollections):
         cases.get(case_id)
-        return {"collection_ids": library.link_collections(case_id, body.collection_ids)}
+        with library.lock:
+            previous = library.linked_collections(case_id)
+            selected = library.link_collections(case_id, body.collection_ids)
+            return {
+                "collection_ids": selected,
+                "scope_reduced": bool(set(previous) - set(selected)),
+            }
 
     @router.get("/api/sources")
     def sources(case_id: str | None = None):

@@ -331,6 +331,15 @@ export function createOffice({
       return state;
     },
     setCase,
+    discardScope(caseId) {
+      const previous = cases.get(caseId);
+      if (!previous) return;
+      clearTimeout(previous.poll);
+      cases.delete(caseId);
+      if (state !== previous) return;
+      setCase(getCase());
+      state.form = previous.form;
+    },
     load,
     hasUnprotectedChanges() {
       return [...cases.values()].some((s) => s.storageWarning && s.form);

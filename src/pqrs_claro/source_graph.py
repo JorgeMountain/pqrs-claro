@@ -29,7 +29,7 @@ class SourceState(TypedDict, total=False):
 
 def build_source_graph(
     retriever: Callable[..., list[dict]], assessor: SourceAssessor, checkpointer: Any,
-    *, prior_config=None,
+    *, prior_config=None, check_scope: Callable[[], None] | None = None,
 ):
     """El servicio fija un thread_id por solicitud y versión de sus entradas.
 
@@ -45,6 +45,8 @@ def build_source_graph(
 
     def assess_sources(state: SourceState) -> dict:
         request, candidates = state["request"], state["candidates"]
+        if check_scope is not None:
+            check_scope()
         if previous and all(source_in_scope(request, row) for row in candidates):
             finding = previous.get("finding") or {}
             if (finding.get("request_id") == request["id"] and not finding.get("error")

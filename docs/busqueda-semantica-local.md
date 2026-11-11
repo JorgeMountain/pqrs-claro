@@ -41,6 +41,21 @@ ocho textos. La preparación explícita permite ajustar `--threads 8` en equipos
 que dispongan de suficientes núcleos. Preparar decenas de miles de fragmentos por
 primera vez puede tomar varios minutos; ese coste no se repite por pregunta.
 
+### E5 en memoria durante las búsquedas
+
+El servicio de búsqueda carga E5 en la primera consulta que requiere inferencia
+y reutiliza esa sesión ONNX en los expedientes siguientes del mismo proceso.
+Cada ejecución reconstruye su propio índice con los documentos autorizados.
+Las matrices, las preguntas y las referencias de un expediente quedan en esa
+ejecución. El trabajador que prepara documentos en segundo plano tiene su
+propio ciclo de vida.
+
+Antes de reutilizar la sesión, el servicio comprueba la ruta, la configuración
+de hilos y las huellas del modelo y del tokenizador. Un fallo de carga o de
+inferencia deja disponible la búsqueda léxica y genera un aviso. Si falló una
+sesión cargada, se descarta. La siguiente búsqueda que necesite inferencia
+intenta cargar el modelo local de nuevo. Cerrar el servicio libera la sesión.
+
 ## Persistencia y límites
 
 Con E5 instalado, el trabajador de la biblioteca detecta fuentes recuperables

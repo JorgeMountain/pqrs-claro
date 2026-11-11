@@ -154,6 +154,8 @@ function requestView(row, state, actions) {
     el("p", { className: "section-kicker" }, `SOLICITUD ${row.label}`),
     el("h3", { id: "review-request-title" }, row.title),
     el("p", { className: "response-request" }, row.description),
+    row.can_replace_withdrawn_paragraphs ? el("p", { className: "warning-box" },
+      "Al guardar se utilizará la redacción visible. Los párrafos con respaldo retirado se conservan en la revisión anterior.") : null,
     el(
       "p",
       { id: "review-current-status", className: "source-tag" },

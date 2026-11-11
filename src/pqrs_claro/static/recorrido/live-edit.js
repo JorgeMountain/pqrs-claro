@@ -4,26 +4,32 @@ import {esc} from './views.js';
 // Los cambios locales se conservan al cerrar el panel; solo Guardar escribe en el expediente.
 export function createResponseEditor({open,close,notice,getCase,onSaved}) {
   const drafts=new Map();
+  const changedText=new Map(), scopes=new Map();
   let lastActor='';
   async function edit(requestId) {
     const caseId=getCase()?.id;
     if(!caseId)return;
     const key=caseId+':'+requestId;
-    open('Editar respuesta','<p role="status">Cargando la respuesta guardada…</p>');
+    const scope=scopes.get(caseId);
+    open('Editar respuesta','<p id="live-response-loading" role="status">Cargando la respuesta guardada…</p>');
     const drawer=document.querySelector('#drawer-body');
     try {
       const response=await fetch(`/api/cases/${caseId}/review`);
       if(!response.ok)throw new Error('No se pudo cargar la respuesta. Vuelve a intentarlo.');
       const review=await response.json();
-      if(getCase()?.id!==caseId||!document.querySelector('#drawer').open)return;
+      if(getCase()?.id!==caseId||scope!==scopes.get(caseId)||!document.querySelector('#drawer').open)return;
       const row=review.requests.find(r=>r.request_id===requestId);
       if(!row)throw new Error('La respuesta todavía no está guardada para edición.');
       let draft=drafts.get(key);
       if(!draft){draft={revision:row.revision,paragraphs:structuredClone(row.paragraphs),original:JSON.stringify(row.paragraphs),actor:lastActor};drafts.set(key,draft);}
+      if(changedText.has(key)){
+        for(const text of changedText.get(key))draft.paragraphs.push({text,cited_chunk_ids:[],cited_fact_ids:[],office_section:'response'});
+        changedText.delete(key);
+      }
       const changedElsewhere=draft.revision!==row.revision;
       drawer.innerHTML=`<form id="live-response-edit"><p><strong>${esc(row.label)}. ${esc(row.title)}</strong></p>
         <p class="muted">Edita el texto. Los soportes asociados a cada párrafo se conservan; guardar un cambio deja la respuesta pendiente de revisión.</p>
-        ${row.stale?'<p class="alert">Puedes guardar la redacción. Sus fuentes deberán actualizarse antes de aprobarla.</p>':''}
+        ${row.can_replace_withdrawn_paragraphs?'<p class="alert">Al guardar se utilizará la redacción visible. Los párrafos con respaldo retirado se conservan en la revisión anterior.</p>':row.stale?'<p class="alert">Actualiza las fuentes antes de aprobar la redacción.</p>':''}
         <div id="response-paragraphs"></div><button type="button" id="response-add">Agregar párrafo</button>
         <label class="field">Tu nombre<input id="response-actor" required maxlength="240" autocomplete="name" value="${esc(draft.actor)}"></label>
         <p id="response-edit-error" role="alert">${changedElsewhere?'Existe una versión guardada más reciente. Tu texto local se conserva; carga esa versión antes de volver a editar.':''}</p>
@@ -58,8 +64,9 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
         saveButton.textContent='Guardando…';
         try {
           if(getCase()?.id!==caseId)throw new Error('El expediente cambió. Vuelve a abrir la respuesta.');
-          const result=await fetch(`/api/cases/${caseId}/review/requests/${encodeURIComponent(requestId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:draft.revision,edited_by:draft.actor.trim(),paragraphs:draft.paragraphs,pending_resolutions:[]})});
+          const result=await fetch(`/api/cases/${caseId}/review/requests/${encodeURIComponent(requestId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:draft.revision,edited_by:draft.actor.trim(),paragraphs:draft.paragraphs,pending_resolutions:[],...(row.can_replace_withdrawn_paragraphs?{replace_withdrawn_paragraphs:true}:{})})});
           const value=await result.json();
+          if(scope!==scopes.get(caseId))return;
           if(!result.ok){if(result.status===409){reload.hidden=false;throw new Error('La respuesta cambió en otra sesión. Tu texto se conserva aquí; carga la versión guardada antes de volver a editar.');}throw new Error(typeof value.detail==='string'?value.detail:'No se pudo guardar. Tu texto se conserva aquí.');}
           drafts.delete(key);lastActor=draft.actor.trim();
           if(form.isConnected&&getCase()?.id===caseId)close();notice(value.revision===row.revision?'No había cambios en la respuesta.':'Cambios guardados. La respuesta queda pendiente de revisión.');
@@ -69,7 +76,17 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
         } finally {saving=false;}
       };
       form.querySelector('textarea,input')?.focus();
-    } catch(error) {drawer.innerHTML=`<p role="alert">${esc(error.message)}</p>`;}
+    } catch(error) {if(scope===scopes.get(caseId))drawer.innerHTML=`<p role="alert">${esc(error.message)}</p>`;}
   }
-  return {edit,hasChanges(caseId){return [...drafts].some(([key,draft])=>key.startsWith(caseId+':')&&JSON.stringify(draft.paragraphs)!==draft.original);}};
+  function discardScope(caseId){
+    scopes.set(caseId,(scopes.get(caseId)||0)+1);
+    for(const [key,draft] of drafts){
+      if(!key.startsWith(caseId+':'))continue;
+      const original=new Set(JSON.parse(draft.original).map(p=>p.text));
+      const edits=draft.paragraphs.filter(p=>p.text&&!original.has(p.text)).map(p=>p.text);
+      if(edits.length)changedText.set(key,edits);
+      drafts.delete(key);
+    }
+  }
+  return {edit,discardScope,hasChanges(caseId){return [...changedText.keys()].some(k=>k.startsWith(caseId+':'))||[...drafts].some(([key,draft])=>key.startsWith(caseId+':')&&JSON.stringify(draft.paragraphs)!==draft.original);}};
 }

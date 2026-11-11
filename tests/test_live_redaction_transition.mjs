@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {setImmediate as tick} from 'node:timers/promises';
 import * as draftTools from '../src/pqrs_claro/static/recorrido/review-drafts.js';
+import * as scopeTools from '../src/pqrs_claro/static/source-scope.js';
 import * as confirmation from '../src/pqrs_claro/static/recorrido/initial-confirmation.js';
 import {expedienteSteps} from '../src/pqrs_claro/static/recorrido/expediente-workspace.js';
 import {responses} from '../src/pqrs_claro/static/recorrido/live-views.js';
@@ -10,7 +11,8 @@ import {responses} from '../src/pqrs_claro/static/recorrido/live-views.js';
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
 const stored=new Map(),listeners={},renders=[],calls=[];
 globalThis.localStorage={getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)};
-globalThis.window={addEventListener(){}};
+const windowEvents={};
+globalThis.window={addEventListener(type,fn){windowEvents[type]=fn;}};
 globalThis.location={href:'http://example.invalid/',pathname:'/'};
 globalThis.history={replaceState:(_a,_b,url)=>{location.href=new URL(url,location.href).href;}};
 // Poll callbacks are deliberately not run; these checks concern in-flight loads.
@@ -48,10 +50,10 @@ globalThis.fetch=async(url,options)=>{
   else value=record;
   return {ok:true,json:async()=>structuredClone(value)};
 };
-globalThis.__deps={captureRedactionView:()=>null,restoreRedactionView(){},...draftTools,...confirmation,
+globalThis.__deps={captureRedactionView:()=>null,restoreRedactionView(){},...scopeTools,...draftTools,...confirmation,
   reviewNavigation:()=>'',reviewItems:()=>[],nextReviewIndex:()=>0,focusReviewPetition(){},syncReviewNavigation(){},suggestedReviewer:()=>'',
   identificationWorkspace:(_data,_state,options)=>options.confirmation,bindIdentificationWorkspace:()=>()=>{},expedienteHeading:(_case,_step,options)=>{headingOptions=options;return '<header>Redacción</header>';},
-  expedienteSteps,createFinal:()=>({setCase(){},hide(){},load(){finalLoads++;return Promise.resolve();},view:()=>node('paper')}),renderAnalysis(){},esc:String,renderCaseNavigation(){},
+  expedienteSteps,createFinal:()=>({setCase(){},hide(){},discardScope(){},load(){finalLoads++;return Promise.resolve();},view:()=>node('paper')}),renderAnalysis(){},esc:String,renderCaseNavigation(){},
   createProposalPanel:()=>({}),createPendingActions:()=>({}),createResponseEditor:()=>({hasChanges:()=>false}),
   identification:()=>'',responses,supports:()=>'',
   createIdentificationActions:()=>({banner:()=>''}),bindOriginal(){},focusOriginal(){},bindSplitPane:()=>()=>{},focusRequest(){},createEvidenceUpload:()=>({}),
