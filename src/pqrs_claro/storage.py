@@ -114,17 +114,26 @@ class CaseStore:
             conn.execute("INSERT INTO cases VALUES (?,?,?)", (case_id, 1, json.dumps(case)))
         return case
 
-    def get(self, case_id, *, include_deleted=False):
+    def _case_record(self, case_id, *, include_deleted=False, with_body=False):
+        field = "c.body" if with_body else "c.id"
         with self.connect() as conn:
-            row = conn.execute("SELECT body FROM cases WHERE id=?", (case_id,)).fetchone()
-            lifecycle = conn.execute(
-                "SELECT deleted_at FROM case_lifecycle WHERE case_id=?", (case_id,)
+            row = conn.execute(
+                f"SELECT {field}, l.deleted_at FROM cases c "
+                "LEFT JOIN case_lifecycle l ON l.case_id=c.id WHERE c.id=?", (case_id,)
             ).fetchone()
         if not row:
             raise KeyError("No se encontró el expediente.")
-        if not include_deleted and lifecycle and lifecycle[0]:
+        if not include_deleted and row[1]:
             raise Conflict("Este expediente está en la papelera. Restáuralo para continuar.")
-        return json.loads(row[0])
+        return row[0]
+
+    def assert_visible(self, case_id):
+        """Validate access to this case without loading its text for a permission poll."""
+        self._case_record(case_id)
+
+    def get(self, case_id, *, include_deleted=False):
+        body = self._case_record(case_id, include_deleted=include_deleted, with_body=True)
+        return json.loads(body)
 
     def list(self, *, deleted=False):
         with self.connect() as conn:

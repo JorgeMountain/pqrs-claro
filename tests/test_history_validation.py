@@ -158,11 +158,21 @@ def test_missing_warning_does_not_excuse_missed_existing_essential(reference_fix
 def test_changed_quote_fails_technical_check(reference_fixture):
     library, reference, _ = reference_fixture
     sample = reference["cases"][0]
+    library.link_collections("qa", ["test-history"])
     citation = {**sample["request_source"], "chunk_id": "source:1:1:1", "quote": "Inventada"}
     mapping = {"case_id": "qa", "status": "ready", "results": [{"supports": [citation]}]}
     result = harness.evaluate_result(sample, mapping, [citation], library, {"persisted": True})
     assert not result["technical_passed"]
     assert result["essential_retrieval_passed"]
+
+
+def test_quote_check_respects_withdrawn_permission(reference_fixture):
+    library, reference, _ = reference_fixture
+    citation = reference["cases"][0]["request_source"]
+    library.link_collections("qa", ["test-history"])
+    assert harness.check_quote(library, citation, "qa")
+    library.link_collections("qa", [])
+    assert not harness.check_quote(library, citation, "qa")
 
 
 def test_empty_essential_group_is_not_a_valid_expected_missing(reference_fixture):

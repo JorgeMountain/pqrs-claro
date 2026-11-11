@@ -1,5 +1,5 @@
 import {reviewNavigation,reviewItems,nextReviewIndex,focusReviewPetition,syncReviewNavigation,suggestedReviewer} from './review-navigation.js?v=review-context2';
-import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope} from './review-drafts.js?v=phase2';
+import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope,downloadableDraft} from './review-drafts.js?v=phase2';
 import {createFinal} from './live-document.js?v=approval-progress1';
 import {renderAnalysis} from './analysis-progress.js?v=20260911-preview';
 import {esc} from './views.js';
@@ -18,6 +18,7 @@ import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,r
 import {identificationWorkspace,bindIdentificationWorkspace,expedienteHeading,expedienteSteps} from './expediente-workspace.js?v=stage-progress1';
 import {confirmAndPrepare} from './initial-confirmation.js?v=redaction-recovery1';
 import {pilotReviewControls} from './pilot-review.js?v=pilot1';
+import {watchSourceScope,announceScopeReduction} from '/shared/source-scope.js';
 
 async function api(path,body,method='POST'){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
@@ -110,11 +111,13 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
   });
   const identificationActions=createIdentificationActions({api,open,close,notice,getCase:()=>current,onSaved:select});
   async function savedResponse(row){
+    const sequence=token;
+    if(!review.requests)return;
     review.requests=review.requests.map(r=>r.request_id===row.request_id?row:r);
     if(review.reading_confirmation)review.reading_confirmation={...review.reading_confirmation,confirmed:false,eligible:false};
     render();
     const refreshed=await api(`/api/cases/${row.case_id}/review`);
-    if(current?.id===row.case_id){review=refreshed;render();}
+    if(current?.id===row.case_id&&sequence===token){review=refreshed;render();}
   }
   const editor=createResponseEditor({open,close,notice,getCase:()=>current,onSaved:async row=>{
     if(current?.id!==row.case_id)return;
@@ -232,7 +235,13 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(initialEnabled&&current.identification&&(changedCase||!canPrepare()||job.status!=='running'))reads.push((async()=>{
       let value;try{value=await api(path('/initial-review?compact=true'));}catch(error){if(sequence===token&&current?.id===id&&!initial.status)initial={loadError:error.message};throw error;}if(sequence!==token||current?.id!==id)return;
       const changed=value.revision!==initial.revision;
-      initial=value;initialCache.set(id,{version:current.version,value});if(changed||!initialForm)recoverDraft();if(value.can_prepare)rememberStage(2);render();
+      initial=value;
+      // Library-backed intake reports must pass the current case permissions on every reopen.
+      if(value.analysis_scope==='petition_types_v1'&&value.scope?.library_search==='not_requested'
+        &&!value.scope.readable_sources&&!value.scope.linked_collections?.length&&!value.selection_basis){
+        initialCache.set(id,{version:current.version,value});
+      }else initialCache.delete(id);
+      if(changed||!initialForm)recoverDraft();if(value.can_prepare)rememberStage(2);render();
     })());
     if(current.status==='confirmed'&&step===2&&!suspended){
       // Draft/review projections each scan the same source catalog. They cannot
@@ -279,6 +288,8 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     const selectedManager=localStorage.getItem('pqrs-pilot-manager');
     if(value.management&&selectedManager&&!reviewManagers.some(m=>m.id===selectedManager)){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}if(sequence!==token)return;}
     if(value.management&&(!value.management.owner_id||!value.management.started_at)){await onBrowse();return;}current=value;suspended=false;final.setCase();job=value.preparation||{};mapping={};drafts={};review={};initial=initialCache.get(id)?.version===value.version?initialCache.get(id).value:{};initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;initialActionError='';refreshError='';readingError='';state.originalPage=1;state.originalSelection=null;state.originalZoom=100;reached=value.status==='confirmed'?Math.max(rememberedStage(id),Math.min(3,Number(value.saved_stage)||1),Number(options.step)||1,value.initial_review_status==='approved'||value.preparation?.status&&value.preparation.status!=='idle'?2:1,['ready_review','closed'].includes(value.management?.state)?3:1):1;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:[1,2,3].includes(options.step)?options.step:reached;adapt();
+    await scopeWatch.beforeRead(id);
+    if(sequence!==token||current?.id!==id)return;
     const url=new URL(location.href);url.searchParams.set('case',id);history.replaceState(null,'',url);render();
     if(options.viewPreanalysis){await showPreanalysis();return;}
     if(step===3)void final.load().catch(error=>notice(error.message));
@@ -304,9 +315,37 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     container.innerHTML=`<p>Estas colecciones delimitan los antecedentes que se consultarán para esta petición. Las normas compartidas y los soportes del expediente también se consideran.</p><p id="live-library-progress" role="status" aria-live="polite">Consultando preparación de la biblioteca…</p><form id="live-groups-form">${groups.collections.map(c=>`<label class="check"><input type="checkbox" name="collection" value="${esc(c.id)}" ${groups.linked_collection_ids.includes(c.id)?'checked':''}>${esc(c.name||c.id)}</label>`).join('')}<button class="primary">Guardar fuentes de consulta</button></form><p id="live-groups-error" role="alert"></p>`;
     void watchPreparation(document.querySelector('#live-library-progress'), api);
     document.querySelector('#live-groups-form').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('button').disabled=true;
-      try{if(current?.id!==caseId)throw new Error('El expediente cambió.');await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');close();await refresh();notice('Fuentes de consulta guardadas.');}catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}}
+      try{
+        if(current?.id!==caseId)throw new Error('El expediente cambió.');
+        const saved=await api(`/api/cases/${caseId}/source-collections`,{collection_ids:new FormData(form).getAll('collection')},'PUT');
+        scopeWatch.remember(caseId,saved.collection_ids);
+        if(saved.scope_reduced){announceScopeReduction(caseId);discardScope(caseId);}
+        if(current?.id!==caseId)return;
+        if(form.isConnected)close();
+        await refresh();notice('Fuentes de consulta guardadas.');
+      }catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}else notice(e.message);}
     };
   }
+  function discardScope(caseId){
+    final.discardScope(caseId);
+    editor.discardScope(caseId);
+    initialCache.delete(caseId);
+    if(current?.id!==caseId)return;
+    // A refresh started before the PUT may finish after the new permissions are saved.
+    token++;clearTimeout(timer);
+    mapping={};drafts={};review={};finalSummary={};refreshError='';
+    initial={};
+    const drawer=document.querySelector('#drawer');
+    if(drawer?.open && (drawer.dataset.initialHistory || drawer.querySelector('#live-source-detail,#live-response-edit,#live-response-loading,#proposal-panel,#pending-loading,#pending-history-loading,.pending-task-context,.source,#pending-decision-form'))){
+      close();document.querySelector('#drawer-body').replaceChildren();
+    }
+    render();
+    if(step===3&&!suspended)void final.load().catch(error=>notice(error.message));
+  }
+  const scopeWatch=watchSourceScope(caseId=>{
+    discardScope(caseId);
+    if(current?.id===caseId)void refresh().catch(error=>notice(error.message));
+  },{getCaseId:()=>current?.id||null,read:id=>api(`/api/cases/${encodeURIComponent(id)}/source-collections`)});
   function correct(index=0){
     const caseId=current.id,version=current.version;
     open('Corregir solicitud',`<form id="live-correction"><label class="field">Solicitud<select id="live-request">${data.requests.map((r,i)=>`<option value="${i}">${esc(r.label)}. ${esc(r.title)}</option>`).join('')}</select></label><label class="field">Título<input id="live-title" required maxlength="240"></label><label class="field">Qué solicita<textarea id="live-description" required maxlength="8000"></textarea></label><p>Se conserva la referencia al documento original.</p><button class="primary">Guardar corrección</button></form><p id="live-correction-error" role="alert"></p>`);
@@ -389,7 +428,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(b.dataset.action==='live-initial-draft-preview'){open('Borrador anterior · sin confirmar',draftPreview(savedDraft));return;}
     if(b.dataset.action==='live-initial-draft-download'){
       const copy=initialForm?draftEnvelope(current,initial,initialForm,savedDraft):savedDraft||draftEnvelope(current,initial,readInitialDecision(view,current,initial));
-      const url=URL.createObjectURL(new Blob([JSON.stringify(copy,null,2)],{type:'application/json'}));
+      const url=URL.createObjectURL(new Blob([JSON.stringify(downloadableDraft(copy,current,initial),null,2)],{type:'application/json'}));
       const link=document.createElement('a');link.href=url;link.download=`borrador-${current.id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);return;
     }
     const rawDecision=['live-initial-confirm','live-initial-route'].includes(b.dataset.action)?readInitialDecision(view,current,initial):null;
@@ -441,7 +480,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
         break;
       }
       case 'live-refresh':void refresh().catch(error=>notice(error.message));break;
-      case 'live-initial-history':{const result=await api(path('/initial-review/history'));open('Historial del trámite',initialHistory(result.events));break;}
+      case 'live-initial-history':{const sequence=token;const result=await api(path('/initial-review/history'));if(sequence===token){open('Historial del trámite',initialHistory(result.events));document.querySelector('#drawer').dataset.initialHistory='true';}break;}
       case 'live-queue':await onBrowse();break;
       case 'live-mail-origin':await showMail?.(current.id);break;
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=initialEnabled?1:2;await refresh();if(initialEnabled)notice('Solicitudes confirmadas. Ya puedes analizar el trámite en el resumen.');break;}

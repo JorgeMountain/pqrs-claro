@@ -94,6 +94,55 @@ def _load_model(cache_dir: Path, *, threads: int | None = None) -> Any:
     )
 
 
+class ResidentSemanticModel:
+    """One immutable FastEmbed engine for the lifetime of the interactive service."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._key = None
+        self._model = None
+
+    @staticmethod
+    def _artifact_hashes(directory):
+        if not (directory / MODEL_FILE).is_file():
+            raise FileNotFoundError("modelo local no instalado")
+        # These are the exact files used by FastEmbed's ONNX loader and tokenizer.
+        # Reading their contents also detects in-place edits with preserved timestamps.
+        hashes = []
+        for filename in (MODEL_FILE, "config.json", "tokenizer.json", "tokenizer_config.json",
+                         "special_tokens_map.json"):
+            with (directory / filename).open("rb") as file:
+                hashes.append(hashlib.file_digest(file, "sha256").digest())
+        return tuple(hashes)
+
+    def __call__(self, cache_dir):
+        with self._lock:
+            try:
+                directory = _model_path(cache_dir).resolve()
+                threads = max(1, min(4, (os.cpu_count() or 2) // 2))
+                artifacts = self._artifact_hashes(directory)
+                key = (directory, MODEL_KEY, MODEL_SHA256, threads, artifacts)
+                if key != self._key:
+                    self._model = None
+                    model = _load_model(cache_dir, threads=threads)
+                    if self._artifact_hashes(directory) != artifacts:
+                        raise ValueError("Los archivos de E5 cambiaron durante la carga del modelo")
+                    self._model, self._key = model, key
+                return self._model
+            except Exception:
+                self._model = self._key = None
+                raise
+
+    def discard(self, failed_model):
+        with self._lock:
+            if self._model is failed_model:
+                self._model = self._key = None
+
+    def clear(self):
+        with self._lock:
+            self._model = self._key = None
+
+
 def _document_text(chunk: dict[str, Any]) -> str:
     # Sólo contenido original y título. No incorporar evaluaciones, aprobaciones
     # ni hechos inferidos al vector que representa el documento.
@@ -220,6 +269,8 @@ class SemanticIndex:
         return self._model
 
     def _fail(self, error: Exception) -> None:
+        if self._model is not None and isinstance(self._factory, ResidentSemanticModel):
+            self._factory.discard(self._model)
         self._failed = True
         self.warning = (
             "La búsqueda por significado no está disponible; se conserva la búsqueda "

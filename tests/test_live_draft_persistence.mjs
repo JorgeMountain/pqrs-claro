@@ -4,10 +4,11 @@ import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import * as navigationTools from '../src/pqrs_claro/static/recorrido/review-navigation.js';
 import * as draftTools from '../src/pqrs_claro/static/recorrido/review-drafts.js';
+import * as scopeTools from '../src/pqrs_claro/static/source-scope.js';
 const stored=new Map();globalThis.localStorage={getItem:k=>stored.get(k)??null,setItem:(k,v)=>stored.set(k,v),removeItem:k=>stored.delete(k)};globalThis.window={addEventListener(){}};
 process.on('uncaughtException',error=>{console.error(error.message);process.exitCode=1;});
 
-const listeners={}, rendered=[],workspaceRendered=[];
+const listeners={}, rendered=[],workspaceRendered=[],renderedReports=[];
 const blank=()=>({innerHTML:'',textContent:'',hidden:false,disabled:false,checked:false,dataset:{},
   classList:{add(){},remove(){}},setAttribute(){},removeAttribute(){},focus(){},
   querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}});
@@ -31,14 +32,14 @@ globalThis.fetch=async (url,options)=>{assert.ok(!options?.method,'Draft actions
   return {ok:true,json:async()=>structuredClone(data)};
 };
 let afterIdentificationSave;
-globalThis.__deps={captureRedactionView:()=>null,restoreRedactionView(){},...draftTools,...navigationTools,pilotReviewControls:()=>'',
+globalThis.__deps={captureRedactionView:()=>null,restoreRedactionView(){},...scopeTools,...draftTools,...navigationTools,pilotReviewControls:()=>'',
   identificationWorkspace:data=>{workspaceRendered.push(structuredClone(data));return '';},bindIdentificationWorkspace:()=>()=>{},expedienteHeading:()=>'',
   createFinal:()=>({setCase(){},hide(){}}),renderAnalysis(){},esc:x=>x,renderCaseNavigation(){},
   createProposalPanel:()=>({}),createPendingActions:()=>({}),createResponseEditor:()=>({hasChanges:()=>false}),
   identification:()=>'',responses:()=>'',supports:()=>'',
   createIdentificationActions:opts=>{afterIdentificationSave=opts.onSaved;return {banner:()=>''};},
   bindOriginal(){},focusOriginal(){},bindSplitPane:()=>()=>{},focusRequest(){},createEvidenceUpload:()=>({}),
-  initialReviewSummary:(_c,_i,draft)=>{rendered.push(structuredClone(draft));return '';},
+  initialReviewSummary:(_c,initial,draft)=>{renderedReports.push(initial.report?.document?.summary);rendered.push(structuredClone(draft));return '';},
   initialRequestContent:()=>({}),initialReady:()=>false,initialHistory(){},
   readInitialDecision:()=>structuredClone(pendingDecision),initialConfirmation:()=>'',updateInitialConfirmation(){},confirmAndPrepare(){}
 };
@@ -80,3 +81,39 @@ assert.equal(workspaceRendered[0].analysis_running,true);
 assert.equal(workspaceRendered.at(-1).analysis_running,false);
 assert.equal(workspaceRendered[0].version,workspaceRendered.at(-1).version);
 console.log('PASS: finished analysis clears its running state without a case version change.');
+
+// A PUT from another profile while viewing a different case sends no storage event here.
+live.leave();
+delete record.management;
+const other={...record,id:'other-case'};
+let release,delayLegacy=false;
+const secret='Cita reservada del informe inicial';
+globalThis.fetch=async url=>{
+  const isOther=url.includes(other.id);
+  if(url.endsWith('/source-collections'))return {ok:true,json:async()=>({collection_ids:[]})};
+  if(url.endsWith('/initial-review?compact=true')){
+    if(!isOther&&delayLegacy){
+      await new Promise(resolve=>{release=resolve;});
+      return {ok:true,json:async()=>({...intake,analysis_scope:'legacy',report:null,scope_revoked:true})};
+    }
+    return {ok:true,json:async()=>isOther?intake:{...intake,analysis_scope:'legacy',report:{...intake.report,document:{summary:secret}}}};
+  }
+  return {ok:true,json:async()=>isOther?other:record};
+};
+await select(record.id);
+assert.equal(renderedReports.at(-1),secret);
+edit();
+await select(other.id);
+delayLegacy=true;
+const beforeReturn=renderedReports.length;
+await select(record.id);
+assert.ok(release,'The legacy report must be read again');
+assert.ok(!renderedReports.slice(beforeReturn).includes(secret),'A revoked report must never paint during reload');
+release();await new Promise(setImmediate);
+assert.ok(!renderedReports.slice(beforeReturn).includes(secret));
+const retained=draftTools.createReviewDraftStore(localStorage).read(record.id);
+assert.equal(retained.decision.document.note,'Nota escrita por el gestor');
+const exported=draftTools.downloadableDraft(retained,record,{...intake,report:null,scope_revoked:true});
+assert.equal(exported.decision.document.note,'Nota escrita por el gestor');
+assert.ok(!JSON.stringify(exported).includes(secret));
+console.log('PASS: reopening a case revalidates legacy reports and preserves the human intake draft.');

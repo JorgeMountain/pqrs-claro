@@ -23,6 +23,15 @@ MAX_SOURCE_BYTES = 20 * 1024 * 1024
 MAX_SOURCE_PAGES = 300
 MAX_SOURCE_TEXT = 2_000_000
 
+# The general library includes shared collections for administration. Inside a
+# case, opening any version of a document requires the current collection link.
+_VISIBLE_SOURCE = """
+    (json_extract(s.body,'$.case_id') IS NULL OR json_extract(s.body,'$.case_id')=:case_id)
+    AND (:case_id IS NULL OR COALESCE(json_extract(s.body,'$.collection_id'),'')=''
+         OR json_extract(s.body,'$.collection_id') IN
+            (SELECT collection_id FROM case_source_collections WHERE case_id=:case_id))
+"""
+
 
 class SourceScopeError(DomainError):
     """Un candidato ya no pertenece al alcance permitido de su expediente."""
@@ -267,33 +276,35 @@ class SourceLibrary:
 
     def list(self, case_id=None):
         with self.connect() as conn:
-            rows = conn.execute("SELECT body FROM sources ORDER BY rowid DESC").fetchall()
-        sources = [json.loads(row[0]) for row in rows]
-        latest = {}
-        for source in sources:
-            latest[source["document_id"]] = max(
-                source["version"], latest.get(source["document_id"], 0)
-            )
-        return [
-            {**s, "is_latest": s["version"] == latest[s["document_id"]]}
-            for s in sources
-            if s["case_id"] is None or s["case_id"] == case_id
-        ]
+            rows = conn.execute(
+                "SELECT s.body,s.version=(SELECT max(other.version) FROM sources other "
+                "WHERE other.document_id=s.document_id) FROM sources s "
+                f"WHERE {_VISIBLE_SOURCE} ORDER BY s.rowid DESC", {"case_id": case_id},
+            ).fetchall()
+        return [{**json.loads(body), "is_latest": bool(latest)} for body, latest in rows]
 
     def get(self, source_id, case_id=None):
         with self.connect() as conn:
             row = conn.execute(
-                "SELECT body,pages,(SELECT max(other.version) FROM sources other "
-                "WHERE other.document_id=sources.document_id) FROM sources WHERE id=?",
-                (source_id,),
+                "SELECT s.body,s.pages,(SELECT max(other.version) FROM sources other "
+                "WHERE other.document_id=s.document_id) FROM sources s WHERE s.id=:source_id "
+                f"AND {_VISIBLE_SOURCE}", {"source_id": source_id, "case_id": case_id},
             ).fetchone()
         if not row:
-            raise KeyError("Fuente no encontrada.")
-        source, pages = json.loads(row[0]), json.loads(row[1])
-        if source["case_id"] is not None and source["case_id"] != case_id:
             raise KeyError("Fuente no encontrada en este expediente.")
+        source, pages = json.loads(row[0]), json.loads(row[1])
         source["is_latest"] = source["version"] == row[2]
         return {"source": source, "pages": pages}
+
+    def visible_source_ids(self, case_id, source_ids):
+        """Check access to selected versions, including superseded but authorized originals."""
+        if not source_ids:
+            return set()
+        with self.connect() as conn:
+            return {row[0] for row in conn.execute(
+                "SELECT s.id FROM sources s WHERE s.id IN (SELECT value FROM json_each(:ids)) "
+                f"AND {_VISIBLE_SOURCE}", {"case_id": case_id, "ids": json.dumps(list(source_ids))},
+            )}
 
     def scoped(self, case_id, *, evidence_only=False):
         """Filter in SQLite before decoding metadata; preserve catalog order and scope."""
@@ -577,6 +588,51 @@ class SourceLibrary:
                 [(case_id, item) for item in collection_ids],
             )
         return sorted(collection_ids)
+
+    def scope_revoked(self, case_id, captured_collection_ids, *, current=None):
+        if not captured_collection_ids:
+            return False
+        if current is None:
+            current = self.linked_collections(case_id)
+        return not set(captured_collection_ids).issubset(current)
+
+    def run_scope_revoked(self, case_id, run_id):
+        """Verify the original collection access even after a newer run has replaced this one."""
+        if not run_id:
+            return False  # Legacy drafts without a run reference check their own source IDs.
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(json_extract(p.body,'$.allowed_collection_ids'),"
+                "json_extract(r.body,'$.allowed_collection_ids')) FROM source_runs r "
+                "LEFT JOIN source_run_progress p ON p.run_id=r.id "
+                "WHERE r.id=? AND r.case_id=?", (run_id, case_id),
+            ).fetchone()
+            if not row:
+                return True
+            if row[0] is not None:
+                return self.scope_revoked(case_id, json.loads(row[0]))
+            # Old runs stored document metadata in the immutable snapshot, which
+            # is deliberately absent from compact progress. Check the saved and
+            # current permissions of those versions, independently of validity.
+            snapshot = conn.execute(
+                "SELECT json_extract(body,'$.source_snapshot') FROM source_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()[0]
+            # A catalog audit may mention unread documents outside the snapshot
+            # of text-ready sources. Its recorded collections also protect those findings.
+            collections = {item[0] for item in conn.execute(
+                "SELECT DISTINCT c.value FROM source_runs r LEFT JOIN source_run_progress p "
+                "ON p.run_id=r.id, json_each(COALESCE(p.body,r.body),'$.results') f, "
+                "json_each(f.value,'$.search_audit.collection_ids') c WHERE r.id=?", (run_id,),
+            )}
+        if snapshot is None:
+            return True
+        sources = json.loads(snapshot)
+        collections.update(source["collection_id"] for source in sources
+                           if source.get("collection_id"))
+        ids = {source["id"] for source in sources}
+        return (self.scope_revoked(case_id, collections)
+                or self.visible_source_ids(case_id, ids) != ids)
 
     def prepared_terms(self, chunks):
         from .source_preparation import load_terms

@@ -105,7 +105,7 @@ function render(focus=false){
 }
 function invalidate(){state.confirm=false;state.approved=false;}
 function go(step){if(busy)return;setWorkspaceSection('case');homeVisible=false;showWorkspace();state.step=step;render(true);}
-function open(title,html){drawer.classList.remove('petition-upload-window','cases-delete-window');opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA';document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
+function open(title,html){delete drawer.dataset.initialHistory;drawer.classList.remove('petition-upload-window','cases-delete-window');opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA';document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
 drawer.addEventListener('close',()=>{if(opener?.isConnected&&opener.getClientRects().length)opener.focus();else if(opener?.closest('#workspace-menu'))document.querySelector('#workspace-toggle').focus();else document.querySelector('#main').focus();});
 document.querySelector('#close').addEventListener('click',()=>drawer.close());
 document.querySelectorAll('[data-step]').forEach(b=>b.addEventListener('click',()=>live.active()?live.go(+b.dataset.step):go(+b.dataset.step)));

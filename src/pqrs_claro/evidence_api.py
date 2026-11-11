@@ -182,7 +182,7 @@ def evidence_router(library, sources, cases):
     @router.get("/api/cases/{case_id}/evidence")
     def receipts(case_id: str):
         case = cases.get(case_id)
-        with library.connect() as conn:
+        with library.lock, library.connect() as conn:
             items = [
                 json.loads(r[0])
                 for r in conn.execute(
@@ -190,7 +190,9 @@ def evidence_router(library, sources, cases):
                     (case_id,),
                 )
             ]
-        return dict(receipts=items, mapping=sources.get(case_id), version=case["version"])
+            visible = library.visible_source_ids(case_id, {item["source_id"] for item in items})
+            return dict(receipts=[item for item in items if item["source_id"] in visible],
+                        mapping=sources.get(case_id), version=case["version"])
 
     @router.post("/api/cases/{case_id}/evidence/{receipt_id}/search", status_code=202)
     def retry(case_id: str, receipt_id: str, body: RetryEvidence):

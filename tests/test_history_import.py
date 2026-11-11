@@ -317,7 +317,7 @@ def test_api_link_unlink_updates_eligibility_and_invalidates_ready_search(histor
     stale = client.get(f"/api/cases/{case['id']}/sources").json()
     assert stale["status"] == "stale" and stale["stale"] is True
     assert stale["source_count"] == 0
-    assert stale["results"] == ready["results"]
+    assert stale["results"] == [] and stale["scope_revoked"] is True
     assert app.state.library.original(source["id"]).is_file()
 
 

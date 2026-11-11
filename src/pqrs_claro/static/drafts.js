@@ -70,6 +70,7 @@ export function createDrafts({
   async function generate() {
     if (state.busy) return;
     const current = getCase();
+    const scope = state.scopeVersion;
     state.busy = true;
     state.error = null;
     render();
@@ -81,7 +82,7 @@ export function createDrafts({
           body: JSON.stringify({ version: current.version }),
         },
       );
-      if (getCase()?.id !== current.id) return;
+      if (getCase()?.id !== current.id || scope !== state.scopeVersion) return;
       state.run = run;
       state.loaded = true;
       notify(
@@ -116,5 +117,12 @@ export function createDrafts({
       },
     });
   }
-  return { state, setCase, load, view };
+  function discardScope(caseId) {
+    if (state.caseId !== caseId) return;
+    state.scopeVersion = (state.scopeVersion || 0) + 1;
+    state.token++;
+    clearTimeout(state.poll);
+    Object.assign(state, {run: null, loaded: false, loading: false, error: null});
+  }
+  return { state, setCase, load, view, discardScope };
 }

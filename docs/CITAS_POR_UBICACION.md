@@ -46,6 +46,37 @@ fragmentos en el mismo orden, incluidos su texto, versión, ubicación y metadat
 Entonces aplica la auditoría del catálogo y las verificaciones humanas vigentes.
 Actualizar el análisis de forma explícita vuelve a invocar al lector.
 
+### Al desvincular una colección
+
+Cada consulta del mapa de fuentes comprueba los permisos actuales del expediente,
+incluidos los sondeos de una búsqueda en curso. Al retirar una colección utilizada
+como ámbito de una búsqueda anterior, el mapa deja de entregar sus resultados
+antes de la siguiente búsqueda. Se oculta el análisis anterior completo porque sus
+resúmenes, citas y pendientes pueden combinar varias fuentes. El expediente
+conserva los originales y el registro de la búsqueda para auditoría.
+
+Al guardar el cambio, la pantalla cierra el detalle de la fuente retirada y
+descarta las respuestas pendientes que correspondían al permiso anterior. Las
+pestañas del mismo origen reciben el aviso para actualizar su vista del
+expediente. Este aviso solo identifica el expediente. En la prueba con las
+dos interfaces abiertas, retirar el permiso desde cualquiera de ellas quitó la
+cita de ambas sin iniciar otra búsqueda.
+
+Una ventana visible en otro perfil también consulta los vínculos de su
+expediente al recuperar el foco y cada cinco segundos. Este sondeo lee solo
+los identificadores de las colecciones. En cada interfaz se verificó en Chrome
+que una retirada por API hiciera desaparecer la cita y su pendiente, incluso
+sin recibir el aviso entre pestañas.
+
+Al actualizar las fuentes, el lector vuelve a evaluar los documentos autorizados.
+El mapa puede volver a mostrar los respaldos que siguen vigentes e indicar qué
+dato quedó pendiente al perder su fuente.
+
+La revisión conserva en el historial el texto humano de cada versión. Antes de
+sincronizar, el expediente oculta los párrafos que citaban la colección retirada.
+Después de sincronizar, el editor permite guardar la respuesta con los pasajes
+autorizados. Las lecturas del historial también respetan los permisos actuales.
+
 La validación se realiza con fuentes ficticias y dobles de IA en SQLite aislado.
 Implementar o reiniciar el servicio no vuelve a ejecutar un expediente real:
 el reintento se inicia con la acción de la interfaz.

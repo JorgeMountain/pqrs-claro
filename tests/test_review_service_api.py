@@ -88,6 +88,79 @@ def current(client, case, request_id="P1"):
     )
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_unlink_hides_persisted_citations_in_review_history_drafts_and_office(review_app, legacy):
+    app, client, _, _ = review_app
+    case, allowed_source, row = prepare(app, client)
+    lib = app.state.library
+    case_id = case["id"]
+    prefix = f"/api/cases/{case_id}"
+    quote = "Pasaje reservado de una prueba ficticia."
+    lib.save_collection({"id": "otros", "title": "Otros antecedentes"})
+    lib.link_collections(case_id, ["otros"])
+    private = lib.add("antecedente.txt", quote.encode(), title="Antecedente", origin="Prueba",
+                      category="historical_attachment", collection_id="otros")
+    _, chunks = lib.snapshot(case_id, source_ids={private["id"]})
+    restricted = {**chunks[0], "role": "antecedent", "reason": quote}
+    public = row["available_supports"][0]
+    row["available_supports"].append(restricted)
+    row["paragraphs"] = [
+        {"text": quote, "cited_chunk_ids": [restricted["chunk_id"]], "cited_fact_ids": []},
+        {"text": "Redacción humana propia.", "cited_chunk_ids": [public["chunk_id"]],
+         "cited_fact_ids": []},
+    ]
+    row["edited_by"] = "Revisora"
+    row["request_snapshot"]["allowed_collection_ids"] = [] if legacy else ["otros"]
+    row = app.state.reviews.store.save(row, expected=row["revision"], event="edited")
+    source_run = lib.latest_run(case_id)
+    source_run.update(allowed_collection_ids=["otros"])
+    lib.save_run(source_run)
+    draft = app.state.drafts.store.latest(case_id)
+    draft["results"][0]["supports"].append(restricted)
+    app.state.drafts.store.save(draft)
+    job = app.state.proposals.save(dict(
+        id="propuesta", case_id=case_id, request_id=row["request_id"], model="doble",
+        created_at="2026-01-01", base_revision=row["revision"], base_hash=input_hash(row),
+        original=row["paragraphs"], status="ready", proposal={"summary": quote}, checks={},
+    ))
+    assert quote in client.get(prefix + "/review").text
+    put = client.put(prefix + "/source-collections", json={"collection_ids": []})
+    assert put.json()["scope_reduced"]
+    for path in ["/review", "/review/requests/P1/history", "/drafts", "/office/workspace",
+                 "/review/requests/P1/proposals"]:
+        response = client.get(prefix + path)
+        assert response.status_code == 200, response.text
+        assert quote not in response.text and private["id"] not in response.text, path
+    dismissed = client.post(prefix + f"/review/requests/P1/proposals/{job['id']}/dismiss")
+    assert dismissed.status_code == 200 and quote not in dismissed.text
+    visible = current(client, case)
+    assert [s["source_id"] for s in visible["available_supports"]] == [allowed_source["id"]]
+    assert [p["text"] for p in visible["paragraphs"]] == ["Redacción humana propia."]
+    assert save(client, case, visible).status_code == 409
+    assert fact(client, case, visible).status_code == 409
+    untouched = app.state.reviews.store.get(case_id, row["request_id"])
+    assert untouched["paragraphs"] == row["paragraphs"]
+    # A resynchronization can replace available_supports before a retained paragraph is edited.
+    stored = app.state.reviews.store.get(case_id, row["request_id"])
+    stored["available_supports"] = [public]
+    stored["request_snapshot"]["allowed_collection_ids"] = []
+    app.state.reviews.store.save(stored, expected=stored["revision"], event="synchronized")
+    assert quote not in client.get(prefix + "/office/workspace").text
+    ready_map(app, case)
+    synced = client.post(url(case, "/start"), json={"version": case["version"]})
+    assert synced.status_code == 200, synced.text
+    row = synced.json()["requests"][0]
+    assert quote not in synced.text
+    assert row["can_replace_withdrawn_paragraphs"]
+    assert save(client, case, row).status_code == 409
+    edited = client.put(url(case, "/requests/P1"), json={
+        "revision": row["revision"], "edited_by": "Revisora",
+        "paragraphs": row["paragraphs"], "replace_withdrawn_paragraphs": True,
+    })
+    assert edited.status_code == 200, edited.text
+    assert [p["text"] for p in edited.json()["paragraphs"]] == ["Redacción humana propia."]
+
+
 def save(client, case, row, *, paragraphs=None, resolutions=None):
     return client.put(
         url(case, f"/requests/{row['request_id']}"),

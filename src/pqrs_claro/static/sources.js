@@ -1,5 +1,6 @@
 import { el, button, dateLabel, textLines } from "./ui.js";
 import { createVerifications } from "./verifications.js";
+import { watchSourceScope, announceScopeReduction } from "./source-scope.js";
 
 function driveUrl(value) {
   try {
@@ -94,6 +95,7 @@ export function createSources({
   openLibrary,
   closeLibrary,
   uploadEvidence = null,
+  onScopeReduced = () => {},
 }) {
   const state = {
     caseId: null,
@@ -106,6 +108,7 @@ export function createSources({
     poll: null,
     selected: null,
     loadToken: 0,
+    scopeVersion: 0,
     collections: [], linkedCollections: [], collectionsError: null, collectionPickerOpen: false,
     archiveText: "", archiveGroup: "", archiveCollection: "", archivePage: 1,
   };
@@ -122,6 +125,28 @@ export function createSources({
     },
   });
 
+  function discardScope(caseId) {
+    if (state.caseId !== caseId) { onScopeReduced(caseId); return; }
+    state.scopeVersion++;
+    state.loadToken++;
+    clearTimeout(state.poll);
+    state.mapping = null;
+    state.sources = [];
+    state.linkedCollections = [];
+    state.loaded = false;
+    verifications.reset();
+    document.querySelectorAll("dialog[data-case-source]").forEach(modal => modal.close());
+    onScopeReduced(caseId);
+    render();
+  }
+  const scopeWatch = watchSourceScope(caseId => {
+    discardScope(caseId);
+    if (state.caseId === caseId) void load({ quiet: true });
+  }, {
+    getCaseId: () => getCase()?.id || null,
+    read: id => api(`/api/cases/${encodeURIComponent(id)}/source-collections`),
+  });
+
   async function load({ quiet = false } = {}) {
     const token = ++state.loadToken;
     const current = getCase();
@@ -129,6 +154,8 @@ export function createSources({
     state.loading = !quiet;
     state.error = null;
     if (!quiet) render();
+    if (current) await scopeWatch.beforeRead(current.id);
+    if (token !== state.loadToken) return;
     const results = await Promise.allSettled([
       api(`/api/sources${context()}`),
       current?.status === "confirmed"
@@ -177,16 +204,17 @@ export function createSources({
     if (state.mapping?.status !== "running") return;
     state.poll = setTimeout(async () => {
       const caseId = state.caseId;
+      const scope = state.scopeVersion;
       try {
         const mapping = await api(
           `/api/cases/${encodeURIComponent(caseId)}/sources`,
         );
-        if (caseId !== state.caseId) return;
+        if (caseId !== state.caseId || scope !== state.scopeVersion) return;
         state.mapping = mapping;
         state.error = null;
         render();
       } catch (error) {
-        if (caseId !== state.caseId) return;
+        if (caseId !== state.caseId || scope !== state.scopeVersion) return;
         state.error = `${error.message} El último resultado sigue guardado.`;
         render();
       }
@@ -210,6 +238,7 @@ export function createSources({
   async function search() {
     await action(async () => {
       const current = getCase();
+      const scope = state.scopeVersion;
       const result = await api(
         `/api/cases/${encodeURIComponent(current.id)}/sources/search`,
         {
@@ -217,7 +246,7 @@ export function createSources({
           body: JSON.stringify({ version: current.version }),
         },
       );
-      if (current.id !== state.caseId) return;
+      if (current.id !== state.caseId || scope !== state.scopeVersion) return;
       state.mapping = result.mapping || result;
       if (!state.mapping.status) await load({ quiet: true });
       schedule();
@@ -480,10 +509,15 @@ export function createSources({
       form.querySelectorAll("input,button").forEach((control) => { control.disabled = true; });
       status.textContent = "Guardando los antecedentes seleccionados…";
       try {
-        await api(`/api/cases/${encodeURIComponent(current.id)}/source-collections`, { method: "PUT", body: JSON.stringify({ collection_ids: [...selected] }) });
+        const saved = await api(`/api/cases/${encodeURIComponent(current.id)}/source-collections`, { method: "PUT", body: JSON.stringify({ collection_ids: [...selected] }) });
+        scopeWatch.remember(current.id, saved.collection_ids);
+        if (saved.scope_reduced) {
+          announceScopeReduction(current.id);
+          discardScope(current.id);
+        }
         if (state.caseId !== current.id) return;
         await load({ quiet: true });
-        notify("Antecedentes guardados para este expediente. Actualiza la búsqueda para incluir esta selección.");
+        notify(saved.scope_reduced ? "Permisos actualizados. Actualiza la búsqueda para evaluar los respaldos disponibles." : "Antecedentes guardados para este expediente. Actualiza la búsqueda para incluir esta selección.");
       } catch (error) {
         status.textContent = error.message;
         status.className = "form-status error";
@@ -1210,6 +1244,8 @@ export function createSources({
 
   async function showSource(id, ref = null) {
     const { modal } = dialog("Comprobar la fuente");
+    if (state.caseId) modal.dataset.caseSource = state.caseId;
+    const scope = state.scopeVersion;
     const body = el(
       "div",
       { className: "source-detail-content" },
@@ -1221,7 +1257,7 @@ export function createSources({
         api(sourceUrl(id)),
         api(sourceUrl(id, "/versions")),
       ]);
-      if (!modal.isConnected) return;
+      if (!modal.isConnected || scope !== state.scopeVersion) return;
       if (detail.status === "rejected") throw detail.reason;
       const source = detail.value.source || detail.value;
       const pages = detail.value.pages || source.pages || [];

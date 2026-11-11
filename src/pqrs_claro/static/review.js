@@ -174,6 +174,7 @@ export function createReview({
         revision: local.revision,
         edited_by: local.edited_by.trim(),
         paragraphs: local.paragraphs,
+        ...(row.can_replace_withdrawn_paragraphs ? { replace_withdrawn_paragraphs: true } : {}),
         pending_resolutions: Object.values(local.resolutions).map(
           ({ pending_id, action, note, cited_chunk_ids, cited_fact_ids }) => ({
             pending_id,
@@ -390,6 +391,17 @@ export function createReview({
       return state;
     },
     setCase,
+    discardScope(caseId) {
+      const previous = cases.get(caseId);
+      if (!previous) return;
+      clearTimeout(previous.poll);
+      cases.delete(caseId);
+      if (state !== previous) return;
+      setCase(getCase());
+      for (const [id, local] of previous.locals) {
+        if (isUnsent(local)) state.locals.set(id, local);
+      }
+    },
     load,
     hasUnsaved() {
       return (

@@ -47,6 +47,50 @@ los pasos 1 a 5.
 
 ## Mejoras del motor compartido
 
+- [x] Conservar E5 en memoria entre búsquedas y volver a cargarlo después de un fallo.
+- [x] Retirar de la vista las citas de una colección al desvincularla del expediente.
+
+**Piloto de E5 con el lector de `master` (11 de noviembre de 2026).** En la
+comparación previa con la API, cuatro expedientes ficticios pasaron por tres
+estados en dos rondas. Con el índice preparado, la mediana desde solicitar la
+búsqueda hasta obtener la cita validada pasó de 10,61 a 9,00 s. El piloto ganó
+22 de los 24 pares y el proceso caliente ocupó aproximadamente 343 MiB
+adicionales. Ambos brazos acreditaron los 44 hechos esperados y detectaron los
+10 pendientes previstos. La latencia de la primera búsqueda varió entre
+procesos. El informe del ensayo está en
+`../experiments/rag-e5-servicio-20261111/INFORME.md`.
+
+La comprobación de integración usó E5 real y las rutas HTTP del proyecto.
+Reprodujo las respuestas grabadas del lector después de verificar la identidad
+de sus candidatos, instrucciones, esquema y entrada. Hubo 12 búsquedas por
+versión sobre cuatro expedientes, incluida una corrección documental y una
+retirada de permiso por expediente. E5 se cargó 12 veces en la referencia y una
+en el piloto. Ambas versiones recuperaron los 22 hechos con cita literal y los
+cinco pendientes previstos. Inmediatamente después de los cuatro retiros, la
+referencia siguió devolviendo la cita anterior y el piloto la ocultó en las
+cuatro consultas detalladas y en los cuatro sondeos compactos. Las mediciones
+de esta reproducción local excluyen la latencia del proveedor. Registros de la
+integración en `output/qa/rag-e5-piloto-20261111/`.
+
+En un control adicional se provocó un fallo en la inferencia de la primera
+sesión ONNX. La consulta devolvió la cita por la vía léxica y mostró el aviso.
+Al repetirla en el mismo expediente se cargó otra sesión y se recuperó la
+búsqueda semántica. El siguiente expediente utilizó esa segunda sesión y citó
+su propio documento.
+
+Las regresiones del ciclo de vida del modelo y de los permisos se ejecutan
+desde un clon con datos ficticios y sin credenciales del proveedor.
+
+```powershell
+.\scripts\dev-python.ps1 -m pytest -q tests/test_semantic_model_lifetime.py tests/test_source_scope_revocation.py
+```
+
+En esta integración pasaron 1.704 pruebas de Python y 210 de JavaScript. Se
+comprobó también en Chrome la retirada desde cada interfaz y el cambio por API
+con una ventana independiente. En los cuatro escenarios se ocultaron la cita y
+el pendiente anterior sin volver a iniciar la búsqueda. Detalles operativos
+en [citas por ubicación](CITAS_POR_UBICACION.md#al-desvincular-una-colección).
+
 - [x] Acelerar la lectura de evidencia por la IA en el evaluador común de todos los expedientes.
 
 El lector envía cada pasaje completo con líneas numeradas y agrupa los campos

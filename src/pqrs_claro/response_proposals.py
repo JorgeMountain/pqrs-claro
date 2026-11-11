@@ -64,9 +64,17 @@ class ResponseProposalService:
             raise KeyError("La propuesta no pertenece a esta respuesta.")
         return json.loads(row[0]) if row else None
 
+    def _visible(self, job):
+        original = self.reviews.store.revision(
+            job["case_id"], job["request_id"], job["base_revision"])
+        if not original or next(self.reviews._visible_rows(
+                job["case_id"], [original])).get("scope_reduced"):
+            return {**job, "original": [], "proposal": None, "checks": None, "error": None}
+        return job
+
     def get(self, case_id, request_id):
-        with self.reviews.lock:
-            row = self.reviews._row(case_id, request_id, fresh=False)
+        with self.reviews.lock, self.reviews.library.lock:
+            row = self.reviews._row(case_id, request_id, fresh=False, public=True)
             job = self.read(case_id, request_id)
             if not job:
                 return {"status": "idle"}
@@ -75,7 +83,7 @@ class ResponseProposalService:
                 or row["revision"] != job["base_revision"]
                 or (input_hash(row) != job["base_hash"])
             )
-            return {**job, "stale": stale}
+            return {**(self._visible(job) if stale else job), "stale": stale}
 
     def start(self, case_id, request_id, revision):
         with self.lock, self.reviews.lock:
@@ -174,11 +182,11 @@ class ResponseProposalService:
             return edited
 
     def dismiss(self, case_id, request_id, proposal_id):
-        with self.lock:
+        with self.lock, self.reviews.library.lock:
             job = self.read(case_id, request_id, proposal_id)
             if job["status"] not in {"ready", "error", "interrupted", "dismissed"}:
                 raise Conflict("Espera a que termine la propuesta antes de descartarla.")
-            return self.save(job, status="dismissed")
+            return self._visible(self.save(job, status="dismissed"))
 
     def recover(self):
         with self.reviews.store.connect() as conn:

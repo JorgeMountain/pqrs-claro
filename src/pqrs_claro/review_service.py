@@ -147,13 +147,52 @@ class ReviewService:
             row = self.store.save(row, expected=row["revision"], event="revision_changed")
         return row
 
+    def _visible_rows(self, case_id, rows):
+        rows = list(rows)
+        ids = {s["source_id"] for row in rows for s in row["available_supports"]}
+        # After synchronization a retained human paragraph may still reference a
+        # chunk from an earlier revision, absent from the new available_supports.
+        ids.update(c.split(":", 1)[0] for row in rows for p in row["paragraphs"]
+                   for c in p.get("cited_chunk_ids", []) if ":" in c)
+        denied = ids - self.library.visible_source_ids(case_id, ids)
+        linked = set(self.library.linked_collections(case_id))
+        for row in rows:
+            captured = tuple((row.get("request_snapshot") or {}).get("allowed_collection_ids", []))
+            excluded = {s["chunk_id"] for s in row["available_supports"]
+                        if s["source_id"] in denied}
+            excluded.update(c for p in row["paragraphs"] for c in p.get("cited_chunk_ids", [])
+                            if c.split(":", 1)[0] in denied)
+            if not excluded and not self.library.scope_revoked(case_id, captured, current=linked):
+                yield row
+                continue
+            supports = [s for s in row["available_supports"] if s["chunk_id"] not in excluded]
+            # The stored revision remains intact. Only paragraphs independent of withdrawn
+            # passages can be displayed along with the still-permitted source references.
+            paragraphs = [p for p in row["paragraphs"]
+                          if not excluded.intersection(p.get("cited_chunk_ids", []))
+                          and (row.get("edited_by") or p.get("cited_chunk_ids")
+                               or p.get("cited_fact_ids"))]
+            allowed = [collection for collection in captured if collection in linked]
+            can_replace = (not row.get("stale") and len(allowed) == len(captured)
+                           and len(supports) == len(row["available_supports"]))
+            yield {**row, "status": "stale", "stale": True, "scope_reduced": True,
+                   "can_replace_withdrawn_paragraphs": can_replace,
+                   "request_snapshot": {**(row.get("request_snapshot") or {}),
+                                        "allowed_collection_ids": allowed},
+                   "available_supports": supports,
+                   "paragraphs": paragraphs, "source_checks": [], "evidence_states": [],
+                   "pending": [], "verifications": [], "sufficiency": {}, "request_intent": None,
+                   "assessment": None, "approval": None,
+                   "error": "Cambió el permiso de consulta. Actualiza las fuentes del expediente."}
+
     def get(self, case_id):
-        with self.lock:
+        with self.lock, self.library.lock:
             base = self._base(case_id)
             case = base[0]
             ids = [r["id"] for r in (case.get("identification") or {}).get("requests", [])]
             rows = {row["request_id"]: row for row in self.store.list(case_id)}
-            requests = [self._project(rows[key], base) for key in ids if key in rows]
+            requests = list(self._visible_rows(
+                case_id, (self._project(rows[key], base) for key in ids if key in rows)))
             stale = any(row["stale"] for row in requests)
             count = sum(row["status"] == "approved" for row in requests)
             status = (
@@ -394,7 +433,8 @@ class ReviewService:
                 )
             return self.get(case_id)
 
-    def _row(self, case_id, request_id, revision=None, *, fresh=True):
+    def _row(self, case_id, request_id, revision=None, *, fresh=True, public=False,
+             replace_withdrawn=False):
         case = self.cases.get(case_id)
         if request_id not in {
             r["id"] for r in (case.get("identification") or {}).get("requests", [])
@@ -406,6 +446,13 @@ class ReviewService:
         row = self._project(row)
         if revision is not None and row["revision"] != revision:
             raise Conflict("La revisión cambió. Recarga antes de continuar.")
+        visible = next(self._visible_rows(case_id, [row]))
+        if public:
+            return visible
+        if visible.get("scope_reduced") and not (
+            replace_withdrawn and visible["can_replace_withdrawn_paragraphs"]
+        ):
+            raise Conflict("Cambió el permiso de consulta. Actualiza las fuentes del expediente.")
         if fresh and row["stale"]:
             raise Conflict("Actualiza las fuentes y sincroniza la revisión antes de continuar.")
         return row
@@ -449,7 +496,8 @@ class ReviewService:
         body["paragraphs"] = canonical_paragraphs(body["paragraphs"])
         with self.lock:
             self.cases.assert_open(case_id)
-            row = self._row(case_id, request_id, body["revision"], fresh=False)
+            row = self._row(case_id, request_id, body["revision"], fresh=False,
+                            replace_withdrawn=body.get("replace_withdrawn_paragraphs", False))
             if row["stale"] and any(
                 item["action"] != "open" for item in body["pending_resolutions"]
             ):
@@ -786,7 +834,12 @@ class ReviewService:
         self.cases.get(case_id)
         if not self.store.get(case_id, request_id):
             raise KeyError("No existe historial de esta solicitud.")
-        return {"revisions": self.store.history(case_id, request_id), "limit": 100}
+        with self.lock, self.library.lock:
+            history = self.store.history(case_id, request_id)
+            projected = self._visible_rows(case_id, (entry["body"] for entry in history))
+            return {"revisions": [{**entry, "body": body}
+                                  for entry, body in zip(history, projected, strict=True)],
+                    "limit": 100}
 
     def approved(self, case_id):
         if getattr(self, "initial_review", None):

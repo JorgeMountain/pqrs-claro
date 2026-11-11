@@ -22,6 +22,7 @@ async function api(url,body,method='POST'){
 export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateChange,getProgress,onFinalized}){
   const readOnly=s=>s?.closed||getCase()?.management?.state==='closed';
   const states=new Map();
+  const scopeEdits=new Map();
   const state=()=>{
     const id=getCase()?.id;if(!id)return null;
     if(!states.has(id))states.set(id,{id,node:document.createElement('section'),work:null,saved:null,info:null,busy:false,message:'',error:'',timer:null,selectedId:null,confirmation:null,generatedSignature:null});
@@ -122,6 +123,17 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     <footer class="document-toolbar"><div class="document-buttons"><button type="button" data-command="save">${icon('check')}Guardar cambios</button><button type="button" class="text-button" data-command="cancel">Descartar cambios</button><span class="document-save-state" data-save-state role="status"></span></div><div class="draft-generation"><button type="button" class="primary" data-command="generate">Aprobar y generar ${icon('arrow-right')}</button><button type="button" class="primary" data-command="finalize" hidden>${icon('check')}Finalizar expediente</button><small data-generate-hint></small></div></footer>
     <p data-operation role="status"></p><p data-error role="alert"></p><div data-downloads class="document-downloads"></div>`;
     s.node.querySelector('.draft-editor-heading').after(s.node.querySelector('.document-tool-status'));
+    const local=scopeEdits.get(s.id);
+    if(local){
+      const details=document.createElement('details');
+      const summary=document.createElement('summary');
+      summary.textContent='Cambió el permiso de consulta · recuperar cambios locales sin guardar';
+      const text=document.createElement('textarea');text.readOnly=true;text.value=local;
+      text.setAttribute('aria-label','Texto editado antes del cambio de permisos');
+      const dismiss=document.createElement('button');dismiss.type='button';dismiss.textContent='Ya recuperé mis cambios';
+      dismiss.onclick=()=>{scopeEdits.delete(s.id);details.remove();};
+      details.append(summary,text,dismiss);s.node.prepend(details);
+    }
     s.fragment=createDraftFragment(s.node);
     s.node.querySelector('[data-clear-fragment]').onclick=()=>{s.fragment.clear();s.node.querySelector(`[data-select-adjustment="${s.selectedId}"]`)?.focus();};
     const form=s.node.querySelector('form');bindActor(form);
@@ -344,7 +356,24 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
       if(work.requests.some(r=>r.status==='checking'))void poll(s).catch(e=>{s.error=e.message;status(s);});
     }catch(e){s.error=e.message;s.work?status(s):paint(s);if(discard)throw e;}
   }
-  window.addEventListener('beforeunload',event=>{if([...states.values()].some(dirty)){event.preventDefault();event.returnValue='';}});
+  function discardScope(caseId){
+    const s=states.get(caseId);
+    if(!s)return;
+    const edits=[];
+    if(dirty(s)){
+      for(const [key,value] of Object.entries(s.work.metadata)){
+        if(value!==s.saved.metadata[key])edits.push(`${key}: ${value}`);
+      }
+      for(const row of s.work.requests){
+        const saved=s.saved.requests.find(item=>item.request_id===row.request_id);
+        const previous=new Set(saved?.paragraphs.map(p=>p.text));
+        for(const p of row.paragraphs)if(p.text&&!previous.has(p.text))edits.push(p.text);
+      }
+    }
+    if(edits.length)scopeEdits.set(caseId,[scopeEdits.get(caseId),...edits].filter(Boolean).join('\n\n'));
+    clearTimeout(s.timer);s.fragment?.clear();s.tools?.destroy();s.node.replaceChildren();states.delete(caseId);
+  }
+  window.addEventListener('beforeunload',event=>{if(scopeEdits.size||[...states.values()].some(dirty)){event.preventDefault();event.returnValue='';}});
   window.addEventListener('pqrs-manager-change',()=>{const s=states.get(getCase()?.id);if(s?.work&&active(s))status(s);});
-  return {view(){const s=state();if(!s.node.childNodes.length)paint(s);return s.node;},load,hide(){state()?.fragment?.clear();},setCase(){for(const s of states.values()){s.fragment?.clear();clearTimeout(s.timer);s.confirmation=null;}},hasChanges:id=>states.has(id)&&dirty(states.get(id))};
+  return {view(){const s=state();if(!s.node.childNodes.length)paint(s);return s.node;},load,discardScope,hide(){state()?.fragment?.clear();},setCase(){for(const s of states.values()){s.fragment?.clear();clearTimeout(s.timer);s.confirmation=null;}},hasChanges:id=>states.has(id)&&dirty(states.get(id))};
 }

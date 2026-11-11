@@ -900,6 +900,16 @@ function closeLibrary() {
   $("workspace").focus({ preventScroll: true });
 }
 const sources = createSources({
+  onScopeReduced(caseId) {
+    drafts.discardScope(caseId);
+    reviews.discardScope(caseId);
+    offices.discardScope(caseId);
+    if (state.current?.id === caseId) {
+      void drafts.load({quiet: true});
+      if (state.reviewing) void reviews.load({quiet: true});
+      if (state.office) void offices.load({quiet: true});
+    }
+  },
   api,
   notify,
   getCase: () => state.current,

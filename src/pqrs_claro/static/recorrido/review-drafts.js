@@ -30,6 +30,15 @@ export function restoreDraft(saved,current,value){
     requests:value.report.requests.map(r=>({...saved.requests[r.request_id].decision,reviewed:false}))},
     message:'Borrador recuperado de este navegador. Revisa y confirma cuando termines.'};
 }
+export function downloadableDraft(saved,current,value){
+  if(restoreDraft(saved,current,value).draft){
+    const requests=Object.fromEntries(value.report.requests.map(r=>[r.request_id,saved.requests[r.request_id]]));
+    return {...saved,requests};
+  }
+  // The stored report may describe a collection that is no longer linked.
+  const {case_id,revision,updated_at,decision}=saved;
+  return {case_id,revision,updated_at,decision};
+}
 export function createReviewDraftStore(storage){
   const seen=new Map(),cache=new Map();
   function read(id){

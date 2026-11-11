@@ -72,6 +72,7 @@ class ReviewEdit(StrictModel):
     revision: int = Field(ge=1, strict=True)
     edited_by: Actor
     paragraphs: list[ReviewParagraph] = Field(max_length=30)
+    replace_withdrawn_paragraphs: StrictBool = False
     pending_resolutions: list[PendingResolutionInput] = Field(default_factory=list, max_length=300)
 
     @field_validator("pending_resolutions")
