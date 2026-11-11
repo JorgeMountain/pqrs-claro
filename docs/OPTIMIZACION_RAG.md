@@ -50,6 +50,7 @@ los pasos 1 a 5.
 - [x] Conservar E5 en memoria entre búsquedas y volver a cargarlo después de un fallo.
 - [x] Retirar de la vista las citas de una colección al desvincularla del expediente.
 - [x] Usar Fast por defecto en el lector de todos los expedientes y permitir volver al modo habitual.
+- [x] Buscar por defecto respaldos de hasta cinco preguntas en paralelo dentro de un mismo expediente.
 
 El lector usa el mismo modelo configurado en ambos modos. Solicita Fast al leer
 las fuentes y al corregir una cita. En modo habitual omite `service_tier` en la
@@ -85,6 +86,30 @@ citas y la reutilización de resultados después de cambiar de modo.
 
 ```powershell
 .\scripts\test.ps1 tests/test_source_service_tier.py
+```
+
+**Búsquedas paralelas dentro de un expediente.** El límite predeterminado permite
+que hasta cinco preguntas busquen sus respaldos a la vez. El servicio atiende
+un expediente por turno. Para volver a tres, configura
+`PQRS_CLARO_SOURCE_CONCURRENCY=3` en `.env.local` y reinicia la aplicación.
+[Configuración y datos](../README.md#configuración-y-datos).
+
+El piloto con Fast usó cuatro expedientes ficticios con cinco preguntas cada uno,
+el índice preparado y dos rondas por configuración. Con cinco lecturas, la mediana
+hasta guardar las cinco preguntas con cita validada bajó de 11,43 a 7,33 s. Los
+ocho pares de expediente y ronda terminaron antes. En ambas configuraciones se
+acreditaron los 48 hechos esperados y se detectaron los 40 pendientes contando
+las repeticiones. El lector pidió evidencia suficiente para cerrar 29 de los 40
+pendientes con tres lecturas y 27 con cinco. Informe local en
+`../experiments/rag-paralelismo-fast/INFORME.md`.
+
+Para verificar el límite desde un clon, estas pruebas usan un lector simulado
+y el servicio HTTP de la aplicación. Comprueban cuántas preguntas entran al
+lector a la vez, la publicación en orden y el reintento de una pregunta fallida.
+
+```powershell
+.\scripts\test.ps1 tests/test_source_service_api.py -k parallel_requests
+.\scripts\test.ps1 tests/test_source_service_tier.py -k concurrency
 ```
 
 **Piloto de E5 con el lector de `master` (11 de noviembre de 2026).** En la

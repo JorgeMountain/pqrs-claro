@@ -82,8 +82,14 @@ y [arquitectura con diagramas](docs/GUIA_VISUAL_PQRS_CLARO.md).
   Mientras falta o se prepara, los otros canales siguen disponibles y se informa su alcance.
 - El lector de fuentes usa Fast por defecto en todos los expedientes. Para volver al
   modo habitual, pon `PQRS_CLARO_SOURCE_SERVICE_TIER=default` en `.env.local` y
-  reinicia la aplicación. Para reactivar Fast, cambia el valor a `fast`. Si defines
-  la misma variable en el entorno del proceso, ese valor tiene prioridad.
+  reinicia la aplicación. Para reactivar Fast, cambia el valor a `fast`.
+- El buscador atiende un expediente por turno y, por defecto, busca respaldos para
+  **hasta cinco preguntas de ese expediente a la vez**. Puedes elegir un límite
+  de 1 a 5. Para volver a tres, pon `PQRS_CLARO_SOURCE_CONCURRENCY=3` en
+  `.env.local` y reinicia la aplicación. La redacción tiene su propio límite en
+  `PQRS_CLARO_DRAFT_CONCURRENCY`, con tres por defecto. El entorno del proceso
+  tiene prioridad sobre `.env.local`. Puedes comprobar los límites activos en
+  los campos `source_concurrency` y `draft_concurrency` de `GET /api/config`.
 - [Gmail](docs/GMAIL.md) requiere una conexión propia; no se transfieren tokens.
 - Los originales, decisiones, respuestas, aprobaciones y checkpoints se guardan en
   SQLite y archivos de `data/`. Cambiar únicamente el puerto no aísla los datos.

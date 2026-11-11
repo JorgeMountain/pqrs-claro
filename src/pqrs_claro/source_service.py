@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from .config import MAX_SOURCE_CONCURRENCY, Settings
 from .evidence_contract import apply_evidence_contract, catalog_audit, group_checks
 from .performance_metrics import operation, submit_context, track_case
 from .request_intent import classify_request_intent
@@ -81,6 +82,11 @@ class SourceService:
         self.semantic_model = ResidentSemanticModel()
         self.lock = threading.RLock()
         self.active = set()
+
+    @property
+    def request_concurrency(self):
+        configured = getattr(self.settings, "source_concurrency", Settings.source_concurrency)
+        return min(MAX_SOURCE_CONCURRENCY, max(1, configured))
 
     def catalog(self, case_id):
         return self.library.scoped(case_id)
@@ -383,7 +389,7 @@ class SourceService:
                 case, allowed_collection_ids=run.get("allowed_collection_ids", []))
             order = {request["id"]: i for i, request in enumerate(requests)}
             retrieval_lock = threading.RLock()
-            concurrency = min(3, max(1, getattr(self.settings, "source_concurrency", 3)))
+            concurrency = self.request_concurrency
             run["concurrency"] = concurrency
             retained_ids = {r["request_id"] for r in run["results"]}
             run["request_states"] = {r["id"]: "completed" if r["id"] in retained_ids else "queued"

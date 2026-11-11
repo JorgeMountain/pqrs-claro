@@ -28,6 +28,8 @@ def local_config(tmp_path, monkeypatch):
     monkeypatch.setenv("PQRS_CLARO_KEY_FILE", str(tmp_path / "unused"))
     monkeypatch.setenv("OPENAI_API_KEY", "test-not-real")
     monkeypatch.delenv("PQRS_CLARO_SOURCE_SERVICE_TIER", raising=False)
+    monkeypatch.delenv("PQRS_CLARO_SOURCE_CONCURRENCY", raising=False)
+    monkeypatch.delenv("PQRS_CLARO_DRAFT_CONCURRENCY", raising=False)
     return local_env
 
 
@@ -39,6 +41,25 @@ def test_source_tier_environment_overrides_local_config(local_config, monkeypatc
     assert config.Settings.load().source_service_tier == "fast"
     monkeypatch.setenv("PQRS_CLARO_SOURCE_SERVICE_TIER", "unknown")
     with pytest.raises(ValueError, match="PQRS_CLARO_SOURCE_SERVICE_TIER"):
+        config.Settings.load()
+
+
+def test_source_concurrency_is_independent_of_drafting(local_config, monkeypatch):
+    assert not local_config.exists()
+    assert config.Settings.load().source_concurrency == 5
+    local_config.write_text("PQRS_CLARO_SOURCE_CONCURRENCY=3\nPQRS_CLARO_DRAFT_CONCURRENCY=2\n")
+    with TestClient(create_unified_app()) as client:
+        settings = client.get("/api/config").json()
+        assert settings["source_concurrency"] == 3
+        assert settings["draft_concurrency"] == 2
+    monkeypatch.setenv("PQRS_CLARO_SOURCE_CONCURRENCY", "1")
+    assert config.Settings.load().source_concurrency == 1
+
+
+@pytest.mark.parametrize("value", ["0", "6", "many"])
+def test_invalid_source_concurrency_is_rejected(local_config, monkeypatch, value):
+    monkeypatch.setenv("PQRS_CLARO_SOURCE_CONCURRENCY", value)
+    with pytest.raises(ValueError, match="PQRS_CLARO_SOURCE_CONCURRENCY"):
         config.Settings.load()
 
 

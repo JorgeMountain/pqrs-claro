@@ -53,7 +53,7 @@ La IA tiene un reintento para corregir la cita de una comprobación declarada po
 
 Una brecha de contenido no vuelve a exigir el estado documental de afirmaciones ya cubiertas como contenido atribuido. Las fuentes sin cobertura y los usos que exigen autenticidad, expedición o entrega conservan sus controles. Los pasajes explícitos fijan el archivo de una comprobación; el número de oficio por sí solo no fusiona las versiones.
 
-Al terminar la búsqueda se crean los puntos de revisión antes de redactar. Cada solicitud sin borrador avanza cuando sus pendientes necesarios están resueltos; las actuaciones posteriores que no bloquean no impiden redactar. Las solicitudes listas se procesan con hasta tres trabajadores simultáneos, cada uno con su recorrido LangGraph de planificación, redacción y comprobación.
+La búsqueda de respaldos procesa por defecto hasta cinco preguntas simultáneas dentro del expediente. Se puede elegir un límite de una a cinco. Al terminar se crean los puntos de revisión antes de redactar. Cada solicitud sin borrador avanza cuando sus pendientes necesarios están resueltos. Las actuaciones posteriores que no bloquean permiten redactar. La redacción procesa por defecto hasta tres solicitudes simultáneas, con un límite configurable de una a seis. Cada solicitud sigue su recorrido LangGraph de planificación, redacción y comprobación. [Configuración y datos](../README.md#configuración-y-datos).
 
 Las decisiones incorporan su nota, atribución y pasajes disponibles al contexto de IA. Una decisión de no aplicabilidad no acredita por sí misma un hecho. En esta revisión previa, confirmar un pendiente requiere un pasaje disponible; un pendiente documental requiere soporte documental. Las decisiones no equivalen a aprobar la respuesta final.
 

@@ -202,7 +202,7 @@ planificar → redactar → comprobar
 
 El ajuste está acotado y puede ser rechazado; no es un bucle ilimitado. `draft_engine.py` implementa `plan()`, `write()`, `check()` y `repair()`. Los párrafos mantienen referencias a sus soportes. `draft_claim_checks.py` aporta controles locales sobre afirmaciones.
 
-**Paralelismo actual:** `source_service.py` analiza hasta tres solicitudes simultáneamente y `draft_service.py` redacta hasta tres elegibles simultáneamente, según configuración. Cada solicitud conserva el orden de sus pasos. La preparación espera la etapa de fuentes antes de organizar pendientes y redacción; no hay que confundir paralelismo entre solicitudes con ejecutar todo el expediente a la vez.
+`source_service.py` busca respaldos para un expediente por turno. Dentro del expediente, `PQRS_CLARO_SOURCE_CONCURRENCY` permite procesar de una a cinco preguntas en paralelo, con cinco por defecto. La preparación espera a que termine la búsqueda antes de organizar los pendientes y la redacción. `draft_service.py` redacta las solicitudes elegibles con un límite independiente de una a seis, con tres por defecto. Cada solicitud conserva el orden de sus pasos. [Configuración y datos](../README.md#configuración-y-datos).
 
 **Resultado:** propuestas de respuesta comprobadas, con posibilidad de ajustes pendientes. La IA no concede aprobación final.
 
