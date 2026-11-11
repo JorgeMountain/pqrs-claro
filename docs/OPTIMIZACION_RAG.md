@@ -49,6 +49,43 @@ los pasos 1 a 5.
 
 - [x] Conservar E5 en memoria entre búsquedas y volver a cargarlo después de un fallo.
 - [x] Retirar de la vista las citas de una colección al desvincularla del expediente.
+- [x] Usar Fast por defecto en el lector de todos los expedientes y permitir volver al modo habitual.
+
+El lector usa el mismo modelo configurado en ambos modos. Solicita Fast al leer
+las fuentes y al corregir una cita. En modo habitual omite `service_tier` en la
+petición. Al cambiar de modo, la búsqueda puede reutilizar lecturas válidas
+con los mismos documentos y permisos. La opción se configura en
+[Configuración y datos](../README.md#configuración-y-datos).
+
+Se verificó la integración mediante la ruta de búsqueda de la aplicación y la
+API de OpenAI con dos expedientes ficticios, cada uno con el índice preparado.
+Al repetir cada búsqueda sobre una copia limpia, el proveedor confirmó `fast`
+con la configuración inicial y `default` con el modo habitual. En las cuatro
+búsquedas se guardó la cita literal y quedó abierto el dato que faltaba.
+
+| Expediente ficticio | Respaldo validado | Dato pendiente | Fast | Habitual |
+| --- | --- | --- | ---: | ---: |
+| I1 | 43 módulos instalados | Fecha de la inspección | 8,20 s | 10,05 s |
+| I2 | Código VITRA-68 | Identidad de quien recibió el instrumento | 4,53 s | 7,61 s |
+
+Cada tiempo cubre desde el inicio de la búsqueda hasta la lectura validada, con
+una ejecución por expediente y modo. El registro local con los niveles devueltos,
+las citas y los pendientes está en
+`../experiments/rag-fast-integracion/resultado-e10275181e/verificacion.json`.
+
+También se probó la ruta `POST /api/cases/{id}/preparation` que usa «Continuar
+a redacción». Con otra copia de I1, OpenAI confirmó Fast y la cita quedó
+validada en 8,41 s. La preparación esperó la revisión de la fecha pendiente.
+Al reiniciar la aplicación se recuperaron la cita y el pendiente sin otra
+lectura. Registro local en
+`../experiments/rag-fast-integracion/recorrido-fcc2cf3f09/verificacion.json`.
+
+La prueba de regresión cubre ambas rutas, la configuración, la reparación de
+citas y la reutilización de resultados después de cambiar de modo.
+
+```powershell
+.\scripts\test.ps1 tests/test_source_service_tier.py
+```
 
 **Piloto de E5 con el lector de `master` (11 de noviembre de 2026).** En la
 comparación previa con la API, cuatro expedientes ficticios pasaron por tres

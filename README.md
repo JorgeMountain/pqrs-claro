@@ -80,6 +80,10 @@ y [arquitectura con diagramas](docs/GUIA_VISUAL_PQRS_CLARO.md).
 - La búsqueda combina texto, identificadores, contexto y embeddings locales.
   El [modelo semántico](docs/busqueda-semantica-local.md) se descarga explícitamente.
   Mientras falta o se prepara, los otros canales siguen disponibles y se informa su alcance.
+- El lector de fuentes usa Fast por defecto en todos los expedientes. Para volver al
+  modo habitual, pon `PQRS_CLARO_SOURCE_SERVICE_TIER=default` en `.env.local` y
+  reinicia la aplicación. Para reactivar Fast, cambia el valor a `fast`. Si defines
+  la misma variable en el entorno del proceso, ese valor tiene prioridad.
 - [Gmail](docs/GMAIL.md) requiere una conexión propia; no se transfieren tokens.
 - Los originales, decisiones, respuestas, aprobaciones y checkpoints se guardan en
   SQLite y archivos de `data/`. Cambiar únicamente el puerto no aísla los datos.

@@ -59,6 +59,9 @@ La respuesta incluye agrupación por etapa/operación y eventos individuales:
   de respuestas y propuestas de ajuste.
 - Llamadas a OpenAI, modelo reportado, tokens de entrada/salida, entrada en caché
   y tokens de razonamiento cuando el proveedor los informa.
+- Nivel de servicio solicitado (`requested_service_tier`) y devuelto por la API
+  (`service_tier`). El lector RAG solicita `fast` por defecto. En el modo habitual
+  deja la elección al proveedor y el campo solicitado queda en `null`.
 - Intentos HTTP observados y reintentos dentro de una llamada al SDK.
 - Errores por tipo, sin texto del error ni contenido documental.
 - Identificador de solicitud, incluso en tareas de redacción en paralelo.
@@ -84,7 +87,14 @@ modelo reportado y tarifas verificadas por millón de tokens en USD:
   "NOMBRE_EXACTO_DEL_MODELO": {
     "input_per_million_usd": null,
     "cached_input_per_million_usd": null,
-    "output_per_million_usd": null
+    "output_per_million_usd": null,
+    "service_tiers": {
+      "fast": {
+        "input_per_million_usd": null,
+        "cached_input_per_million_usd": null,
+        "output_per_million_usd": null
+      }
+    }
   }
 }
 ```
@@ -95,6 +105,17 @@ estimación con la configuración actual: no es un registro histórico de tarifa
 Si un modelo reportado no está configurado, el total queda desconocido. Los
 contadores `calls_without_usage`, `calls_without_attempt_count` y `priced_calls`
 permiten evaluar qué parte se pudo medir.
+
+Las tres tarifas del modelo se aplican al nivel `default` y a eventos históricos
+sin nivel registrado. Para otros niveles se consulta la entrada correspondiente
+en `service_tiers` según el valor devuelto por la API. Una llamada que solicite
+Fast y se atienda como `default` usa las tarifas habituales. Si falta el precio
+del nivel devuelto o el proveedor omite el nivel de una llamada que pidió Fast,
+el coste queda en `null`.
+
+La estimación distingue entrada ordinaria, entrada leída de caché y salida.
+Las escrituras de caché quedan agrupadas con la entrada ordinaria y pueden
+tener un precio distinto en la factura.
 
 ## Preservación y límites
 

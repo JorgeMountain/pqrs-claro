@@ -7,6 +7,7 @@ from pathlib import Path
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_SOURCE_SERVICE_TIER = "fast"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class Settings:
     initial_classification_provider: str = "openai"
     environment_label: str = "PQRS · revisión inicial y confirmación humana"
     semantic_matrix_cache_mb: int = 512
+    source_service_tier: str = DEFAULT_SOURCE_SERVICE_TIER
 
     @classmethod
     def load(cls):
@@ -53,10 +55,16 @@ class Settings:
                               or local.get("PQRS_CLARO_SEMANTIC_MATRIX_CACHE_MB") or 512)
         if not 0 <= matrix_cache_mb <= 1024:
             raise ValueError("PQRS_CLARO_SEMANTIC_MATRIX_CACHE_MB debe estar entre 0 y 1024.")
+        source_service_tier = (os.environ.get("PQRS_CLARO_SOURCE_SERVICE_TIER")
+                               or local.get("PQRS_CLARO_SOURCE_SERVICE_TIER")
+                               or DEFAULT_SOURCE_SERVICE_TIER).strip().lower()
+        if source_service_tier not in {"fast", "default"}:
+            raise ValueError("PQRS_CLARO_SOURCE_SERVICE_TIER debe ser fast o default.")
         classifier = (os.environ.get("PQRS_CLARO_CLASSIFICATION_PROVIDER")
                       or local.get("PQRS_CLARO_CLASSIFICATION_PROVIDER") or "openai").strip()
         if classifier not in {"openai", "jev"}:
             raise ValueError("PQRS_CLARO_CLASSIFICATION_PROVIDER debe ser openai o jev.")
         return cls(data_dir=data, api_key=key, model=model, port=port,
                    draft_concurrency=draft_concurrency, initial_classification_provider=classifier,
-                   semantic_matrix_cache_mb=matrix_cache_mb)
+                   semantic_matrix_cache_mb=matrix_cache_mb,
+                   source_service_tier=source_service_tier)

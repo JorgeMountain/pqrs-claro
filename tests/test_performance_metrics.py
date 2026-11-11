@@ -74,6 +74,37 @@ def test_configured_estimate_separates_cached_input_and_does_not_double_count_re
     assert data["priced_calls"] == 1
 
 
+@pytest.mark.parametrize("requested,effective,fast_price,expected", [
+    ("fast", "fast", True, 0.006),
+    ("fast", "fast", False, None),
+    ("fast", "default", True, 0.003),
+    ("fast", None, True, None),
+    (None, "fast", True, 0.006),
+    (None, "default", False, 0.003),
+])
+def test_price_uses_effective_service_tier(tmp_path, requested, effective, fast_price, expected):
+    folder(tmp_path)
+    rates = {"input_per_million_usd": 2, "cached_input_per_million_usd": 0.5,
+             "output_per_million_usd": 8}
+    if fast_price:
+        rates["service_tiers"] = {"fast": {name: 2 * value for name, value in rates.items()}}
+    (tmp_path / "metrics-pricing.json").write_text(json.dumps({"test-model": rates}))
+    response = reply()
+    response.service_tier = effective
+    kwargs = {} if requested is None else {"service_tier": requested}
+    with operation("sources", root=tmp_path, case_id="case"):
+        provider_call("sources.assess", lambda **_: response, **kwargs)
+    data = read_metrics(tmp_path, "case")
+    event = next(e for e in data["events"] if e["kind"] == "provider")
+    assert event["requested_service_tier"] == requested
+    assert event["service_tier"] == effective
+    assert data["priced_calls"] == (0 if expected is None else 1)
+    if expected is None:
+        assert data["estimated_cost_usd"] is None
+    else:
+        assert data["estimated_cost_usd"] == pytest.approx(expected)
+
+
 def test_parallel_cases_and_requests_have_separate_contexts(tmp_path):
     for case in ("one", "two"):
         folder(tmp_path, case)

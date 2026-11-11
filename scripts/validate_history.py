@@ -484,8 +484,10 @@ def run(output, subset, settings, ids=None):
     library = SnapshotLibrary(settings.data_dir, manifest["originals_read_only_path"])
     library.recover()
     cases = CaseStore(settings.data_dir)
-    assessor = RecordingAssessor(OpenAISourceAssessor(settings.api_key, settings.model), output,
-                                 attempt_id=execution["attempt_id"], library=library)
+    reader = OpenAISourceAssessor(settings.api_key, settings.model,
+                                  service_tier=settings.source_service_tier)
+    assessor = RecordingAssessor(reader, output, attempt_id=execution["attempt_id"],
+                                 library=library)
     service = SourceService(settings, cases, library, assessor=assessor)
     finished_results = []
     try:

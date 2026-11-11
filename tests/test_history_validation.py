@@ -245,7 +245,7 @@ def test_script_error_is_sanitized_and_next_sample_and_summary_are_saved(
 
     monkeypatch.setattr(harness, "SourceService", ServiceDouble)
     monkeypatch.setattr(harness, "OpenAISourceAssessor",
-                        lambda key, model: SimpleNamespace(model=model))
+                        lambda key, model, *, service_tier: SimpleNamespace(model=model))
     monkeypatch.setattr(harness, "persistence_checks", lambda *args: {"checked": True})
     summary = harness.run(output, "development", replace(settings, api_key="test-only-key"))
     assert len(started) == 2

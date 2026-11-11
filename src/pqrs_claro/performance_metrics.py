@@ -149,6 +149,8 @@ def provider_call(name, function, **kwargs):
         _save(scope, {
             "kind": "provider", "provider": "openai", "operation": name,
             "model": _get(response, "model") or kwargs.get("model"),
+            "requested_service_tier": kwargs.get("service_tier"),
+            "service_tier": _get(response, "service_tier"),
             "status": "error" if error_type else (_get(response, "status") or "returned"),
             "error_type": error_type,
             "seconds": round(perf_counter() - started, 6),
@@ -211,6 +213,16 @@ def _cost(event, prices):
     rate = prices.get(event.get("model"))
     if not isinstance(rate, dict):
         return None
+    tier = event.get("service_tier")
+    if tier is None and event.get("requested_service_tier") is not None:
+        return None
+    if tier not in (None, "default"):
+        tier_rates = rate.get("service_tiers")
+        if not isinstance(tier, str) or not isinstance(tier_rates, dict):
+            return None
+        rate = tier_rates.get(tier)
+        if not isinstance(rate, dict):
+            return None
     incoming, outgoing, cached = (event.get(k) for k in (
         "input_tokens", "output_tokens", "cached_input_tokens"))
     if incoming is None or outgoing is None:

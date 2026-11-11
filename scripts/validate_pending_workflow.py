@@ -443,8 +443,9 @@ def draft_review_packet(output, case):
 class CapturingSourceAssessor(OpenAISourceAssessor):
     """Conserva la selección estructurada para reproducir fallos sin repetir la IA."""
 
-    def __init__(self, api_key, model, attempt):
-        super().__init__(api_key, model)
+    def __init__(self, settings, attempt):
+        super().__init__(settings.api_key, settings.model,
+                         service_tier=settings.source_service_tier)
         self.attempt = attempt
         self.active_request_id = None
         original_parse = self.client.responses.parse
@@ -630,8 +631,7 @@ def run(output, settings, through, poll_seconds, retry_reviews, replay_from=None
         origin = read_json(previous / "execution.json")
         if origin.get("model") != settings.model:
             raise ValueError("El modelo configurado cambió respecto a la selección conservada.")
-        fallback = CapturingSourceAssessor(settings.api_key, settings.model, attempt) \
-            if refresh_changed else None
+        fallback = CapturingSourceAssessor(settings, attempt) if refresh_changed else None
         replay = ReplaySourceAssessor(previous, attempt, fallback=fallback)
         execution.update(mode="selective_refresh" if fallback else "materialization_replay",
                          llm_calls=0, replayed_from=replay_from)
@@ -644,7 +644,7 @@ def run(output, settings, through, poll_seconds, retry_reviews, replay_from=None
     if digest(cases.get(case_id)) != manifest["case_sha256"]:
         raise ValueError("El expediente QA ya no corresponde a la copia exacta congelada.")
     source_engine = replay or RecordingSourceAssessor(
-        CapturingSourceAssessor(settings.api_key, settings.model, attempt), attempt)
+        CapturingSourceAssessor(settings, attempt), attempt)
     verifications = SourceVerificationStore(data, library, cases)
     sources = SourceService(settings, cases, library, assessor=source_engine,
                             verifications=verifications)
