@@ -1,9 +1,9 @@
 import {actor,request as managementRequest,managerOptions,managementDialog} from './management-ui.js?v=phase2';
 import {rows,confirmation,title} from './case-browser-views.js?v=inbox3';
-import {inboxShell,inboxTable,mineGroups} from './inbox-views.js?v=sidebar1';
+import {inboxShell,inboxTable,mineGroups} from './inbox-views.js?v=receipt-choice';
 import {inboxSections,sectionCases,sectionCounts,caseStep} from './inbox-navigation.js?v=sidebar1';
 import {progressDetail,progress} from './inbox-progress.js?v=office-progress1';
-import {createReceiptPanel} from './inbox-receipt.js?v=sidebar1';
+import {createReceiptPanel} from './inbox-receipt.js?v=receipt-choice';
 import {createQueueRefresh} from './queue-refresh.js?v=phase2';
 import {createManagerPicker} from './manager-picker.js?v=managers1';
 
@@ -14,8 +14,8 @@ async function api(path,body,method='POST'){
 const normalize=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 export function createCaseBrowser({container,open,close,notice,onSelect,upload,gmail,onQueueChange=()=>{},onViewChange=()=>{}}){
   let root,active=[],trash=[],tab='mine',page=1,request=0,loading=false,reloadPending=false,loadedOnce=false;
-  const size=10;let managers=[],filters=null,scrollPosition=0,poolFilter='all',selectedId=null,panelMode=null,receipts={},panelOpener=null,managerPicker=null;
-  const busyReceipt=()=>Object.values(receipts).some(r=>r.busy());
+  const size=10;let managers=[],filters=null,scrollPosition=0,poolFilter='all',selectedId=null,panelMode=null,receipt=null,panelOpener=null,managerPicker=null;
+  const busyReceipt=()=>Boolean(receipt?.busy());
   const manager=()=>managers.find(m=>m.id===actor());
   function syncIdentity(){
     const avatar=document.querySelector('[data-actor-avatar]'),date=document.querySelector('[data-inbox-date]');
@@ -77,7 +77,7 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
     refresh.stop();let failed=false;
     const sequence=++request,owner=root;loading=true;if(!automatic)node('.cases-error').textContent='';
     node('[data-cases-refresh]').disabled=true;node('.cases-results').setAttribute('aria-busy','true');if(!loadedOnce)paint();
-    try{const data=await Promise.all([api(''),api('?deleted=true'),managementRequest('/api/managers')]);if(sequence!==request||owner!==root||!visible())return;[active,trash,managers]=data;loadedOnce=true;document.querySelector('#cases-actor').innerHTML=managerOptions(managers,actor(),'Selecciona tu gestor');const filter=node('#cases-manager-filter').value;node('#cases-manager-filter').innerHTML=managerOptions(managers,filter);paint();syncIdentity();Object.values(receipts).forEach(r=>r.syncManager());}
+    try{const data=await Promise.all([api(''),api('?deleted=true'),managementRequest('/api/managers')]);if(sequence!==request||owner!==root||!visible())return;[active,trash,managers]=data;loadedOnce=true;document.querySelector('#cases-actor').innerHTML=managerOptions(managers,actor(),'Selecciona tu gestor');const filter=node('#cases-manager-filter').value;node('#cases-manager-filter').innerHTML=managerOptions(managers,filter);paint();syncIdentity();receipt?.syncManager();}
     catch(error){failed=true;if(owner===root&&visible()){node('.cases-error').textContent=error.message+' Se reintentará la actualización automáticamente.';if(!automatic&&!active.length&&!trash.length)node('.cases-results').innerHTML='<p class="cases-empty">No se pudo actualizar la lista. Puedes pulsar «Actualizar» para reintentar.</p>';}}
     finally{if(sequence===request&&owner===root&&visible()){loading=false;node('[data-cases-refresh]').disabled=false;node('.cases-results').setAttribute('aria-busy','false');if(reloadPending){reloadPending=false;await load(automatic);}else refresh.schedule(failed);}}
   }
@@ -101,7 +101,7 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
   }
   function bindIdentity(){
     const actorSelect=document.querySelector('#cases-actor');
-    actorSelect.onchange=()=>{if(busyReceipt()){actorSelect.value=actor();notice('Espera a que termine la recepción antes de cambiar de gestor.');return;}localStorage.setItem('pqrs-pilot-manager',actorSelect.value);page=1;if(visible())paint();syncIdentity();Object.values(receipts).forEach(r=>r.syncManager());window.dispatchEvent(new Event('pqrs-manager-change'));};
+    actorSelect.onchange=()=>{if(busyReceipt()){actorSelect.value=actor();notice('Espera a que termine la recepción antes de cambiar de gestor.');return;}localStorage.setItem('pqrs-pilot-manager',actorSelect.value);page=1;if(visible())paint();syncIdentity();receipt?.syncManager();window.dispatchEvent(new Event('pqrs-manager-change'));};
     managerPicker??=createManagerPicker({select:actorSelect,onAdd:addManager});
     managerPicker.close();
   }
@@ -113,14 +113,17 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
   function resetFilters(){filters=null;page=1;scrollPosition=0;poolFilter='all';}
   function navigate(section){
     if(!visible()||!inboxSections[section]||busyReceipt())return false;
+    openSection(section);return true;
+  }
+  function openSection(section){
     tab=section;resetFilters();for(const id of filterIds)node('#'+id).value=id==='cases-sort'?'recent':'';
-    closePanel();paint();node('#cases-title').focus({preventScroll:true});window.scrollTo(0,0);return true;
+    closePanel();paint();node('#cases-title').focus({preventScroll:true});window.scrollTo(0,0);
   }
   async function show({finalizedId,section}={}){
     refresh.stop();loading=false;reloadPending=false;request++;
     if(inboxSections[section]){tab=section;resetFilters();panelMode=null;}
     if(finalizedId){tab='closed';page=1;scrollPosition=0;selectedId=finalizedId;panelMode='progress';filters={'cases-search':'','cases-status':'closed','cases-origin':'','cases-sort':'recent','cases-manager-filter':''};}
-    container.innerHTML=inboxShell();root=container.querySelector('.case-browser');receipts={};
+    container.innerHTML=inboxShell();root=container.querySelector('.case-browser');receipt=null;
     bindIdentity();
     root.addEventListener('keydown',event=>{if(event.key==='Tab'&&!node('.inbox-panel').hidden&&globalThis.matchMedia?.('(max-width:760px)').matches){const focusable=[...node('.inbox-panel').querySelectorAll('button:not(:disabled),input:not(:disabled),a[href],summary')].filter(n=>n.getClientRects().length);const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}return;}if(event.key==='Escape'&&!busyReceipt()){closePanel();return;}const b=event.target.closest('[role=tab]');if(!b||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();tab=event.key==='Home'?'mine':event.key==='End'?'active':b.dataset.casesTab==='mine'?'active':'mine';page=1;paint();node('#inbox-tab-'+tab).focus();});
     if(filters){node('#cases-manager-filter').innerHTML=managerOptions(managers,filters['cases-manager-filter']);for(const id of filterIds)node('#'+id).value=filters[id];}
@@ -143,7 +146,7 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
           else{await managementRequest(`/api/cases/${c.id}/management`,{revision:c.management.revision,actor_id:actor(),action:b.dataset.managementAction});if(b.dataset.managementAction==='start'){selectedId=c.id;await load();showPanel('progress');}else {notice('Expediente asignado. Lo encontrarás en Mi trabajo.');await load();}}
         }catch(e){if(visible())node('.cases-error').textContent=e.message;else notice(e.message);}finally{b.disabled=false;}return;
       }
-      if(b.hasAttribute('data-cases-new'))return showPanel('save');
+      if(b.hasAttribute('data-cases-new'))return showPanel('receipt');
       if(b.hasAttribute('data-cases-refresh'))return load();
       if(b.hasAttribute('data-cases-tab')){tab=b.dataset.casesTab;page=1;paint();return;}
       if(b.hasAttribute('data-cases-clear')){node('#cases-search').value='';node('#cases-status').value='';node('#cases-origin').value='';node('#cases-manager-filter').value='';poolFilter='all';page=1;paint();return;}
@@ -180,7 +183,7 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
     node('.inbox-panel').hidden=true;root.classList.add('panel-closed');
     (panelOpener?.isConnected?panelOpener:node('[data-panel-open="progress"]')).focus({preventScroll:true});
   }
-  function showPanel(mode='analyze'){
+  function showPanel(mode='receipt'){
     if(!visible()||busyReceipt())return;
     if(!document.activeElement?.closest?.('.inbox-panel'))panelOpener=document.activeElement;
     panelMode=mode;node('.inbox-panel').hidden=false;node('.inbox-panel').scrollTo?.(0,0);root.classList.remove('panel-closed');
@@ -188,8 +191,13 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
     root.querySelectorAll('[data-panel-slot]').forEach(n=>n.hidden=n.dataset.panelSlot!==mode);
     root.querySelectorAll('.inbox-panel-tabs [data-panel-open]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.panelOpen===mode)));
     if(mode==='progress'){updateProgress();return;}
-    if(!receipts[mode])receipts[mode]=createReceiptPanel({container:node(`[data-panel-slot="${mode}"]`),mode,upload,gmail,getManager:manager,onSaved:()=>{if(mode==='save'){tab='active';poolFilter='all';}return load();},onComplete:async id=>{selectedId=id;await onSelect(id);}});
-    receipts[mode].syncManager();
+    if(!receipt)receipt=createReceiptPanel({container:node('[data-panel-slot="receipt"]'),upload,gmail,getManager:manager,onSaved:load,
+      onComplete:async(id,destination)=>{await received(id,destination);if(destination==='save')notice('Recepción guardada en el pool del equipo.');}});
+    receipt.syncManager();
   }
-  return {show,navigate,initializeIdentity,showPanel,visible,busy:busyReceipt,refresh:load,async received(id,mode){if(mode==='analyze'){selectedId=id;await onSelect(id);}else{tab='active';poolFilter='all';await load();}}};
+  async function received(id,mode){
+    if(mode==='analyze'){selectedId=id;await load();await onSelect(id);}
+    else{openSection('active');await load();}
+  }
+  return {show,navigate,initializeIdentity,showPanel,visible,busy:busyReceipt,refresh:load,received};
 }

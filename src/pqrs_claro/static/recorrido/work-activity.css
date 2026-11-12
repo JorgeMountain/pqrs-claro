@@ -1,0 +1,29 @@
+.work-activity:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem 1rem;
+  padding: .4rem clamp(.75rem, 2vw, 1.5rem);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: .875rem;
+}
+.work-activity .text-button { min-height: 32px; }
+.work-activity-dialog {
+  box-sizing: border-box;
+  width: min(28rem, calc(100vw - 2rem));
+  height: fit-content;
+  inset: 0;
+  max-height: calc(100dvh - 2rem);
+  margin: auto;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+}
+.work-activity-dialog::backdrop { background: rgb(16 36 32 / 42%); }
+.work-activity-dialog h2 { margin-top: 0; }
+.work-activity-dialog .dialog-actions { flex-wrap: wrap; }
+.work-activity-dialog textarea { min-height: 5rem; }
+.work-activity-dialog input[type=number] { padding: .6rem; border: 1px solid var(--line); border-radius: 4px; }
+.work-activity-dialog [role=alert] { color: var(--color-danger, #922c28); }

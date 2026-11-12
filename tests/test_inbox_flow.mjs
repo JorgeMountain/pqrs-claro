@@ -56,7 +56,7 @@ test('el progreso usa estados guardados y mantiene la revisión humana pendiente
   assert.equal(progress({...c,processing:false,initial_review_status:'error'}).tone,'error');
 });
 test('el avance sigue visible al terminar el análisis, sin completar la revisión humana',()=>{
-  const c={id:'c1',status:'confirmed',initial_review_status:'needs_review',management:{owner_id:'ana',started_at:'today'}};
+  const c={id:'c1',status:'confirmed',preanalysis_status:'ready',initial_review_status:'needs_review',management:{owner_id:'ana',started_at:'today'}};
   const label='Preanálisis: Completado. Identificación: Por revisar. Redacción: Pendiente. Borrador: Pendiente';
   assert.ok(inboxTable([c],'ana').includes(label));
   assert.ok(progressDetail(c,'ana').includes(label));
@@ -94,7 +94,7 @@ test('expedientes anteriores recuperan la redacción guardada aunque no tengan r
 });
 
 test('la bandeja reabre el borrador guardado y reconoce un oficio generado sin cerrar la gestión',()=>{
-  const c={id:'ordinary',status:'confirmed',request_count:2,initial_review_status:'approved',saved_stage:3,
+  const c={id:'ordinary',status:'confirmed',request_count:2,preanalysis_status:'ready',initial_review_status:'approved',saved_stage:3,
     preparation:{status:'ready'},management:{owner_id:'ana',started_at:'today',state:'in_progress'}};
   assert.equal(progress(c).stage,3);
   assert.equal(progress(c).label,'Borrador guardado');
@@ -109,6 +109,16 @@ test('la bandeja reabre el borrador guardado y reconoce un oficio generado sin c
   assert.equal((progressBar(generated).match(/class="stage-\w+ complete"/g)||[]).length,4);
   assert.doesNotMatch(inboxTable([generated],'ana'),/Finalizada|Continuar con las respuestas/);
   assert.equal(c.management.state,'in_progress');
+});
+
+test('la etapa de identificación no da por completado un preanálisis sin constancia',()=>{
+  const c={id:'anterior',status:'confirmed',saved_stage:2,initial_review_status:'needs_review',
+    preanalysis_status:'idle',management:{owner_id:'ana'}};
+  for(const html of [inboxTable([c],'ana'),progressDetail(c,'ana')]){
+    assert.match(html,/Preanálisis: Sin registro\. Identificación: Por revisar/);
+    assert.match(html,/stage-preanalysis pending/);
+    assert.match(html,/stage-identify current/);
+  }
 });
 
 test('un oficio modificado o una generación fallida conserva su etapa sin fingir finalización',()=>{

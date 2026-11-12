@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><link rel="icon" href="data:,"><title>Registro de actividad · prueba aislada</title>
+<main><div id="view">Expediente ficticio</div></main><output id="result">Comprobando…</output>
+<script type="module">
+import {bindWorkActivity} from '../../src/pqrs_claro/static/recorrido/work-activity.js';
+
+// Se prueba la interfaz con el contrato del servidor simulado, sin tocar expedientes.
+const result = document.querySelector('#result');
+const calls = [], reports = [], notices = [];
+const wait = () => new Promise(resolve => setTimeout(resolve, 0));
+function check(ok, message) { if (!ok) throw Error(message); }
+let tick, actor = 'a', idle = false;
+const originalSetInterval = window.setInterval;
+window.setInterval = (fn, period) => { check(period === 15000, 'Latido inesperado'); tick = fn; };
+window.fetch = async (url, options) => {
+  const value = JSON.parse(options.body);
+  if (url.endsWith('/external-work')) {
+    reports.push(value);
+    if (reports.length === 1) throw Error('Respuesta perdida');
+    return {ok:true, json:async () => ({saved:true})};
+  }
+  calls.push(value);
+  if (value.event === 'confirm') idle = false;
+  return {ok:true, json:async () => ({status: value.event === 'stop' ? 'ended' : idle ? 'unconfirmed' : 'active'})};
+};
+try {
+  const ui = bindWorkActivity({view: document.querySelector('#view'), actor: () => actor, notice: s => notices.push(s)});
+  window.setInterval = originalSetInterval;
+  const record = {id:'caso-a', management:{owner_id:'a', state:'assigned'}};
+  const bar = document.querySelector('.work-activity'), modal = document.querySelector('.work-activity-dialog');
+  window.dispatchEvent(new Event('focus'));
+  ui.setCase(record);
+  await wait();
+  check(calls.length === 1 && calls[0].event === 'start' && !bar.hidden, 'No comenzó el preanálisis visible');
+  ui.setCase(record);
+  tick(); await wait();
+  check(calls.length === 2 && calls[1].event === 'heartbeat', 'El render reinició el reloj');
+  idle = true;
+  tick(); await wait();
+  check(modal.open && modal.querySelector('[data-resume]'), 'No se ofreció confirmar la lectura');
+  modal.querySelector('[data-dismiss]').click();
+  await wait();
+  check(!bar.querySelector('[data-confirm-reading]').hidden, 'Se perdió la opción de retomar tras cerrar el aviso');
+  bar.querySelector('[data-confirm-reading]').click();
+  await wait();
+  check(calls.at(-1).event === 'confirm', 'Faltó la confirmación explícita');
+  bar.querySelector('[data-external-work]').click();
+  const form = modal.querySelector('form');
+  form.elements.minutes.value = 12;
+  form.elements.reason.value = 'Llamada de prueba';
+  form.requestSubmit();
+  await wait();
+  check(modal.open && form.querySelector('[role="alert"]').textContent, 'No se indicó el error de red');
+  form.requestSubmit();
+  await wait();
+  check(!modal.open && notices.length === 1 && reports[0].entry_id === reports[1].entry_id, 'El reintento debe conservar el ID declarado');
+  window.dispatchEvent(new Event('blur'));
+  await wait();
+  const stopped = calls.length;
+  tick(); await wait();
+  check(calls.at(-1).event === 'stop' && calls.length === stopped, 'Se contó fuera de foco');
+  window.dispatchEvent(new Event('focus')); await wait();
+  check(calls.at(-1).event === 'start' && calls[0].session_id !== calls.at(-1).session_id, 'Volver debe iniciar otro tramo');
+  ui.setGeneralDrawer(true); await wait();
+  check(bar.hidden && calls.at(-1).event === 'stop', 'La ayuda general contó como trabajo del expediente');
+  ui.setGeneralDrawer(false); await wait();
+  actor = 'b'; window.dispatchEvent(new Event('pqrs-manager-change')); await wait();
+  check(bar.hidden && calls.at(-1).actor_id === 'a' && calls.at(-1).event === 'stop', 'Se atribuyó tiempo al otro gestor');
+  ui.setCase({...record, management:{owner_id:'b', state:'closed'}}); await wait();
+  check(bar.hidden && calls.at(-1).event === 'stop', 'Se contó una consulta al expediente finalizado');
+  ui.setCase({...record, management:{owner_id:'b', state:'in_progress'}}); await wait();
+  ui.setCase(null); await wait();
+  check(bar.hidden && calls.at(-1).event === 'stop' && calls.at(-1).actor_id === 'b', 'Se contó tiempo en la bandeja');
+  result.textContent = 'PASS · lectura, foco, cambio de gestor, bandeja y declaración externa';
+} catch (error) {
+  result.textContent = 'FAIL · ' + error.message;
+  throw error;
+}
+</script></html>

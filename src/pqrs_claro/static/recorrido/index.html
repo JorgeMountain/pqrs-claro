@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Gestión de Peticiones · Nuevo recorrido</title>
   <link rel="icon" href="data:,"><link rel="stylesheet" href="styles.css?v=palette4"><link rel="stylesheet" href="original-viewer.css?v=palette4"><link rel="stylesheet" href="workspace-layout.css?v=palette4"><link rel="stylesheet" href="split-pane.css?v=palette4"><link rel="stylesheet" href="quick-confirmation.css?v=palette4">
-  <link rel="stylesheet" href="evidence-upload.css?v=palette4"><link rel="stylesheet" href="library.css?v=palette4"><link rel="stylesheet" href="live-final.css?v=palette4"><link rel="stylesheet" href="petition-upload.css?v=palette4"><link rel="stylesheet" href="analysis-progress.css?v=palette4"><link rel="stylesheet" href="response-cards.css?v=palette4"><script type="module" src="app.js?v=sidebar1"></script>
+  <link rel="stylesheet" href="evidence-upload.css?v=palette4"><link rel="stylesheet" href="library.css?v=palette4"><link rel="stylesheet" href="live-final.css?v=palette4"><link rel="stylesheet" href="petition-upload.css?v=palette4"><link rel="stylesheet" href="analysis-progress.css?v=palette4"><link rel="stylesheet" href="response-cards.css?v=palette4"><script type="module" src="app.js?v=management-times1"></script>
 <link rel="stylesheet" href="document-workspace.css?v=palette4">
 <link rel="stylesheet" href="gmail.css?v=palette4">
 <link rel="stylesheet" href="identification-actions.css?v=palette4">
@@ -13,7 +13,7 @@
 <link rel="stylesheet" href="initial-review.css?v=palette4">
 <link rel="stylesheet" href="receipt-page.css?v=palette4">
 <link rel="stylesheet" href="workspace-navigation.css?v=palette4">
-<link rel="stylesheet" href="inbox.css?v=docked-receipt1">
+<link rel="stylesheet" href="inbox.css?v=receipt-choice">
 <link rel="stylesheet" href="manager-picker.css?v=palette4">
 <link rel="stylesheet" href="preanalysis.css?v=palette4">
 <link rel="stylesheet" href="expediente-workspace.css?v=reading-space1">
@@ -23,6 +23,8 @@
 <link rel="stylesheet" href="draft-workspace.css?v=draft-workspace1">
 <link rel="stylesheet" href="stage-progress.css?v=stage-progress1">
 <link rel="stylesheet" href="workspace-sidebar.css?v=sidebar1">
+<link rel="stylesheet" href="work-activity.css">
+<link rel="stylesheet" href="management-times.css?v=1">
 </head>
 <body>
   <a href="#main" class="skip">Ir al contenido</a>
@@ -57,6 +59,7 @@
           <button id="workspace-pending" class="workspace-link" data-workspace-section="pending"><span data-workspace-icon="clock" aria-hidden="true"></span><span class="workspace-link-label">Pendientes por resolver</span><span class="workspace-count attention" data-workspace-count="pending" aria-hidden="true">…</span></button>
           <button id="workspace-drafts" class="workspace-link" data-workspace-section="drafts"><span data-workspace-icon="file" aria-hidden="true"></span><span class="workspace-link-label">Borradores</span><span class="workspace-count" data-workspace-count="drafts" aria-hidden="true">…</span></button>
           <button id="workspace-closed" class="workspace-link" data-workspace-section="closed"><span data-workspace-icon="archive" aria-hidden="true"></span><span class="workspace-link-label">Finalizadas</span><span class="workspace-count complete" data-workspace-count="closed" aria-hidden="true">…</span></button>
+          <button id="workspace-times" class="workspace-link"><span data-workspace-icon="clock" aria-hidden="true"></span><span class="workspace-link-label">Tiempos de gestión</span></button>
         </div>
         <div class="workspace-group workspace-resources" role="group" aria-labelledby="workspace-resources-label">
           <h2 class="workspace-section-label" id="workspace-resources-label">Recursos</h2>

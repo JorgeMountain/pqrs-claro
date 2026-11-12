@@ -28,6 +28,7 @@ class Conflict(ValueError):
 
 class CaseStore:
     management = None
+    work_sessions = None
 
     def assert_open(self, case_id):
         """Call under the admitting service lock; closing acquires all these locks."""
@@ -252,6 +253,8 @@ class CaseStore:
                 raise Conflict("El expediente cambió. Actualiza la lista y vuelve a intentarlo.")
             if bool(deleted_at) == deleted:
                 raise Conflict("El expediente ya está en ese estado. Actualiza la lista.")
+            if deleted and self.work_sessions:
+                self.work_sessions.close_case(conn, case_id)
             timestamp = now()
             conn.execute(
                 "INSERT OR REPLACE INTO case_lifecycle VALUES (?,?,?)",

@@ -34,12 +34,13 @@ export function selectWorkspaceInbox(section){
 export const workspaceHelp = `<div class="workspace-help">
   <p>Selecciona tu gestor en la cabecera. Los contadores indican expedientes; Pendientes y Borradores son vistas de tu trabajo y pueden coincidir.</p>
   <dl>
-    <dt>Nuevo expediente</dt><dd>Recibe un PDF o un correo y abre el preanálisis. La identificación comienza cuando tú la confirmas.</dd>
+    <dt>Nuevo expediente</dt><dd>Recibe un PDF o un correo y elige si agregarlo al pool del equipo o abrir el preanálisis. La identificación comienza cuando tú la confirmas.</dd>
     <dt>Mi trabajo</dt><dd>Expedientes abiertos a tu cargo, con su avance conservado.</dd>
     <dt>Pool del equipo</dt><dd>Consulta los expedientes abiertos del equipo y toma los que estén disponibles.</dd>
     <dt>Pendientes por resolver</dt><dd>Encuentra expedientes que necesitan revisión o una acción del gestor. Los procesos en curso aparecen en Mi trabajo.</dd>
     <dt>Borradores</dt><dd>Retoma los oficios guardados. Generar un oficio no finaliza por sí solo el expediente.</dd>
     <dt>Finalizadas</dt><dd>Consulta lo que cerraste con «Finalizar expediente», conservando sus documentos y respuestas.</dd>
+    <dt>Tiempos de gestión</dt><dd>Consulta y descarga el tiempo transcurrido por expediente y el trabajo registrado por cada gestor.</dd>
     <dt>Papelera</dt><dd>Consulta o restaura expedientes eliminados.</dd>
   </dl><p class="muted">Dentro del expediente puedes volver a las etapas disponibles para consultar el avance guardado.</p>
 </div>`;

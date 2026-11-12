@@ -1,12 +1,12 @@
 import {esc} from './views.js';
-import {connectionView,messageList,importView,originalView} from './gmail-views.js?v=20260916-mail';
+import {connectionView,messageList,importView,originalView} from './gmail-views.js?v=receipt-choice';
 
 async function api(path,body,method='POST'){
   const response=await fetch('/api/gmail'+path,body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}});
   const value=await response.json();if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'No se pudo completar la operación con Gmail.');return value;
 }
-export function createGmail({open,close,notice,onOpenCase,onReceive}){
-  let poll, label='PQRS-Pruebas',receiveMode='save';
+export function createGmail({open,close,notice,onOpenCase,onReceive,getManager}){
+  let poll, label='PQRS-Pruebas';
   const panel=()=>document.querySelector('#gmail-panel');
   function shell(title){clearTimeout(poll);open(title,'<section id="gmail-panel" class="gmail-panel"><div id="gmail-content"><p role="status">Cargando…</p></div><p id="gmail-operation" role="status"></p><p id="gmail-error" role="alert"></p></section>');return panel();}
   async function action(node,work){
@@ -16,8 +16,7 @@ export function createGmail({open,close,notice,onOpenCase,onReceive}){
     try{await work();}catch(e){if(node.isConnected)node.querySelector('#gmail-error').textContent=e.message;}
     finally{delete node.dataset.busy;node.removeAttribute('aria-busy');if(node.isConnected){node.querySelector('#gmail-operation').textContent='';node.querySelectorAll('button,input,select').forEach(b=>b.disabled=false);}}
   }
-  async function show(mode){
-    if(mode)receiveMode=mode;
+  async function show(){
     const node=shell('Peticiones recibidas · Gmail');
     await action(node,async()=>{const status=await api('/status');if(!node.isConnected)return;node.querySelector('#gmail-content').innerHTML=connectionView(status);if(status.configured&&!status.connected)node.querySelector('#gmail-content').insertAdjacentHTML('beforeend','<details><summary>Cambiar configuración de Google</summary><form id="gmail-config"><label class="field">Nuevo archivo de configuración de Google<input name="file" type="file" accept=".json,application/json" required></label><button>Guardar configuración</button></form></details>');bind(node,status);});
   }
@@ -57,13 +56,52 @@ export function createGmail({open,close,notice,onOpenCase,onReceive}){
       content.innerHTML='<button class="text-button" data-mail="back">← Volver a la bandeja</button>'+importView(message,cases);
       content.querySelector('[data-mail="back"]').onclick=()=>void show();
       content.querySelector('[data-open-case]')?.addEventListener('click',()=>void action(node,async()=>{await onOpenCase(message.case_id);close();}));
-      const form=content.querySelector('#gmail-import');if(!form)return;let importedResult=null;
-      const update=()=>{const mode=form.elements.mode.value;form.querySelectorAll('[data-mode]').forEach(e=>e.hidden=e.dataset.mode!==mode);form.querySelector('#gmail-import-submit').textContent=mode==='link'?'Vincular correo':receiveMode==='analyze'?'Revisar documento':'Guardar en el pool';};
-      form.elements.mode.onchange=update;update();
-      form.onsubmit=event=>{event.preventDefault();const body={account,mode:form.elements.mode.value,case_number:form.elements.case_number.value,attachment_id:form.elements.attachment_id?.value||null,body_confirmed:form.elements.body_confirmed.checked,target_case_id:form.elements.target_case_id?.value||null};void action(node,async()=>{
-        const result=importedResult||(importedResult=await api(`/messages/${encodeURIComponent(id)}/import`,body));
-        if(onReceive)await onReceive(result.case_id,{...result,mode:receiveMode});else await onOpenCase(result.case_id);close();notice(result.duplicate?'Este correo ya estaba incorporado.':result.linked?'Correo vinculado al expediente.':'Petición incorporada desde Gmail.');
-      });};
+      const form=content.querySelector('#gmail-import');
+      if(!form)return;
+      let imported=null;
+      const buttons=form.querySelectorAll('[data-receipt-destination]');
+      function update(){
+        const mode=form.elements.mode.value;
+        form.querySelectorAll('[data-mode]').forEach(el=>el.hidden=el.dataset.mode!==mode);
+        form.querySelector('[data-receipt-destinations]').hidden=mode==='link';
+        form.elements.body_confirmed.required=mode==='body';
+        if(form.elements.target_case_id)form.elements.target_case_id.required=mode==='link';
+        if(imported){
+          form.querySelectorAll('input,select').forEach(field=>field.disabled=true);
+          buttons.forEach(button=>button.disabled=button.dataset.receiptDestination!==imported.destination);
+        }
+      }
+      async function submit(destination){
+        if(node.dataset.busy || (imported && imported.destination!==destination))return;
+        if(!form.reportValidity())return;
+        await action(node,async()=>{
+          if(!imported){
+            const manager=destination==='analyze'?getManager():null;
+            if(destination==='analyze'&&!manager)throw new Error('Selecciona tu gestor antes de iniciar el análisis.');
+            const fields=form.elements;
+            const body={account,mode:fields.mode.value,case_number:fields.case_number.value,
+              attachment_id:fields.attachment_id?.value||null,body_confirmed:fields.body_confirmed.checked,
+              target_case_id:fields.target_case_id?.value||null};
+            const result=await api(`/messages/${encodeURIComponent(id)}/import`,body);
+            imported={result,destination,manager};
+          }
+          const {result,manager}=imported;
+          const mode=result.duplicate||result.linked?'save':destination;
+          if(onReceive)await onReceive(result.case_id,{...result,mode,manager});
+          else await onOpenCase(result.case_id);
+          close();
+          notice(result.duplicate?'Este correo ya estaba incorporado.':result.linked?'Correo vinculado al expediente.':
+            mode==='save'?'Expediente agregado al pool.':'Expediente abierto para preanálisis.');
+        });
+        if(form.isConnected)update();
+      }
+      buttons.forEach(button=>button.onclick=()=>void submit(button.dataset.receiptDestination));
+      form.onsubmit=event=>{
+        event.preventDefault();
+        if(form.elements.mode.value==='link')void submit('save');
+      };
+      form.elements.mode.onchange=update;
+      update();
     });
   }
   async function showCase(caseId){
