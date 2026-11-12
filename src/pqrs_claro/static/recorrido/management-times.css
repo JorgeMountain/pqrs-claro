@@ -1,0 +1,54 @@
+.management-times {
+  max-width: 96rem;
+  padding: clamp(1rem, 3vw, 2.5rem);
+  margin: 0 auto;
+  color: var(--ink);
+}
+.management-times h1 { margin: 0 0 .5rem; }
+.management-times > .muted { margin-bottom: 1.5rem; }
+.times-filters, .times-toolbar, .times-pages { display: flex; gap: .75rem; flex-wrap: wrap; align-items: end; }
+.times-filters {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0 0 1.5rem;
+}
+.times-filters > :is(label, div) { display: grid; gap: .25rem; flex: 1 1 9rem; min-width: 0; font-weight: 600; }
+.times-filters select, .times-filters input {
+  border: 1px solid var(--color-control-line);
+  border-radius: 4px;
+  padding: .5rem;
+  background: var(--surface);
+  color: var(--ink);
+  width: 100%; min-width: 0; min-height: 2.5rem;
+}
+.times-filters button { min-height: 2.5rem; }
+.times-toolbar { align-items: center; justify-content: space-between; }
+.times-switch { display: inline-flex; gap: .25rem; }
+.times-switch button[aria-pressed=true] { color: white; background: var(--green); border-color: var(--green); }
+.times-download { font-weight: 600; padding: .5rem 0; }
+.times-status { margin: 1rem 0 .5rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.times-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.management-times table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .875rem; }
+.management-times th, .management-times td { text-align: left; padding: .875rem .75rem; vertical-align: top; }
+.management-times thead { color: var(--color-secondary); background: var(--color-surface-soft); }
+.management-times tbody tr + tr { border-top: 1px solid var(--color-divider); }
+.management-times summary { cursor: pointer; overflow-wrap: anywhere; }
+.management-times small { display: block; font-weight: 400; color: var(--muted); }
+.management-times dl { display: grid; grid-template-columns: auto 1fr; gap: .375rem .75rem; }
+.management-times dd { margin: 0; font-weight: 400; }
+.management-times ul { padding-left: 1.25rem; font-weight: 400; }
+.times-guide { margin-top: 1.5rem; border-top: 1px solid var(--line); padding: 1rem 0; max-width: 70ch; }
+.times-guide summary { font-weight: 600; }
+.times-guide p { margin: .75rem 0; }
+.times-pages { justify-content: end; align-items: center; margin-top: .75rem; }
+.times-empty { padding: 1.5rem; background: var(--surface); border: 1px solid var(--line); }
+@media (max-width: 760px) {
+  .management-times thead { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
+  .management-times tbody, .management-times table { display: block; }
+  .management-times tbody tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; padding: 1rem; }
+  .management-times tbody th { grid-column: 1/-1; }
+  .management-times th, .management-times td { padding: 0; }
+  .management-times td::before { display: block; content: attr(data-label); color: var(--muted); font-size: .75rem; }
+}

@@ -27,7 +27,7 @@ async function api(path,body,method='POST'){
   catch(error){if(['TimeoutError','AbortError'].includes(error.name))throw new Error('La consulta está tardando más de lo esperado. El avance guardado se conserva; actualiza el estado para recuperarlo.');throw error;}
   if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'Revisa los campos y vuelve a intentarlo.');return value;
 }
-export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPreanalysis}){
+export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPreanalysis,onWorkCase=()=>{}}){
   let current=null,data=null,job={},mapping={},drafts={},review={},step=1,busy=false,timer,token=0,release=()=>{};
   const state={originalPage:1,originalSelection:null,originalZoom:100};const view=document.querySelector('#view');
   let initialEnabled=false,automaticInitial=false,initial={},initialForm=null,initialActionError='',configLoaded=false;
@@ -144,6 +144,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     }});
   function render(){
     if(suspended)return;
+    if(current)onWorkCase(current);
     if(step!==3)final.hide();
     redactionPosition=captureRedactionView(view)||redactionPosition;
     const redactionView=step===2?redactionPosition:null;
@@ -505,5 +506,5 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
       case 'live-sources':{open('Fuentes de la solicitud '+data.requests[index].label,`<div id="live-source-detail" data-case="${esc(current.id)}" data-request="${esc(data.requests[index].id)}"></div>`);updateSourcePanel();break;}
     }});
   });
-  return {active:()=>Boolean(current),choose,upload,select,go:navigate,resume:navigate,leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;suspended=false;final.hide();clearTimeout(timer);release();document.body?.classList.remove('expediente-page','inbox-page');current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(restore=true){await config();const id=new URL(location.href).searchParams.get('case');return id&&restore?run(()=>select(id)):Promise.resolve();}};
+  return {active:()=>Boolean(current),choose,upload,select,go:navigate,resume:navigate,leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;suspended=false;final.hide();clearTimeout(timer);release();document.body?.classList.remove('expediente-page','inbox-page');if(current)onWorkCase(null);current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(restore=true){await config();const id=new URL(location.href).searchParams.get('case');return id&&restore?run(()=>select(id)):Promise.resolve();}};
 }

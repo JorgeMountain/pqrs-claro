@@ -5,14 +5,14 @@ import {preanalysisProgress} from './stage-progress.js?v=stage-progress1';
 
 const checks=[['requester','Datos del solicitante','Encontrados'],['respect','Contenido respetuoso','Sin alertas'],['integrity','Legibilidad e integridad','Verificado']];
 
-export function createPreanalysis({container,onBack,onStarted,notice}){
+export function createPreanalysis({container,onBack,onStarted,notice,onWorkCase=()=>{}}){
   let root,current,record={},page=1,zoom=100,marks='requester',timer,token=0,pageToken=0,busy=false;
   let confirmed=false,ack={},notes={},readOnly=false,viewOptions={};
   const own=()=>current?.management?.owner_id===actor();
   const editable=()=>own()&&!readOnly;
   const visible=()=>Boolean(root?.isConnected);
   const prefix=()=>`/api/cases/${encodeURIComponent(current.id)}/preanalysis`;
-  function leave(){clearTimeout(timer);token++;pageToken++;root=null;current=null;busy=false;}
+  function leave(){if(current)onWorkCase(null);clearTimeout(timer);token++;pageToken++;root=null;current=null;busy=false;}
   function enabled(){return editable()&&record.status==='ready'&&confirmed&&!busy&&checks.every(([key])=>record.checks?.[key]?.state==='pass'||ack[key]&&notes[key]?.trim().length>=8);}
   function syncStart(){const button=root?.querySelector('[data-pre-start]');if(button)button.disabled=!enabled();}
   function restoreDraft(){if(record.draft?.actor_id===actor()){notes={...record.draft.notes};ack=Object.fromEntries(record.draft.acknowledged.map(key=>[key,true]));}}
@@ -80,7 +80,7 @@ export function createPreanalysis({container,onBack,onStarted,notice}){
     const owner=current.management?.owner_name||'Sin asignar',id=current.management?.reference||current.case_number||current.internal_number||`PQRS-${current.id.slice(0,12).toUpperCase()}`;
     const stages=viewOptions.navigation||`<ol class="pre-steps" aria-label="Etapas del expediente">${['Preanálisis','Identificación','Redacción','Borrador'].map((name,i)=>`<li ${i===0?'aria-current="step"':''}><span class="pre-step-number">${i+1}</span><div><strong>${name}</strong>${i?`<small>${readOnly?'Consulta':i===1&&current.status==='error'?'Por reintentar':'Sin iniciar'}</small>`:''}</div></li>`).join('')}</ol>`;
     container.innerHTML=`<section class="preanalysis" aria-labelledby="pre-title"><button type="button" class="text-button pre-back" data-pre-back>${icon('arrow-left')}Volver a la bandeja</button><h1 id="pre-title" tabindex="-1">Preanálisis del expediente</h1><p class="pre-subtitle">${readOnly?'Consulta la revisión previa del documento.':'Revisa el documento antes de identificar sus peticiones.'}</p><div class="pre-meta"><span class="pre-file">${icon('file')}<span>${esc(id)} <span class="muted">· ${esc(current.filename)}</span></span></span><span class="pre-owner"><span class="inbox-avatar is-mine">${esc(owner.slice(0,1).toUpperCase())}</span><span data-pre-owner>${esc(owner)}${own()?' (tú)':''}</span></span><span class="pre-status">${readOnly?'Consulta':'Preanálisis'}</span></div>${stages}<div data-pre-progress></div><div class="pre-columns"><section class="pre-checks" data-pre-checks></section><section class="pre-viewer" aria-label="Documento original"><div class="pre-viewer-heading"><h2>Documento original</h2><a href="/api/cases/${encodeURIComponent(current.id)}/original" target="_blank" rel="noopener">Abrir PDF ${icon('external-link')}</a></div><div class="pre-viewer-tools"><label>Página <select data-pre-page aria-label="Página del documento"><option>1</option></select></label><span data-pre-page-count></span><div class="pre-zoom"><button type="button" data-pre-zoom="-25" aria-label="Reducir documento">${icon('minus')}</button><output data-pre-zoom-value>100%</output><button type="button" data-pre-zoom="25" aria-label="Ampliar documento">${icon('plus')}</button></div></div><div class="pre-canvas" tabindex="0" aria-label="Vista del PDF; desplázate para leer el documento"><div class="pre-paper" data-pre-paper></div></div><p class="pre-page-status" role="status" data-pre-page-status></p></section></div></section>`;
-    root=container.querySelector('.preanalysis');renderChecks();
+    root=container.querySelector('.preanalysis');onWorkCase(current);renderChecks();
     root.addEventListener('input',event=>{const el=event.target;if(el.hasAttribute('data-pre-confirm'))confirmed=el.checked;if(el.dataset.preAck)ack[el.dataset.preAck]=el.checked;if(el.dataset.preNote)notes[el.dataset.preNote]=el.value;syncStart();});
     root.addEventListener('change',event=>{if(event.target.hasAttribute('data-pre-page'))void loadPage(Number(event.target.value));});
     root.addEventListener('click',async event=>{

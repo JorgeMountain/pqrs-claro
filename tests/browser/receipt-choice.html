@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="es">
+<meta charset="utf-8">
+<title>Prueba de recepción de PDF</title>
+<h1>Prueba de recepción de PDF</h1>
+<pre id="result" role="status">Comprobando…</pre>
+<div id="receipt"></div>
+<script type="module">
+import {createReceiptPanel} from '../../src/pqrs_claro/static/recorrido/inbox-receipt.js';
+
+// Servir esta página desde la raíz del repositorio en un puerto de prueba.
+// Todos los archivos, cargas y acciones de gestión se simulan en esta página.
+const container = document.querySelector('#receipt');
+const result = document.querySelector('#result');
+const managerKey = 'pqrs-pilot-manager';
+const previousManager = localStorage.getItem(managerKey);
+function check(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+async function exercise(mode, names, manager) {
+  if (manager) localStorage.setItem(managerKey, manager);
+  else localStorage.removeItem(managerKey);
+  const uploaded = [], claims = [], completed = [];
+  let releaseUpload;
+  const gate = new Promise(resolve => { releaseUpload = resolve; });
+  window.fetch = async (url, options = {}) => {
+    const reply = value => ({ok:true, json:async () => value});
+    if (url === '/api/config') return reply({max_upload_mb:20, max_pages:50});
+    check(url === '/api/cases/c1/management' && mode === 'analyze', 'Petición inesperada: ' + url);
+    if (!options.body) return reply({revision:0, owner_id:null});
+    const {action, actor_id} = JSON.parse(options.body);
+    check(action === 'claim' && actor_id === manager, 'Acción inesperada al recibir el expediente');
+    claims.push(actor_id);
+    return reply({revision:1, owner_id:actor_id});
+  };
+  createReceiptPanel({
+    container, getManager:() => manager ? {id:manager, name:'Gestor de prueba'} : null,
+    upload:async file => {
+      uploaded.push(file.name);
+      const id = 'c' + uploaded.length;
+      await gate;
+      return {id};
+    },
+    onSaved:async () => {},
+    onComplete:async (id, chosenMode) => { completed.push({id, mode:chosenMode}); }
+  });
+  const form = container.querySelector('form');
+  const input = form.querySelector('input[type=file]');
+  const files = new DataTransfer();
+  names.forEach(name => files.items.add(new File(['%PDF ficticio'], name, {type:'application/pdf'})));
+  if (names.length > 1) {
+    form.querySelector('[data-receipt-drop]').dispatchEvent(new DragEvent('drop', {dataTransfer:files, bubbles:true}));
+  } else {
+    input.files = files.files;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+  }
+  form.requestSubmit();
+  check(uploaded.length === 0 && completed.length === 0, 'Seleccionar o enviar sin destino registró el documento');
+  const save = form.querySelector('[data-receipt-action="save"]');
+  const analyze = form.querySelector('[data-receipt-action="analyze"]');
+  check(save && analyze, 'Falta una de las dos opciones de recepción');
+  const chosen = mode === 'analyze' ? analyze : save;
+  check(!chosen.disabled && chosen.getClientRects().length, 'La opción elegida debe estar disponible');
+  if (names.length === 1 && manager) {
+    check(!save.disabled && !analyze.disabled, 'Un PDF debe permitir escoger cualquiera de los dos destinos');
+  } else {
+    check(analyze.disabled, 'El análisis requiere un solo archivo y un gestor activo');
+  }
+  chosen.click();
+  save.click();
+  analyze.click();
+  check(uploaded.length === 1, 'Un segundo clic duplicó la carga mientras se guardaba el original');
+  releaseUpload();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  check(uploaded.join('|') === names.join('|'), 'Se perdió o se duplicó un archivo');
+  check(completed.length === 1 && completed[0].mode === mode, 'La navegación no corresponde al destino elegido');
+  check(claims.length === (mode === 'analyze' ? 1 : 0), 'Asignación incorrecta para el destino elegido');
+  if (mode === 'analyze') check(completed[0].id === 'c1', 'Se abrió otro expediente en el preanálisis');
+}
+
+try {
+  await exercise('analyze', ['uno.pdf'], 'gestor-prueba');
+  await exercise('save', ['pool.pdf'], 'gestor-prueba');
+  await exercise('save', ['sin-gestor.pdf'], '');
+  await exercise('save', ['primero.pdf', 'segundo.pdf'], 'gestor-prueba');
+  result.textContent = 'Correcto. Elección explícita, dos destinos, doble clic, recepción sin gestor y arrastre de varios PDF.';
+} catch (error) {
+  result.textContent = 'Falló. ' + error.message;
+  throw error;
+} finally {
+  if (previousManager === null) localStorage.removeItem(managerKey);
+  else localStorage.setItem(managerKey, previousManager);
+}
+</script>
+</html>

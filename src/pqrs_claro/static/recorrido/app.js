@@ -1,14 +1,16 @@
 import {receiveDocument} from './receipt-flow.js';
+import {bindWorkActivity} from './work-activity.js';
+import {renderManagementTimes} from './management-times.js';
 import {actor,request as managementRequest} from './management-ui.js?v=phase2';
-import {createGmail} from './gmail-inbox.js?v=workspace1';
+import {createGmail} from './gmail-inbox.js?v=receipt-choice';
 import {createEvidenceUpload} from './evidence-upload.js';
 import {createLibrary} from './library.js?v=20260911-source-spinner';
 import {createLive} from './live.js?v=approval-progress1';
-import {createCaseBrowser} from './case-browser.js?v=sidebar1';
+import {createCaseBrowser} from './case-browser.js?v=receipt-choice';
 import {createPreanalysis} from './preanalysis.js?v=stage-progress1';
 import {confirmScope,reopenScope,recordDecision,rejectionForm,scopeStatement} from './quick-confirmation.js';
 import {bindSplitPane,focusRequest} from './split-pane.js?v=20260911-scroll';
-import {setWorkspaceSection,selectWorkspaceInbox,syncWorkspaceQueue,workspaceHelp} from './workspace-menu.js?v=sidebar1';
+import {setWorkspaceSection,selectWorkspaceInbox,syncWorkspaceQueue,workspaceHelp} from './workspace-menu.js?v=management-times1';
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {esc, understanding, responses, office, sourcesView, blocked, paragraphs} from './views.js';
 const view=document.querySelector('#view'), drawer=document.querySelector('#drawer'), body=document.querySelector('#drawer-body');
@@ -16,22 +18,24 @@ if(!new URLSearchParams(location.search).get('case'))document.querySelector('.pr
 let homeVisible=false;
 let data, state={step:1,scenario:'ready',edits:{},confirm:false,approved:false}, busy=false, opener, timer;
 const notice=message=>{clearTimeout(timer);document.querySelector('#notice').textContent=message;timer=setTimeout(()=>document.querySelector('#notice').textContent='',4500);};
-const library=createLibrary({open,close:()=>drawer.close(),notice});
+const workActivity=bindWorkActivity({view,actor,notice});
+function openGeneral(title,html){open(title,html);workActivity.setGeneralDrawer(true);}
+const library=createLibrary({open:openGeneral,close:()=>drawer.close(),notice});
 const evidence=createEvidenceUpload({open,close:()=>drawer.close(),render:()=>render(),notice,getData:()=>data,changed:dirty=>{state.evidenceDirty=dirty;if(dirty)invalidate();}});
 let releaseSplitPane=()=>{};
-const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases,onPreanalysis:showSavedPreanalysis});
-const preanalysis=createPreanalysis({container:view,notice,onBack:showCases,onStarted:async id=>{preanalysis.leave();showWorkspace();homeVisible=false;history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id));await live.select(id);}});
+const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases,onPreanalysis:showSavedPreanalysis,onWorkCase:workActivity.setCase});
+const preanalysis=createPreanalysis({container:view,notice,onWorkCase:workActivity.setCase,onBack:showCases,onStarted:async id=>{preanalysis.leave();showWorkspace();homeVisible=false;history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id));await live.select(id);}});
 async function uploadToPool(file,metadata){
   const body=new FormData();body.set('file',file);for(const [key,value] of Object.entries(metadata))if(value)body.set(key,value);
   const response=await fetch('/api/cases',{method:'POST',body});const result=await response.json();
   if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Revisa los datos del expediente.');return result;
 }
-const gmail=createGmail({open,close:()=>drawer.close(),notice,onOpenCase:async id=>{await showCases();await caseBrowser.received(id,'analyze');},onReceive:async(id,context)=>{
-  if(context.mode==='analyze'&&!context.duplicate&&!context.linked)await receiveDocument({caseId:id},{mode:'analyze',manager:actor(),request:managementRequest});
+const gmail=createGmail({getManager:actor,open,close:()=>drawer.close(),notice,onOpenCase:async id=>{await showCases();await caseBrowser.received(id,'analyze');},onReceive:async(id,context)=>{
+  if(context.mode==='analyze'&&!context.duplicate&&!context.linked)await receiveDocument({caseId:id},{mode:'analyze',manager:context.manager,request:managementRequest});
   if(!caseBrowser.visible())await showCases();
-  await caseBrowser.received(id,context.mode==='analyze'&&!context.linked?'analyze':'save');
+  await caseBrowser.received(id,context.mode==='analyze'&&!context.duplicate&&!context.linked?'analyze':'save');
 }});
-const caseBrowser=createCaseBrowser({container:view,open,close:()=>drawer.close(),notice,upload:uploadToPool,gmail:mode=>{if(mode==='analyze'&&!actor()){notice('Selecciona tu gestor antes de recibir y analizar un correo.');return;}return gmail.show(mode);},onSelect:openCase,onQueueChange:syncWorkspaceQueue,onViewChange:section=>{
+const caseBrowser=createCaseBrowser({container:view,open,close:()=>drawer.close(),notice,upload:uploadToPool,gmail:()=>gmail.show(),onSelect:openCase,onQueueChange:syncWorkspaceQueue,onViewChange:section=>{
   selectWorkspaceInbox(section);
   if(caseBrowser.visible())history.replaceState(null,'',location.pathname+'?view=cases&section='+encodeURIComponent(section));
 }});
@@ -82,11 +86,27 @@ function showCases(options={}){
 }
 async function showHome(){
   if(!caseBrowser.visible())await showCases();
-  if(caseBrowser.visible()){caseBrowser.showPanel('analyze');setWorkspaceSection('live-new');}
+  if(caseBrowser.visible()){caseBrowser.showPanel('receipt');setWorkspaceSection('live-new');}
 }
 
+function showManagementTimes(){
+  if(preanalysis.busy()||caseBrowser.busy()){notice('Espera a que termine la operación en curso.');return;}
+  if(live.leave()===false)return;
+  preanalysis.leave();releaseSplitPane();homeVisible=true;
+  if(drawer.open)drawer.close();
+  document.body.classList.remove('expediente-page');
+  document.body.classList.add('inbox-page');
+  document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
+  document.querySelector('#case').classList.remove('active');
+  setWorkspaceSection('workspace-times');
+  history.replaceState(null,'',location.pathname+'?view=times');
+  window.scrollTo(0,0);
+  return renderManagementTimes(view,{beforeRead:workActivity.flush});
+}
+document.querySelector('#workspace-times').onclick=showManagementTimes;
+
 document.querySelector('#live-new').onclick=showHome;
-document.querySelector('#workspace-help').onclick=()=>{open('Ayuda del espacio de trabajo',workspaceHelp);drawer.querySelector('.eyebrow').textContent='GUÍA DE NAVEGACIÓN';};
+document.querySelector('#workspace-help').onclick=()=>{openGeneral('Ayuda del espacio de trabajo',workspaceHelp);drawer.querySelector('.eyebrow').textContent='GUÍA DE NAVEGACIÓN';};
 document.querySelector('#home-logo').onclick=event=>{if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;event.preventDefault();showCases();};
 function render(focus=false){
   if(live.active()||homeVisible)return;
@@ -107,6 +127,7 @@ function invalidate(){state.confirm=false;state.approved=false;}
 function go(step){if(busy)return;setWorkspaceSection('case');homeVisible=false;showWorkspace();state.step=step;render(true);}
 function open(title,html){delete drawer.dataset.initialHistory;drawer.classList.remove('petition-upload-window','cases-delete-window');opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA';document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
 drawer.addEventListener('close',()=>{if(opener?.isConnected&&opener.getClientRects().length)opener.focus();else if(opener?.closest('#workspace-menu'))document.querySelector('#workspace-toggle').focus();else document.querySelector('#main').focus();});
+drawer.addEventListener('close',()=>{if(!drawer.open)workActivity.setGeneralDrawer(false);});
 document.querySelector('#close').addEventListener('click',()=>drawer.close());
 document.querySelectorAll('[data-step]').forEach(b=>b.addEventListener('click',()=>live.active()?live.go(+b.dataset.step):go(+b.dataset.step)));
 document.querySelector('#case').addEventListener('click',()=>{if(live.leave()===false)return;go(1);});
@@ -171,4 +192,4 @@ view.addEventListener('click',e=>{
     case 'missing':if(evidence.isConnected()){evidence.uploadForm(data.requests[1].request_id);break;}open('Aportar el documento solicitado',`<p><strong>Programa de Mecánica de Máquinas · 2019-2</strong></p><p>En el sistema integrado, aquí se adjuntaría el archivo o se registraría a quién solicitarlo. El pendiente seguiría abierto hasta que el documento se lea y se compruebe su relación con esta solicitud.</p><p class="muted">La maqueta no carga archivos ni da este pendiente por resuelto. Puedes volver a «Demo validada» en el selector para continuar probando.</p>`);break;
   }
 });
-try{const response=await fetch('./data.json');if(!response.ok)throw new Error('Snapshot unavailable');data=await response.json();const restoreUrl=location.href,selectedCase=new URLSearchParams(location.search).get('case'),section=new URLSearchParams(location.search).get('section');await live.init(false);if(selectedCase){await caseBrowser.initializeIdentity();history.replaceState(null,'',restoreUrl);await openCase(selectedCase);}else{await showCases({section});await evidence.connect();}}catch{view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo cargar la demostración</h1><p>Recarga la página para volver a intentar abrir los datos de la maqueta.</p><button id="reload">Reintentar</button></div>';document.querySelector('#reload').addEventListener('click',()=>location.reload());document.querySelectorAll('header button,.sidebar button,.steps button').forEach(b=>b.disabled=true);}
+try{const response=await fetch('./data.json');if(!response.ok)throw new Error('Snapshot unavailable');data=await response.json();const restoreUrl=location.href,selectedCase=new URLSearchParams(location.search).get('case'),section=new URLSearchParams(location.search).get('section'),times=new URLSearchParams(location.search).get('view')==='times';await live.init(false);if(selectedCase){await caseBrowser.initializeIdentity();history.replaceState(null,'',restoreUrl);await openCase(selectedCase);}else if(times){await caseBrowser.initializeIdentity();await showManagementTimes();}else{await showCases({section});await evidence.connect();}}catch{view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo cargar la demostración</h1><p>Recarga la página para volver a intentar abrir los datos de la maqueta.</p><button id="reload">Reintentar</button></div>';document.querySelector('#reload').addEventListener('click',()=>location.reload());document.querySelectorAll('header button,.sidebar button,.steps button').forEach(b=>b.disabled=true);}

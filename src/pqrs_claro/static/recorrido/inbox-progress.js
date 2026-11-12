@@ -12,13 +12,13 @@ export function progress(c){
     if(c.request_count>0)return {tone:'review',label:'Identificada',detail:'Peticiones guardadas · falta la revisión de contenido y tipo',compactDetail:'Peticiones guardadas · revisar tipos',stage:1,identifiedOnly:true};
     return {tone:'review',label:'Identificación pendiente',compactLabel:'Por identificar',detail:'Falta completar el contenido y tipo de petición',compactDetail:'Contenido y tipo pendientes',stage:1,identifiedOnly:true};
   }
-  if(['needs_review','stale'].includes(initial))return {tone:'review',label:initial==='stale'?'Por actualizar':'Por revisar',detail:'Revisión conjunta de las peticiones pendiente',stage:1};
+  if(['needs_review','stale'].includes(initial))return {tone:'review',label:initial==='stale'?'Por actualizar':'Por revisar',detail:'Identificación · revisión conjunta de las peticiones pendiente',stage:1};
   if(initial==='routed')return {tone:'confirmed',label:'Ruta registrada',detail:'Ruta alternativa guardada · redacción pendiente',stage:1};
   if(initial==='approved'){
     const office=c.office_progress?.status;
     if(office==='ready')return {tone:'confirmed',label:'Oficio generado',detail:'Word y PDF guardados · disponibles para consultar',stage:3,complete:true};
     if(office==='generating')return {tone:'processing',label:'Generando oficio',detail:'Creando Word y PDF con las respuestas aprobadas',stage:3};
-    if(office==='stale')return {tone:'review',label:'Borrador por actualizar',compactLabel:'Por actualizar',detail:'Hay una versión anterior · revisa los cambios guardados',stage:3};
+    if(office==='stale')return {tone:'review',label:'Borrador por actualizar',compactLabel:'Por actualizar',detail:'Borrador · hay cambios posteriores a la versión generada',stage:3};
     if(office==='failed')return {tone:'error',label:'Borrador',detail:'La generación del oficio requiere atención',stage:3};
     if(c.saved_stage>=3)return {tone:'confirmed',label:'Borrador guardado',compactLabel:'Borrador',detail:'Continuar con la revisión final del oficio',stage:3};
     if(c.management?.state==='ready_review')return {tone:'confirmed',label:'Borrador',detail:'Gestión marcada para revisión del borrador',stage:3};
@@ -35,9 +35,12 @@ function stagesFor(p,c={}){
     ['review','Borrador','Revisar el oficio antes de finalizar la gestión.'],
   ];
   return stages.map(([key,name,description],i)=>{
-    const missingPreanalysis=p.historical&&i===0&&c.preanalysis_status!=='ready';
-    const done=(i<p.stage||p.complete)&&!missingPreanalysis,current=!done&&i===p.stage&&p.tone!=='uploaded';
-    return {key,name,description,state:done?'complete':current?'current':'pending',label:missingPreanalysis?'Sin registro':p.historical&&(done||current)?'Guardado':done?'Completado':current?p.tone==='review'?'Por revisar':p.tone==='error'?'Requiere atención':'En curso':'Pendiente'};
+    if(i===0&&p.stage>0&&c.preanalysis_status!=='ready'){
+      const label=({running:'En curso',error:'Requiere atención'})[c.preanalysis_status]||'Sin registro';
+      return {key,name,description,state:'pending',label};
+    }
+    const done=i<p.stage||p.complete,current=!done&&i===p.stage&&p.tone!=='uploaded';
+    return {key,name,description,state:done?'complete':current?'current':'pending',label:p.historical&&(done||current)?'Guardado':done?'Completado':current?p.tone==='review'?'Por revisar':p.tone==='error'?'Requiere atención':'En curso':'Pendiente'};
   });
 }
 export function progressBar(c,{compact=false}={}){

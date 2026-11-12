@@ -192,6 +192,8 @@ def purge_case(store, case_id, version, lifecycle_revision, management_revision=
                     "intake_history",
                     "case_management",
                     "management_events",
+                    "work_sessions",
+                    "work_external",
                     "case_preanalysis",
                     "revisions",
                     "case_lifecycle_events",

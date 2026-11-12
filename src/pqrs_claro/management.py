@@ -286,6 +286,10 @@ class ManagementStore:
                 record["state"] = action.state
             else:
                 raise ValueError("Acción de gestión no reconocida.")
+            if self.store.work_sessions and (
+                before["owner_id"] != record["owner_id"] or record["state"] == "closed"
+            ):
+                self.store.work_sessions.close_case(db, case_id)
             record.update(
                 revision=record["revision"] + 1, updated_at=now(), note=action.note.strip()
             )

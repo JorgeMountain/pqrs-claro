@@ -28,8 +28,9 @@ Edita `.env.local` con una clave OpenAI propia y autorizada; después inicia:
 
 Abre **http://127.0.0.1:8772** y selecciona o crea un gestor.
 En una instalación nueva la bandeja y la biblioteca están vacías. Puedes cargar un
-PDF ficticio de `examples/`. La recepción conserva el archivo; el gestor revisa el
-preanálisis y decide cuándo iniciar la identificación. Las operaciones de IA necesitan
+PDF ficticio de `examples/`. Al seleccionar el documento, elige **Agregar al pool**
+para dejarlo disponible sin asignar o **Iniciar análisis** para abrir su preanálisis
+como gestor responsable. La identificación comienza cuando confirmas la revisión. Las operaciones de IA necesitan
 configuración y pueden consumir saldo del proveedor.
 
 **Guía completa:** [instalación, configuración y transferencia](docs/ENTREGA.md).
@@ -48,6 +49,10 @@ configuración y pueden consumir saldo del proveedor.
 Las etapas disponibles se pueden consultar recuperando su avance guardado. Generar
 un oficio y finalizar la gestión son acciones distintas. La selección de gestor es
 atribución local; no constituye autenticación ni permisos institucionales.
+
+En **Tiempos de gestión**, el equipo puede consultar la duración de los expedientes,
+el tiempo activo estimado de cada gestor y descargar ambas vistas en CSV.
+Las reglas de medición se describen en la [guía de la bandeja](docs/BANDEJA_GESTORES.md#tiempos-de-gestión).
 
 ## Estructura
 

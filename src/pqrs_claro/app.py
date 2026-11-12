@@ -25,6 +25,7 @@ from .intake_service import IntakeService, intake_router
 from .jev_classification import MODEL as JEV_CLASSIFICATION_MODEL
 from .jev_classification import get_key as get_jev_classification_key
 from .management import ManagementStore, management_router
+from .management_times import management_times_router
 from .models import Identification
 from .office_api import office_router
 from .office_service import OfficeService
@@ -45,6 +46,7 @@ from .source_verification_api import source_verification_router
 from .source_verifications import SourceVerificationStore
 from .storage import CaseStore, Conflict
 from .windows_ocr import WindowsOCR
+from .work_sessions import WorkSessions, work_sessions_router
 
 
 class SaveIdentification(BaseModel):
@@ -95,6 +97,7 @@ def create_app(
     store = CaseStore(settings.data_dir)
     service = CaseService(settings, store, extractor=extractor, identifier=identifier)
     management = ManagementStore(store)
+    store.work_sessions = WorkSessions(store)
     service.management = management if settings.management_enabled else None
     store.management = service.management
     preanalysis = PreanalysisService(settings, store, management, service,
@@ -214,7 +217,9 @@ def create_app(
                           proposals, offices_service, reviews_service, gmail, library,
                           verifications, initial_review, preanalysis)
     app.include_router(management_router(management, service, lifecycle_services))
+    app.include_router(work_sessions_router(store.work_sessions))
     app.include_router(lifecycle_router(store, lifecycle_services))
+    app.include_router(management_times_router(store))
     app.include_router(gmail_router(gmail))
     app.include_router(preparation_router(preparation))
     app.include_router(source_router(library, sources_service, store))
