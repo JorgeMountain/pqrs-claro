@@ -35,17 +35,29 @@ function stagesFor(p,c={}){
     ['review','Borrador','Revisar el oficio antes de finalizar la gestión.'],
   ];
   return stages.map(([key,name,description],i)=>{
+    if (i===0 && p.tone==='preanalysis') {
+      const labels={ready:'Por confirmar',running:'En curso',error:'Requiere atención'};
+      return {key,name,description,state:'current',label:labels[c.preanalysis_status]||'Por realizar'};
+    }
     if(i===0&&p.stage>0&&c.preanalysis_status!=='ready'){
+      const noChecks = !c.preanalysis_status || c.preanalysis_status === 'idle';
+      if (noChecks && c.request_count > 0) {
+        return {key, name, description, state: 'recorded',
+          label: 'Análisis anterior guardado · sin ficha de preanálisis'};
+      }
       const label=({running:'En curso',error:'Requiere atención'})[c.preanalysis_status]||'Sin registro';
       return {key,name,description,state:'pending',label};
     }
     const done=i<p.stage||p.complete,current=!done&&i===p.stage&&p.tone!=='uploaded';
+    if (current && c.initial_review_status === 'routed') {
+      return {key, name, description, state: 'current', label: 'Ruta registrada'};
+    }
     return {key,name,description,state:done?'complete':current?'current':'pending',label:p.historical&&(done||current)?'Guardado':done?'Completado':current?p.tone==='review'?'Por revisar':p.tone==='error'?'Requiere atención':'En curso':'Pendiente'};
   });
 }
 export function progressBar(c,{compact=false}={}){
   const p=progress(c);
-  if(p.stage===0||p.tone==='closed')return '';
+  if(p.tone==='closed'||(p.stage===0&&p.tone!=='preanalysis'))return '';
   const stages=stagesFor(p,c),description=stages.map(s=>`${s.name}: ${s.label}`).join('. ');
   return `<div class="inbox-progress ${p.tone}" role="img" aria-label="${esc(description)}">${stages.map(s=>`<span class="stage-${s.key} ${s.state}" title="${esc(s.name+': '+s.label)}" aria-hidden="true"></span>`).join('')}</div><small class="inbox-progress-label">${esc(compact&&p.compactDetail||p.detail)}</small>`;
 }

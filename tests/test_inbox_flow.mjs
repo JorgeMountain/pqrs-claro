@@ -36,7 +36,10 @@ test('tomar un expediente nunca lo muestra como identificado',()=>{
   const c={id:'c1',status:'uploaded',initial_review_status:'idle',processing:true,preanalysis_status:'running',management:{owner_id:'ana',owner_name:'Ana',started_at:null}};
   assert.equal(progress(c).stage,0);
   assert.equal(progress(c).label,'En preanálisis');
-  assert.equal(progressBar(c),'');
+  assert.match(progressBar(c),/stage-preanalysis current/);
+  assert.match(progressBar(c),/Preanálisis: En curso\. Identificación: Pendiente/);
+  assert.match(progressBar({...c,preanalysis_status:'idle'}),/Preanálisis: Por realizar/);
+  assert.match(progressBar({...c,preanalysis_status:'ready'}),/Preanálisis: Por confirmar/);
   assert.deepEqual(actionFor(c,'ana'),{kind:'preanalysis',label:'Revisar documento'});
   assert.doesNotMatch(inboxTable([c],'ana'),/Identificación lista|Completado|Revisar resultado|\[object Object\]/);
 });
@@ -64,7 +67,7 @@ test('el avance sigue visible al terminar el análisis, sin completar la revisi�
   const identified=progressBar({...c,initial_review_status:'idle'});
   assert.match(identified,/Redacción: Pendiente/);
   assert.match(identified,/Borrador: Pendiente/);
-  assert.equal(progressBar({...c,status:'uploaded',initial_review_status:undefined}), '');
+  assert.equal(progressBar({...c,status:'uploaded',initial_review_status:undefined,management:{owner_id:null}}), '');
 });
 
 
@@ -83,7 +86,7 @@ test('expedientes anteriores recuperan la redacción guardada aunque no tengan r
   assert.equal(actionFor(c,'ana').label,'Continuar gestión');
   assert.doesNotMatch(inboxTable([c],'ana'),/Por identificar|Identificación pendiente/);
   assert.match(progressDetail(c,'ana'),/revisión de tipos sin registro/);
-  assert.match(progressBar(c),/Preanálisis: Sin registro/);
+  assert.match(progressBar(c),/Preanálisis: Análisis anterior guardado/);
   assert.match(progressBar(c),/Identificación: Guardado/);
   assert.equal(progress({...c,saved_stage:3}).label,'Borrador guardado');
   assert.equal(progress({...c,saved_stage:0,preparation:{status:'waiting_review'}}).stage,2);
@@ -119,6 +122,15 @@ test('la etapa de identificación no da por completado un preanálisis sin const
     assert.match(html,/stage-preanalysis pending/);
     assert.match(html,/stage-identify current/);
   }
+  const withSavedRequests={...c,request_count:3};
+  for(const html of [inboxTable([withSavedRequests],'ana'),progressDetail(withSavedRequests,'ana')]){
+    assert.match(html,/stage-preanalysis recorded/);
+    assert.match(html,/Análisis anterior guardado · sin ficha de preanálisis/);
+    assert.match(html,/Identificación: Por revisar/);
+    assert.doesNotMatch(html,/Preanálisis: Completado/);
+  }
+  assert.match(progressBar({...withSavedRequests,initial_review_status:'routed'}),/Identificación: Ruta registrada/);
+  assert.doesNotMatch(progressBar({...withSavedRequests,preanalysis_status:'error'}),/stage-preanalysis recorded/);
 });
 
 test('un oficio modificado o una generación fallida conserva su etapa sin fingir finalización',()=>{

@@ -70,7 +70,19 @@
 .stage-identify{--stage-color:var(--color-green);--stage-tint:var(--color-green-soft)}
 .stage-draft{--stage-color:var(--color-blue);--stage-tint:var(--color-blue-soft)}
 .stage-review{--stage-color:var(--color-purple);--stage-tint:var(--color-purple-soft);--stage-ink:var(--color-purple-ink)}
-.inbox-progress span.complete{background:var(--stage-color)}
-.inbox-progress span.current{background:var(--surface);border:2px solid var(--stage-color)}
+.inbox-progress span.complete,
+.inbox-progress span.recorded,
+.inbox-progress span.current { background-color: var(--stage-color); }
+.inbox-progress span.current {
+  background-image: repeating-linear-gradient(125deg, transparent 0 7px, rgb(255 255 255 / 30%) 7px 9px);
+}
+.inbox-progress .stage-preanalysis.current {
+  background-image: repeating-linear-gradient(125deg, transparent 0 8px, rgb(255 255 255 / 45%) 8px 12px);
+}
+.inbox-stages .recorded .stage-number {
+  background: var(--stage-tint);
+  border-color: var(--stage-color);
+  color: var(--ink);
+}
 .receipt-destinations{display:grid;gap:12px;margin:16px 0}
 .receipt-destinations small{display:block;margin-top:4px;color:var(--muted);line-height:1.4}
