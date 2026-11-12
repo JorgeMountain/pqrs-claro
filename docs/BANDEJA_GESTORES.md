@@ -11,9 +11,11 @@ La entrada principal abre **Mi trabajo**. Desde el menú se puede consultar el *
 
 ## Seguimiento
 
-La barra de **Estado y avance** sigue el mismo orden y los mismos colores que el expediente. **Preanálisis** usa verde claro, **Identificación** verde oscuro, **Redacción** azul y **Borrador** morado. Un tramo relleno indica avance completado o guardado, un contorno señala la etapa actual y un tramo gris indica una etapa pendiente o sin registro. La etiqueta morada «Por revisar» o «Por actualizar» indica que el gestor tiene una revisión pendiente.
+La barra de **Estado y avance** sigue el mismo orden y los mismos colores que el expediente. **Preanálisis** usa verde claro, **Identificación** verde oscuro, **Redacción** azul y **Borrador** morado. El color sólido indica avance guardado, las rayas sobre el color señalan la etapa actual y el gris indica una etapa pendiente o sin avance guardado. La etiqueta morada «Por revisar» o «Por actualizar» indica que el gestor tiene una revisión pendiente.
 
-En **Seguimiento del expediente** puedes consultar el estado de cada tramo. Si ya existen peticiones identificadas pero falta el registro del preanálisis, este aparece como «Sin registro». Si hubo cambios después de generar el oficio, Borrador aparece con contorno morado hasta que se actualice la versión.
+Al asignar el expediente, el primer tramo aparece en verde claro con rayas diagonales mientras el preanálisis está por realizar, en curso o pendiente de confirmación. Las otras tres etapas aparecen en gris.
+
+En **Seguimiento del expediente** puedes consultar el estado de cada tramo. Si ya hay peticiones identificadas y falta la ficha de preanálisis, el primer tramo aparece en verde claro con la indicación «Análisis anterior guardado · sin ficha de preanálisis». Si hubo cambios después de generar el oficio, Borrador aparece en morado con rayas hasta que se actualice la versión.
 
 Las tarjetas muestran identificador interno (no radicado oficial), asunto, recepción, canal, responsable, estado de gestión, última actividad, fecha límite registrada y estado del análisis. Detalles y gestión permite editar recepción, asignar/reasignar, cambiar estado con motivo y consultar el historial. La fecha límite no se calcula mediante una regla legal.
 

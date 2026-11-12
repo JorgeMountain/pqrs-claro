@@ -57,8 +57,8 @@ body :is(.primary,.button-primary,.pre-start,.expediente-continue):disabled {
 }
 .redaction-state.processing { color: var(--color-blue-ink); }
 .inbox-state.preanalysis {
-  background: var(--color-purple-soft);
-  color: var(--color-purple-ink);
+  background: var(--color-success-soft);
+  color: var(--color-green);
 }
 .expediente-steps .stage-0.complete .expediente-step-number {
   background: var(--color-preanalysis);
