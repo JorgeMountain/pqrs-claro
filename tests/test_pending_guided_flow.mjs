@@ -18,7 +18,7 @@ const originalRow=()=>({case_id:'case-a',request_id:'P1',revision:1,pre_draft:tr
   available_supports:[{source_id:'source-1',chunk_id:'chunk-1',title:'Guía',quote:'Canal de atención',page:1,version:1},
     {source_id:'source-2',chunk_id:'chunk-2',title:'Procedimiento',quote:'Pasos del trámite',page:2,version:1}]});
 
-function harness({onSaved=async()=>{},put=null}={}){
+function harness({onSaved=async()=>{},onRefresh,put=null}={}){
   let current={id:'case-a'},row=originalRow(),manager='José',body,marker,form,uploaded;
   const calls=[],notices=[],opened=[];
   const element=(value='')=>({value,disabled:false,hidden:false,checked:false,isConnected:true,textContent:'',dataset:{},listeners:{},
@@ -63,7 +63,7 @@ function harness({onSaved=async()=>{},put=null}={}){
     return {ok:true,json:async()=>saved};
   };
   const actions=createPendingActions({open,close(){if(form)form.isConnected=false;},notice:v=>notices.push(v),getCase:()=>current,
-    getActor:()=>manager,onSaved,upload:(requestId,context)=>{uploaded={requestId,context};open('Carga','<p>Subir archivo</p>');}});
+    getActor:()=>manager,onSaved,onRefresh,upload:(requestId,context)=>{uploaded={requestId,context};open('Carga','<p>Subir archivo</p>');}});
   return {actions,calls,notices,opened,get form(){return form;},get uploaded(){return uploaded;},get row(){return row;},
     setRow:value=>{row=value;},setManager:value=>{manager=value;},changeCase:()=>{current={id:'case-b'};},
     remember:()=>form.listeners.input?.({}),
@@ -120,6 +120,19 @@ test('doble envío y fallo del refresco posterior no repiten una decisión ya gu
   assert.equal(h.opened.at(-1).title,'Decisión guardada');
   assert.match(h.opened.at(-1).html,/decisión se guardó, pero no se pudo actualizar/);
   assert.equal(h.calls.filter(call=>call.options.method==='PUT').length,1);
+});
+
+test('una decisión en vuelo no reabre el pendiente invalidado y lee el resultado vigente',async()=>{
+  let release,refreshes=0;
+  const inFlight=new Promise(resolve=>{release=resolve;});
+  const h=harness({put:async(_body,row)=>{await inFlight;return {ok:true,json:async()=>row};},
+    onSaved:async()=>assert.fail('Una respuesta anterior no debe incorporarse a la vista'),
+    onRefresh:async()=>{refreshes++;}});
+  await h.actions.decide('P1','pending-1','resolved');
+  h.form.fields.get('#pending-note').value='Comprobado';h.form.choices[0].checked=true;
+  const work=h.submit();h.form.isConnected=false;release();await work;
+  assert.equal(refreshes,1);
+  assert.ok(!h.opened.some(panel=>panel.title==='Decisión guardada'));
 });
 
 test('error de guardado conserva campos y permite un reintento explícito',async()=>{

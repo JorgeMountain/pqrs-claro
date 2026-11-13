@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import ROOT
+from .redaction_notice import redaction_notice
 from .source_library import MAX_SOURCE_BYTES
 
 
@@ -43,8 +44,11 @@ def source_router(library, service, cases):
         }
 
     @router.get("/api/cases/{case_id}/source-collections")
-    def selected_collections(case_id: str):
+    def selected_collections(case_id: str, response: Response, watch_redaction: bool = False):
         cases.assert_visible(case_id)
+        if watch_redaction:
+            response.headers["Cache-Control"] = "no-store"
+            return redaction_notice(library, cases, case_id)
         return {"collection_ids": library.linked_collections(case_id)}
 
     @router.put("/api/cases/{case_id}/source-collections")

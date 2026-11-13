@@ -220,6 +220,70 @@ class ReviewService:
                 error=None,
             )
 
+    def preview(self, case_id, request_id):
+        """Load one petition under the same permission snapshot as its saved review."""
+        with self.lock, self.library.lock:
+            base = self._base(case_id)
+            case, source_run, _, _ = base
+            requests = (case.get("identification") or {}).get("requests", [])
+            if not any(request["id"] == request_id for request in requests):
+                raise KeyError("La petición no pertenece al expediente.")
+
+            mapping = {key: source_run[key] for key in (
+                "status", "stale", "scope_revoked", "retrieval_progress", "retrieval_warning",
+            ) if key in source_run}
+            mapping["results"] = []
+            review = {"status": "idle", "requests": []}
+            drafts = {"status": "idle", "results": []}
+            result = dict(request_id=request_id, mapping=mapping, review=review, drafts=drafts)
+            # The full review can retain historical text for editing. The preview
+            # makes no claim about it and must never serve an old citation as current.
+            if mapping.get("stale"):
+                return result
+
+            row = self.store.get(case_id, request_id)
+            if row:
+                row = next(self._visible_rows(case_id, [self._project(row, base)]))
+
+            finding = next((f for f in source_run.get("results", [])
+                            if f["request_id"] == request_id), None)
+            if finding:
+                # A fresh review row already verified its original and supports
+                # in _project. Some findings have additional supports or no row yet.
+                verified = set()
+                try:
+                    if row and not row.get("stale"):
+                        verified = {s["source_id"] for s in row["available_supports"]}
+                    else:
+                        self.cases.original(case_id)
+                    ids = {s["source_id"] for s in finding.get("supports", [])}
+                    for source_id in ids - verified:
+                        self.library.original(source_id, case_id)
+                except (ValueError, KeyError):
+                    mapping.update(stale=True, status="stale")
+                    return result
+                # Return the fields the reading panel uses, without the retriever
+                # diagnostics and candidate documents for the rest of the catalog.
+                mapping["results"] = [{key: finding[key] for key in (
+                    "request_id", "status", "summary", "supports", "missing", "warnings",
+                    "analysis_diagnostic", "analysis_notices", "evidence_states",
+                ) if key in finding}]
+
+            if row:
+                if not row.get("stale"):
+                    review.update(status=row["status"], requests=[row])
+                else:
+                    review.update(status="stale", stale=True)
+            if not row or (row.get("pre_draft") and not row.get("paragraphs")):
+                # A just-prepared draft may be visible before review.start adopts
+                # it. Keep the full draft service's catalog and integrity rules.
+                saved = self.drafts_service.get(case_id)
+                drafts.update(status=saved["status"], stale=saved["stale"])
+                if not saved["stale"]:
+                    drafts["results"] = [d for d in saved["results"]
+                                         if d["request_id"] == request_id]
+            return result
+
     def confirm_reading(self, case_id, confirmation):
         body = confirmation.model_dump()
         with self.lock, self.library.lock:

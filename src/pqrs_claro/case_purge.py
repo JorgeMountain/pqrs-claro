@@ -65,7 +65,10 @@ def purge_library(root, case_id):
             )
             conn.execute("DELETE FROM source_reviews WHERE id=?", (sid,))
             conn.execute("DELETE FROM sources WHERE id=?", (sid,))
-        delete_rows(conn, ("source_runs", "case_source_collections", "evidence_receipts"), case_id)
+        delete_rows(conn, (
+            "source_runs", "case_source_collections", "evidence_receipts",
+            "redaction_scope_revisions", "redaction_publications",
+        ), case_id)
 
 
 def purge_verifications(root, case_id):
@@ -188,6 +191,7 @@ def purge_case(store, case_id, version, lifecycle_revision, management_revision=
                 conn,
                 (
                     "preparations",
+                    "redaction_publications",
                     "intake_reviews",
                     "intake_history",
                     "case_management",

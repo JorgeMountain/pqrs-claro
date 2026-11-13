@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter
 from pydantic import BaseModel, Field, StrictBool
 
+from .redaction_notice import install_publication_notices
 from .service import user_error
 from .storage import Conflict, now
 
@@ -31,6 +32,7 @@ class PreparationService:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS preparations (case_id TEXT PRIMARY KEY, body TEXT)"
             )
+            install_publication_notices(conn, "preparations")
 
     def get(self, case_id):
         case = self.cases.get(case_id)
