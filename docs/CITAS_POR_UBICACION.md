@@ -63,10 +63,10 @@ dos interfaces abiertas, retirar el permiso desde cualquiera de ellas quitó la
 cita de ambas sin iniciar otra búsqueda.
 
 Una ventana visible en otro perfil también consulta los vínculos de su
-expediente al recuperar el foco y cada cinco segundos. Este sondeo lee solo
-los identificadores de las colecciones. En cada interfaz se verificó en Chrome
-que una retirada por API hiciera desaparecer la cita y su pendiente, incluso
-sin recibir el aviso entre pestañas.
+expediente al recuperar el foco y cada cinco segundos. En Redacción, este
+sondeo también permite detectar correcciones de las fuentes. En cada interfaz
+se verificó en Chrome que una retirada por API hiciera desaparecer la cita y
+su pendiente, incluso sin recibir el aviso entre pestañas.
 
 Al actualizar las fuentes, el lector vuelve a evaluar los documentos autorizados.
 El mapa puede volver a mostrar los respaldos que siguen vigentes e indicar qué
@@ -80,3 +80,61 @@ autorizados. Las lecturas del historial también respetan los permisos actuales.
 La validación se realiza con fuentes ficticias y dobles de IA en SQLite aislado.
 Implementar o reiniciar el servicio no vuelve a ejecutar un expediente real:
 el reintento se inicia con la acción de la interfaz.
+
+### Al retomar una petición en Redacción
+
+Al elegir **Ver fuentes**, Redacción recuerda en ese navegador el expediente,
+su versión y la petición seleccionada. Al volver desde la bandeja o abrir un
+enlace a esa petición, comprueba que sigue vigente y carga primero su cita,
+el enlace al original y sus pendientes. Las demás respuestas se cargan a
+continuación. Para confirmar la revisión conjunta, el gestor debe esperar
+a que estén guardadas todas las respuestas actuales.
+
+La primera apertura sigue el flujo habitual. Si la selección guardada caducó
+o la petición desapareció, se abre la vista general. Si el gestor cambia de
+petición durante la carga, la pantalla descarta la respuesta que llegue para
+la selección anterior.
+
+### Al corregir una fuente con Redacción abierta
+
+El gestor puede mantener abierta la petición que está revisando. Cuando
+Redacción detecta una corrección registrada en la biblioteca entre las fuentes
+que el expediente puede consultar, muestra un aviso y retira los pasajes,
+enlaces al original y pendientes anteriores. La detección aprovecha el sondeo
+cada cinco segundos de la pestaña visible. Una pestaña que estaba en segundo
+plano comprueba el estado al volver a ella. Una fuente exclusiva de otro
+expediente queda fuera de esa comprobación.
+
+Desde el aviso, el gestor puede pulsar **Recalcular preparación**. También
+puede iniciar el recálculo otro cliente. Cuando termina y la revisión está
+vigente, la misma pantalla muestra juntos los pasajes, enlaces al original y
+pendientes actualizados de la petición seleccionada. Ante un fallo temporal
+al leer la revisión, la pantalla mantiene ocultos los resultados anteriores
+y vuelve a consultar. El gestor sigue siendo quien revisa y confirma las
+respuestas.
+
+### Pruebas con expedientes ficticios
+
+En Chrome se compararon ocho reaperturas por tamaño con la versión
+`77aef1c`. La cita y el pendiente de la petición elegida aparecieron antes
+en 22 de 24 pares. El ahorro mediano por par fue de 143, 137 y 332 ms en
+expedientes de 2, 10 y 25 peticiones. En un control donde ambas versiones
+recordaban la selección, priorizar el detalle aportó 50, 29 y 245 ms,
+respectivamente. Estas medidas llegan hasta la aparición de ambos elementos
+en pantalla. La descarga completa terminó algo después en ese control.
+
+En la prueba de corrección, dos pestañas retiraron la cita y el pendiente
+anteriores entre 0,72 y 3,65 s después de guardar la fuente. Al pulsar
+**Recalcular preparación**, ambas mostraron la nueva versión entre 2,39 y
+4,92 s. Se comprobó el contenido del original enlazado, el recálculo desde
+otro cliente y la retirada de un permiso. El ensayo usó una biblioteca
+temporal y un lector simulado. Los tiempos son locales.
+
+Con Playwright y Google Chrome instalados, se puede repetir la comprobación
+desde la raíz del repositorio. Abre la segunda petición de un expediente
+ficticio, la retoma, registra una nueva versión de la fuente y comprueba en
+la misma pestaña el aviso, la cita, el enlace al original y el nuevo pendiente.
+
+```powershell
+.\scripts\test.ps1 tests/check_redaction_browser.py
+```

@@ -78,6 +78,7 @@ export function createEvidenceUpload({open, close, render, notice, getData, chan
   }
   async function uploadForm(requestId='', shared=false, previous=null, initialFile=null, context=null) {
     if(getCase)await connect();
+    if(context?.isCurrent&&!context.isCurrent())return;
     if(context&&!caseId){notice('Abre el expediente confirmado para agregar respaldo a este pendiente.');return;}
     if(!caseId&&previous?.case_id){notice('Confirma la identificación del expediente antes de agregar una versión de su evidencia.');return;}
     if(!caseId)shared=true;

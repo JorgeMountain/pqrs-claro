@@ -1,6 +1,6 @@
 """API de revisión humana local. Las decisiones no se reciben desde el modelo."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .review_models import FactInput, ResponseReading, ReviewApprove, ReviewEdit
@@ -33,6 +33,11 @@ def review_router(service):
     @router.get("")
     def get_review(case_id: str):
         return service.get(case_id)
+
+    @router.get("/requests/{request_id}/preview")
+    def preview(case_id: str, request_id: str, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return service.preview(case_id, request_id)
 
     @router.post("/reading-confirmation")
     def confirm_reading(case_id: str, body: ResponseReading):

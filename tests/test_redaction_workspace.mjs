@@ -8,6 +8,42 @@ const mapping={status:'ready',results:[{request_id:'P1',supports:[{source_id:'so
 const drafts={status:'running',completed_count:2,request_states:{P1:'completed',P2:'redactar',P3:'queued'},results:[{request_id:'P1',draft:{paragraphs:[{text:'Respuesta de prueba.'}]}},{request_id:'error-outside-current',error:'Error de prueba'}]};
 const review={requests:[{request_id:'P1',paragraphs:[{text:'Texto editado y guardado.'}],pending:[{id:'pending-1',state:'confirmation_pending',kind:'fact',description:'Confirmar el canal de atención.'}]}]};
 
+test('el aviso de corrección oculta los resultados anteriores y explica cómo recalcular',()=>{
+  const options={selectedRequest:'P1',hideOutdated:true,correctionNotice:'waiting'};
+  const html=redactionWorkspace(current,{status:'waiting_review'},mapping,drafts,review,options);
+  assert.match(html,/role="status" data-redaction-correction="waiting"/);
+  assert.match(html,/Se corrigió un documento del expediente/);
+  assert.match(html,/Las fuentes cambiaron\. Estos resultados son anteriores y necesitan actualizarse\./);
+  assert.doesNotMatch(html,/\$\{esc\(staleMessage\)\}|Texto de la fuente|Confirmar el canal|Texto editado y guardado|Respuesta de prueba/);
+  assert.match(html,/data-action="live-resume">Recalcular preparación/);
+  assert.match(html,/data-action="live-continue-draft" disabled/);
+  const running=redactionWorkspace(current,job,mapping,drafts,review,options);
+  assert.match(running,/La preparación está en curso/);
+  assert.doesNotMatch(running,/Recalcular preparación/);
+});
+
+test('el detalle parcial informa que las demás respuestas y la confirmación se están recuperando',()=>{
+  const html=redactionWorkspace(current,{status:'ready'},mapping,{},review,{selectedRequest:'P1',partialRedaction:true,hideOutdated:true});
+  assert.match(html,/Texto de la fuente/);
+  assert.match(html,/Confirmar el canal/);
+  assert.match(html,/Selecciona esta petición para consultar su respuesta/);
+  assert.match(html,/Cargando el estado de la revisión conjunta/);
+  assert.match(html,/data-action="live-confirm-responses" disabled/);
+});
+
+test('la hidratación no restaura las citas, los párrafos ni los pendientes anteriores',()=>{
+  const options={selectedRequest:'P1',hideOutdated:true};
+  const oldMapping={...mapping,stale:true};
+  const oldReview={...review,requests:review.requests.map(row=>({...row,stale:true}))};
+  const oldDrafts={...drafts,stale:true};
+  const stale=redactionWorkspace(current,{status:'ready'},oldMapping,oldDrafts,oldReview,options);
+  assert.doesNotMatch(stale,/Texto de la fuente|Confirmar el canal|Texto editado y guardado|Respuesta de prueba/);
+  const refreshed=redactionWorkspace(current,{status:'ready'},{...mapping,results:mapping.results.map(f=>({...f,missing:[{description:'Vigencia por confirmar'}]}))},oldDrafts,oldReview,options);
+  assert.match(refreshed,/Texto de la fuente/);
+  assert.match(refreshed,/Vigencia por confirmar/);
+  assert.doesNotMatch(refreshed,/Confirmar el canal|Texto editado y guardado|Respuesta de prueba/);
+});
+
 test('recuperar respuestas anteriores no muestra un cero definitivo ni ofrece reiniciar',()=>{
   const html=redactionWorkspace({...current,saved_stage:2},{status:'idle'},{},{},{},{initialPending:true});
   assert.match(html,/Recuperando las respuestas guardadas/);

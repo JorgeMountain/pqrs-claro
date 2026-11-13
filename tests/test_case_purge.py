@@ -87,8 +87,11 @@ def test_cleanup_is_scoped_and_removes_checkpoint_history(unified, pdf_bytes):  
     (folder / "oficio.pdf").write_bytes(b"export")
     # All case-keyed persistence families, including lazily created editor state.
     families = {
-        "expedientes.sqlite": ("revisions", "preparations"),
-        "biblioteca.sqlite": ("source_runs", "evidence_receipts"),
+        "expedientes.sqlite": ("revisions", "preparations", "redaction_publications"),
+        "biblioteca.sqlite": (
+            "source_runs", "evidence_receipts",
+            "redaction_scope_revisions", "redaction_publications",
+        ),
         "borradores.sqlite": ("draft_runs",),
         "revisiones.sqlite": (
             "review_requests",

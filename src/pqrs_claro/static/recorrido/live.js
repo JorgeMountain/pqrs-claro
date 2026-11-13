@@ -20,10 +20,11 @@ import {confirmAndPrepare} from './initial-confirmation.js?v=redaction-recovery1
 import {pilotReviewControls} from './pilot-review.js?v=pilot1';
 import {watchSourceScope,announceScopeReduction} from '/shared/source-scope.js';
 
-async function api(path,body,method='POST'){
+async function api(path,body,method='POST',cancel){
   const options=body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}};
   let response,value;
-  try{response=await fetch(path,{...options,signal:AbortSignal.timeout(60000)});value=await response.json();}
+  const timeout=AbortSignal.timeout(60000);
+  try{response=await fetch(path,{...options,signal:cancel?AbortSignal.any([timeout,cancel]):timeout});value=await response.json();}
   catch(error){if(['TimeoutError','AbortError'].includes(error.name))throw new Error('La consulta está tardando más de lo esperado. El avance guardado se conserva; actualiza el estado para recuperarlo.');throw error;}
   if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'Revisa los campos y vuelve a intentarlo.');return value;
 }
@@ -36,10 +37,40 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
   let savedDraft=null,draftMessage='',draftProblem=false;
   let refreshing=null,refreshError='',readingError='',confirmingReading=false;
   let selectedResponse=null,finalSummary={},suspended=false,reached=1,redactionPosition=null;
+  let resumeRequest=null,partialRedaction=false,previewController=null;
+  let correctionNotice=null;
+  let checkingCorrection=false;
   const initialCache=new Map();
   const stageKey=id=>'pqrs-stage-'+id;
   function rememberedStage(id){try{return Math.min(3,Math.max(1,Number(localStorage.getItem(stageKey(id)))||1));}catch{return 1;}}
   function rememberStage(value){reached=Math.max(reached,value);try{localStorage.setItem(stageKey(current.id),String(reached));}catch{/* Navigation still works without browser storage. */}}
+  function restoredRequest(url,explicitId){
+    const sameCase=url.searchParams.get('case')===current.id;
+    let candidate=explicitId;
+    if(!candidate&&sameCase&&url.searchParams.get('step')==='2'&&url.searchParams.has('request')){
+      const version=url.searchParams.get('request_version');
+      if(version!==null&&version!==String(current.version))return null;
+      candidate=url.searchParams.get('request');
+    }else if(!candidate){
+      try{
+        const saved=JSON.parse(localStorage.getItem('pqrs-response-'+current.id));
+        if(saved?.version===current.version)candidate=saved.id;
+      }catch{/* A missing or older record starts with the regular view. */}
+    }
+    return data.requests.find(r=>r.id===candidate)?.id||null;
+  }
+  async function readSelectedResponse(requestId){
+    const scope=token,controller=new AbortController();
+    previewController=controller;
+    mapping={};drafts={};review={};render();
+    try{
+      const value=await api(path('/review/requests/'+encodeURIComponent(requestId)+'/preview'),undefined,'GET',controller.signal);
+      if(scope!==token||controller.signal.aborted||requestId!==selectedResponse)return;
+      if(value.request_id!==requestId)throw new Error('La respuesta recuperada corresponde a otra petición.');
+      mapping=value.mapping;drafts=value.drafts;review=value.review;
+      render();
+    }finally{if(previewController===controller)previewController=null;}
+  }
   function navigation(){
     const savedExport=current.office_progress?.status==='ready';
     const written=finalSummary.id===current.id?finalSummary.redactionComplete:savedExport||review.requests?.length>0&&review.requests.length===current.request_count&&review.requests.every(r=>r.paragraphs?.length&&!r.stale);
@@ -111,6 +142,12 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
   });
   const identificationActions=createIdentificationActions({api,open,close,notice,getCase:()=>current,onSaved:select});
   async function savedResponse(row){
+    if(partialRedaction||correctionNotice==='waiting'){
+      // A full read already in flight may predate this edit or pending decision.
+      token++;
+      await refresh();
+      return;
+    }
     const sequence=token;
     if(!review.requests)return;
     review.requests=review.requests.map(r=>r.request_id===row.request_id?row:r);
@@ -135,9 +172,12 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(current?.id!==row.case_id)return;
     await savedResponse(row);
   }});
-  const pendingActions=createPendingActions({open,close,notice,getCase:()=>current,
+  const pendingActions=createPendingActions({open,close,notice,getCase:()=>current,onRefresh:refresh,
     getActor:()=>suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager')),
-    upload:(requestId,context)=>intake.uploadForm(requestId,false,null,null,context),onSaved:async row=>{
+    upload:(requestId,context)=>{
+      const sequence=token;
+      return intake.uploadForm(requestId,false,null,null,{...context,isCurrent:()=>sequence===token});
+    },onSaved:async row=>{
       if(current?.id!==row.case_id)return;
       await savedResponse(row);
       if(row.pre_draft)await refresh();
@@ -152,7 +192,14 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     document.querySelector('.steps').hidden=workspace();document.querySelector('.prototype').hidden=workspace();
     if(workspace())document.body?.classList.add('inbox-page','expediente-page');
     view.setAttribute('aria-busy',String(busy));
-    const locationState=new URL(location.href);locationState.searchParams.delete('view');locationState.searchParams.set('step',step);rememberStage(step);history.replaceState(null,'',locationState);
+    const locationState=new URL(location.href);locationState.searchParams.delete('view');locationState.searchParams.set('step',step);
+    if(step===2&&selectedResponse){
+      locationState.searchParams.set('request',selectedResponse);
+      locationState.searchParams.set('request_version',current.version);
+    }else{
+      locationState.searchParams.delete('request');locationState.searchParams.delete('request_version');
+    }
+    rememberStage(step);history.replaceState(null,'',locationState);
     document.querySelector('#case').classList.remove('active');
     document.querySelector('.prototype').textContent=initialEnabled?'Expediente guardado · revisa el trámite y las peticiones antes de preparar las respuestas.':'Expediente guardado · revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
     document.querySelector('.prototype-status').textContent='Expediente conectado';
@@ -161,7 +208,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(workspace()&&step===1)view.innerHTML=identificationWorkspace(data,state,{initial,draft:initialForm,requestContent:current.identification?initialRequestContent(current,initial,initialForm,{workspace:true}):{},confirmation:!closed()?initialConfirmation(current,initial,initialForm,{workspace:true,busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',banner:identificationActions.banner(),showMail:Boolean(showMail),canContinue:canNavigate(),navigation:navigation()});
     else if(!current.identification)renderAnalysis(view,current);
     else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial})+reviewNavigation(current,initial,initialForm,{cursor:reviewCursor,busy}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
-    else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{status:'starting'},mapping,drafts,review,{workspace:true,canContinue:canNavigate(),navigation:navigation(),showMail:Boolean(showMail),selectedRequest:selectedResponse,refreshError,readingError,confirmingReading,reviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager')),initialPending:(initial.status||current.initial_review_status)==='idle'&&current.saved_stage>=2}):(refreshError?`<div class="alert" role="alert">${esc(refreshError)} <button data-action="live-refresh">Actualizar estado</button></div>`:'')+(job.status?responses(current,job,mapping,drafts,review):'<h1>Redacción de respuestas</h1><p role="status">Recuperando el avance guardado…</p>');}
+else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{status:'starting'},mapping,drafts,review,{workspace:true,canContinue:canNavigate(),navigation:navigation(),showMail:Boolean(showMail),selectedRequest:selectedResponse,partialRedaction,correctionNotice,checkingCorrection,hideOutdated:true,refreshError,readingError,confirmingReading,reviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager')),initialPending:(initial.status||current.initial_review_status)==='idle'&&current.saved_stage>=2}):(refreshError?`<div class="alert" role="alert">${esc(refreshError)} <button data-action="live-refresh">Actualizar estado</button></div>`:'')+(job.status?responses(current,job,mapping,drafts,review):'<h1>Redacción de respuestas</h1><p role="status">Recuperando el avance guardado…</p>');}
     else {const paper=final.view();if(workspace()){
       const heading=finalHeading();
       let frame=view.querySelector('.expediente-later');
@@ -209,27 +256,51 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(selected)selected.original_marks=page.marks.map(m=>({...m,page:number}));
     render();if(selected)focusOriginal();
   }
-  function schedule(){clearTimeout(timer);if(current&&(current.analysis_running||['reading','identifying'].includes(current.status)||initial.status==='running'||job.status==='running'||review.requests?.some(r=>r.status==='checking')))timer=setTimeout(()=>refresh().catch(e=>{notice(e.message);schedule();}),refreshError?15000:2000);}
+  function schedule(){
+    clearTimeout(timer);
+    const retryCorrection=correctionNotice==='waiting'&&step===2&&!suspended&&refreshError;
+    if(current&&(retryCorrection||current.analysis_running||['reading','identifying'].includes(current.status)||initial.status==='running'||job.status==='running'||review.requests?.some(r=>r.status==='checking'))){
+      timer=setTimeout(()=>refresh().catch(e=>{notice(e.message);schedule();}),refreshError?15000:2000);
+    }
+  }
   function refresh(){
     if(refreshing?.token===token)return refreshing.promise;
     const sequence=token;
     const promise=refreshState().catch(error=>{
-      if(current&&sequence===token){refreshError=error.message;render();schedule();}
+      if(current&&sequence===token){checkingCorrection=false;refreshError=error.message;render();schedule();}
       throw error;
     }).finally(()=>{if(refreshing?.token===sequence)refreshing=null;});
     refreshing={token:sequence,promise};return promise;
   }
   async function refreshState(){
     const id=current.id,sequence=token;
+    if(watchingRedaction()){
+      const baseline=scopeWatch.beforeRead(id);
+      if(baseline)await baseline;
+      if(sequence!==token||current?.id!==id)return;
+    }
     const next=await api(path(''));if(sequence!==token||current?.id!==id)return;
     const changedCase=next.version!==current.version;
-    if(changedCase){current=next;adapt();if(step===1&&current.pages.length)await loadPage(state.originalPage);}
+    if(changedCase){
+      current=next;adapt();selectedResponse=null;resumeRequest=null;
+      if(step===2){mapping={};drafts={};review={};}
+      if(step===1&&current.pages.length)await loadPage(state.originalPage);
+    }
     current.analysis_running=next.analysis_running;current.management=next.management;
     data.analysis_running=next.analysis_running;data.management=next.management;
     const reads=[];
     if(current.status==='confirmed'&&!suspended){
       const value=await api(path('/preparation'));if(sequence!==token||current?.id!==id)return;
+      if(correctionNotice==='waiting'&&['starting','running'].includes(job.status)&&['ready','waiting_review'].includes(value.status))checkingCorrection=true;
       job=value;render();
+    }
+    const target=resumeRequest;
+    resumeRequest=null;
+    if(target&&target===selectedResponse&&workspace()&&current.status==='confirmed'&&step===2&&!suspended&&
+        !['running','starting'].includes(job.status)&&(current.saved_stage>=2||['ready','waiting_review'].includes(job.status))){
+      partialRedaction=true;
+      try{await readSelectedResponse(target);}catch{/* Fall back to the complete projections. */}
+      if(sequence!==token||current?.id!==id)return;
     }
     // The active worker validates the saved approval on every stage. Reuse that
     // approval during its run; recompute it when inputs or the job state change.
@@ -252,13 +323,38 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
       const projections=reuseMapping?[]:[['/sources?compact=true',value=>mapping=value]];
       if(!preparingInputs)projections.push(['/drafts',value=>drafts=value],['/review',value=>review=value]);
       else {drafts={};review={};}
-      for(const [suffix,assign] of projections){
-        reads.push(api(path(suffix)).then(value=>{if(sequence!==token||current?.id!==id)return;assign(value);render();}));
+      const correcting=correctionNotice==='waiting';
+      if(correcting||(partialRedaction&&target===selectedResponse)){
+        // Publish the complete view together. Mixing partial and full results
+        // would briefly misstate pending items or enable the group confirmation.
+        reads.push(Promise.all(projections.map(([suffix])=>api(path(suffix)))).then(values=>{
+          if(sequence!==token||current?.id!==id)return;
+          partialRedaction=false;
+          // During a correction publish citations and pending decisions from one
+          // completed refresh. A stale map or active preparation cannot end the notice.
+          if(correcting){
+            const [sources,,newReview]=values;
+            if(!['ready','waiting_review'].includes(job.status)||sources?.status!=='ready'||sources.stale||sources.scope_revoked)return;
+            if(!newReview?.requests?.length||newReview.stale||newReview.requests.some(row=>row.stale||row.scope_reduced))return;
+            correctionNotice='updated';
+          }
+          projections.forEach(([,assign],i)=>assign(values[i]));render();
+        }).catch(error=>{
+          // Old details must not linger if a new permission check fails.
+          if(sequence===token&&current?.id===id){partialRedaction=false;mapping={};drafts={};review={};render();}
+          throw error;
+        }));
+      }else{
+        partialRedaction=false;
+        for(const [suffix,assign] of projections){
+          reads.push(api(path(suffix)).then(value=>{if(sequence!==token||current?.id!==id)return;assign(value);render();}));
+        }
       }
     }
     const results=await Promise.allSettled(reads);
     if(sequence!==token||current?.id!==id)return;
     refreshError=results.find(result=>result.status==='rejected')?.reason?.message||'';
+    checkingCorrection=false;
     render();schedule();
   }
   async function run(work){
@@ -280,7 +376,9 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
   }
   async function select(id,options={}){
     if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return;}
-    if(current?.id!==id){reviewCursor=-1;selectedResponse=null;redactionPosition=null;}
+    const opening=current?.id!==id;
+    if(opening){reviewCursor=-1;selectedResponse=null;redactionPosition=null;correctionNotice=null;}
+    previewController?.abort();
     await config();
     clearTimeout(timer);const sequence=++token;
     const before=new URL(location.href);const savedStep=before.searchParams.get('case')===id?Number(before.searchParams.get('step')):0;
@@ -288,9 +386,11 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     finalSummary={};
     const selectedManager=localStorage.getItem('pqrs-pilot-manager');
     if(value.management&&selectedManager&&!reviewManagers.some(m=>m.id===selectedManager)){try{reviewManagers=await api('/api/managers');}catch{reviewManagers=[];}if(sequence!==token)return;}
-    if(value.management&&(!value.management.owner_id||!value.management.started_at)){await onBrowse();return;}current=value;suspended=false;final.setCase();job=value.preparation||{};mapping={};drafts={};review={};initial=initialCache.get(id)?.version===value.version?initialCache.get(id).value:{};initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;initialActionError='';refreshError='';readingError='';state.originalPage=1;state.originalSelection=null;state.originalZoom=100;reached=value.status==='confirmed'?Math.max(rememberedStage(id),Math.min(3,Number(value.saved_stage)||1),Number(options.step)||1,value.initial_review_status==='approved'||value.preparation?.status&&value.preparation.status!=='idle'?2:1,['ready_review','closed'].includes(value.management?.state)?3:1):1;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:[1,2,3].includes(options.step)?options.step:reached;adapt();
+    if(value.management&&(!value.management.owner_id||!value.management.started_at)){await onBrowse();return;}partialRedaction=false;current=value;suspended=false;final.setCase();job=value.preparation||{};mapping={};drafts={};review={};initial=initialCache.get(id)?.version===value.version?initialCache.get(id).value:{};initialForm=null;savedDraft=null;draftMessage='';draftProblem=false;initialActionError='';refreshError='';readingError='';state.originalPage=1;state.originalSelection=null;state.originalZoom=100;reached=value.status==='confirmed'?Math.max(rememberedStage(id),Math.min(3,Number(value.saved_stage)||1),Number(options.step)||1,value.initial_review_status==='approved'||value.preparation?.status&&value.preparation.status!=='idle'?2:1,['ready_review','closed'].includes(value.management?.state)?3:1):1;step=value.status==='confirmed'&&[1,2,3].includes(savedStep)?savedStep:[1,2,3].includes(options.step)?options.step:reached;adapt();
     await scopeWatch.beforeRead(id);
     if(sequence!==token||current?.id!==id)return;
+    selectedResponse=restoredRequest(before,options.requestId);
+    resumeRequest=opening&&step===2&&!options.viewPreanalysis?selectedResponse:null;
     const url=new URL(location.href);url.searchParams.set('case',id);history.replaceState(null,'',url);render();
     if(options.viewPreanalysis){await showPreanalysis();return;}
     if(step===3)void final.load().catch(error=>notice(error.message));
@@ -327,26 +427,41 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
       }catch(e){if(form.isConnected){document.querySelector('#live-groups-error').textContent=e.message;form.querySelector('button').disabled=false;}else notice(e.message);}
     };
   }
-  function discardScope(caseId){
+  function discardScope(caseId, corrected=false){
     final.discardScope(caseId);
     editor.discardScope(caseId);
     initialCache.delete(caseId);
     if(current?.id!==caseId)return;
+    correctionNotice=corrected?'waiting':null;
+    checkingCorrection=false;
     // A refresh started before the PUT may finish after the new permissions are saved.
-    token++;clearTimeout(timer);
+    token++;clearTimeout(timer);previewController?.abort();resumeRequest=null;partialRedaction=false;
     mapping={};drafts={};review={};finalSummary={};refreshError='';
     initial={};
     const drawer=document.querySelector('#drawer');
-    if(drawer?.open && (drawer.dataset.initialHistory || drawer.querySelector('#live-source-detail,#live-response-edit,#live-response-loading,#proposal-panel,#pending-loading,#pending-history-loading,.pending-task-context,.source,#pending-decision-form'))){
+    if(drawer?.open && (drawer.dataset.initialHistory || drawer.querySelector('#live-source-detail,#live-response-edit,#live-response-loading,#proposal-panel,#pending-loading,#pending-history-loading,.pending-task-context,.pending-success,.source,#pending-decision-form,#pending-fact-form,[data-pending-detail],.redaction-context-request,#evidence-saved'))){
       close();document.querySelector('#drawer-body').replaceChildren();
     }
     render();
     if(step===3&&!suspended)void final.load().catch(error=>notice(error.message));
   }
+  const watchingRedaction=()=>Boolean(current&&workspace()&&current.status==='confirmed'&&step===2&&!suspended);
   const scopeWatch=watchSourceScope(caseId=>{
     discardScope(caseId);
     if(current?.id===caseId)void refresh().catch(error=>notice(error.message));
-  },{getCaseId:()=>current?.id||null,read:id=>api(`/api/cases/${encodeURIComponent(id)}/source-collections`)});
+  },{
+    getCaseId:()=>current?.id||null,watchRedaction:watchingRedaction,
+    read:(id,watching)=>api(`/api/cases/${encodeURIComponent(id)}/source-collections${watching?'?watch_redaction=true':''}`),
+    onRedactionChange(caseId,corrected){
+      if(current?.id!==caseId||!watchingRedaction())return;
+      if(corrected)discardScope(caseId,true);
+      else {
+        checkingCorrection=correctionNotice==='waiting';
+        if(refreshing)token++; // An in-flight read may predate the completed recomputation.
+      }
+      void refresh().catch(error=>notice(error.message));
+    },
+  });
   function correct(index=0){
     const caseId=current.id,version=current.version;
     open('Corregir solicitud',`<form id="live-correction"><label class="field">Solicitud<select id="live-request">${data.requests.map((r,i)=>`<option value="${i}">${esc(r.label)}. ${esc(r.title)}</option>`).join('')}</select></label><label class="field">Título<input id="live-title" required maxlength="240"></label><label class="field">Qué solicita<textarea id="live-description" required maxlength="8000"></textarea></label><p>Se conserva la referencia al documento original.</p><button class="primary">Guardar corrección</button></form><p id="live-correction-error" role="alert"></p>`);
@@ -396,7 +511,16 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     const targetStep={'live-identification':1,'live-responses':2,'live-final':3}[b.dataset.action];
     if(targetStep){navigate(targetStep);return;}const index=Number(b.dataset.index);
     if(b.dataset.action==='live-sources'&&workspace()&&step===2){
-      selectedResponse=data.requests[index]?.id;render();
+      const requestId=data.requests[index]?.id;
+      if(!requestId)return;
+      const changed=requestId!==selectedResponse;
+      selectedResponse=requestId;
+      try{localStorage.setItem('pqrs-response-'+current.id,JSON.stringify({id:requestId,version:current.version}));}catch{/* The URL still preserves this selection. */}
+      if(partialRedaction&&changed){
+        previewController?.abort();mapping={};drafts={};review={};
+      }
+      if(changed)resumeRequest=null;
+      render();
       const panel=view.querySelector('#redaction-context');
       if(panel){panel.scrollTop=0;panel.querySelector('h2')?.focus({preventScroll:true});panel.scrollIntoView({block:'nearest'});}return;
     }
@@ -506,5 +630,5 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
       case 'live-sources':{open('Fuentes de la solicitud '+data.requests[index].label,`<div id="live-source-detail" data-case="${esc(current.id)}" data-request="${esc(data.requests[index].id)}"></div>`);updateSourcePanel();break;}
     }});
   });
-  return {active:()=>Boolean(current),choose,upload,select,go:navigate,resume:navigate,leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;suspended=false;final.hide();clearTimeout(timer);release();document.body?.classList.remove('expediente-page','inbox-page');if(current)onWorkCase(null);current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(restore=true){await config();const id=new URL(location.href).searchParams.get('case');return id&&restore?run(()=>select(id)):Promise.resolve();}};
+  return {active:()=>Boolean(current),choose,upload,select,go:navigate,resume:navigate,leave(){if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return false;}token++;previewController?.abort();resumeRequest=null;partialRedaction=false;suspended=false;final.hide();clearTimeout(timer);release();document.body?.classList.remove('expediente-page','inbox-page');if(current)onWorkCase(null);current=null;data=null;initialSteps();history.replaceState(null,'',location.pathname);document.querySelector('#case').classList.add('active');document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';document.querySelector('.demo-badge').textContent='Demo';document.querySelector('.prototype-status').textContent='Demo + biblioteca';},async init(restore=true){await config();const id=new URL(location.href).searchParams.get('case');return id&&restore?run(()=>select(id)):Promise.resolve();}};
 }

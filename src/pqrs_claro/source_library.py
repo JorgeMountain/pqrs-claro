@@ -252,6 +252,8 @@ class SourceLibrary:
             """)
             from .source_preparation import install
             install(conn)
+            from .redaction_notice import install_source_notices
+            install_source_notices(conn)
 
     @contextmanager
     def connect(self):

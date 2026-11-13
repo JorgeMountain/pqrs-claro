@@ -1,9 +1,9 @@
 import {esc} from './views.js';
 import {icon} from './inbox-icons.js';
 
-export function responseReading(review={}, {reviewer='',busy=false,error=''}={}){
+export function responseReading(review={}, {reviewer='',busy=false,error='',loading=false}={}){
   const state=review.reading_confirmation||{};
-  const message=state.confirmed
+  const message=loading?'Cargando el estado de la revisión conjunta del expediente.':state.confirmed
     ?`Revisión de todas las respuestas guardada · ${state.reviewed_by}`
     :state.changed_since_confirmation?'El contenido cambió. Revisa la versión actual y confirma de nuevo.'
     :state.eligible?'Confirma que leíste y revisaste todas las respuestas propuestas por la IA.'
