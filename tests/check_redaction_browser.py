@@ -34,8 +34,8 @@ class LocalReader:
         )
 
 
-def seed(app):
-    case, source = prepared_case(app, count=2, with_map=False)
+def seed(app, *, count=2):
+    case, source = prepared_case(app, count=count, with_map=False)
     case_id = case["id"]
     app.state.management.change(case_id, ManagementAction(
         revision=0, action="claim", actor_id="gestor-1",

@@ -8,7 +8,7 @@ export function responseReading(review={}, {reviewer='',busy=false,error='',load
     :state.changed_since_confirmation?'El contenido cambió. Revisa la versión actual y confirma de nuevo.'
     :state.eligible?'Confirma que leíste y revisaste todas las respuestas propuestas por la IA.'
     :'Podrás confirmar cuando estén guardadas todas las respuestas actuales.';
-  return `<section class="response-reading${state.confirmed?' is-confirmed':''}" aria-label="Revisión conjunta de respuestas">
+  return `<section class="response-reading${state.confirmed?' is-confirmed':''}" aria-label="Revisión conjunta de respuestas" data-workflow-focus="review" tabindex="-1">
     <div><p data-reading-status role="status" tabindex="-1">${state.confirmed?icon('check'):icon('file')}<span>${esc(message)}</span></p>
     ${!reviewer&&!state.confirmed&&state.eligible?'<label class="response-reading-actor">Tu nombre<input id="response-reading-actor" autocomplete="name" maxlength="240" required></label>':''}
     ${error?`<p class="response-reading-error" role="alert">${esc(error)}</p>`:''}</div>

@@ -1,0 +1,84 @@
+/* Mismo orden visual y de teclado en las cuatro etapas. */
+.stage-actions.stage-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px 24px;
+  margin-top: 16px;
+  padding: 16px 0;
+  border-top: 1px solid var(--color-line);
+  background: var(--color-page);
+}
+.stage-actions > .stage-actions-secondary {
+  flex: 1 1 45%;
+  min-width: 0;
+  text-align: left;
+}
+.stage-actions > .stage-actions-primary {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
+  text-align: right;
+  align-items: flex-end;
+}
+.stage-actions.stage-actions button {
+  min-height: 44px;
+  font-size: 14px;
+  white-space: normal;
+}
+.stage-actions.stage-actions .primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 220px;
+  width: auto;
+  padding: 10px 16px;
+}
+.stage-actions .primary svg { width: 18px; height: 18px; flex: none; }
+.stage-actions [hidden], #drawer .dialog-actions [hidden] { display: none !important; }
+.stage-actions .stage-actions-primary :is(p, small) {
+  display: block;
+  max-width: 44ch;
+  margin: 6px 0 0 auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.stage-actions :is([data-pre-error], [data-redaction-save-error]) { overflow-wrap: anywhere; }
+
+/* Los paneles conservan el mismo orden: cancelar/volver, guardar/confirmar. */
+#drawer .dialog-actions {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+#drawer .dialog-actions > button { min-height: 44px; }
+
+@media (max-width: 760px) {
+  .stage-actions.stage-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .stage-actions > :is(.stage-actions-secondary, .stage-actions-primary) {
+    flex: auto;
+    width: 100%;
+    max-width: none;
+    text-align: left;
+    align-items: stretch;
+  }
+  .stage-actions > .stage-actions-primary { display: flex; flex-direction: column; }
+  .stage-actions.stage-actions button,
+  .stage-actions.stage-actions .primary {
+    width: 100%;
+    min-width: 0;
+  }
+  .stage-actions .stage-actions-primary :is(p, small) { margin-left: 0; text-align: left; }
+  #drawer .dialog-actions { flex-direction: column; align-items: stretch; }
+  #drawer .dialog-actions > button { width: 100%; }
+}
