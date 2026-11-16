@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {esc} from '../src/pqrs_claro/static/recorrido/views.js';
 import {preanalysisProgress} from '../src/pqrs_claro/static/recorrido/stage-progress.js';
+import * as workflowNavigation from '../src/pqrs_claro/static/recorrido/workflow-navigation.js';
 
 const source=(await fs.readFile(new URL('../src/pqrs_claro/static/recorrido/preanalysis.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
-const dependencies={esc,preanalysisProgress,icon:name=>`<svg data-icon="${name}"></svg>`,
+const dependencies={esc,preanalysisProgress,...workflowNavigation,icon:name=>`<svg data-icon="${name}"></svg>`,
   actor:()=>globalThis.__preanalysisHarness.manager,
   request:(...args)=>globalThis.__preanalysisHarness.request(...args)};
 globalThis.__preanalysisDependencies=dependencies;
@@ -23,7 +24,7 @@ function harness({record=savedRecord(),failFirstGet=false}={}){
     style:{setProperty(){}},focus(){},scrollIntoView(){}});
   const root={...element(),isConnected:true,events:{},
     querySelector(query){
-      if(query==='[data-pre-start]'&&!elements.get('[data-pre-checks]')?.innerHTML.includes('data-pre-start'))return null;
+      if(query==='[data-pre-start]'&&!elements.get('[data-pre-actions]')?.innerHTML.includes('data-pre-start'))return null;
       if(!elements.has(query))elements.set(query,element());return elements.get(query);
     },
     addEventListener(name,callback){this.events[name]=callback;}};

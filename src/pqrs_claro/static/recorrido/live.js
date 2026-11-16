@@ -1,3 +1,4 @@
+import {focusStageReview,focusResponse} from './workflow-navigation.js';
 import {reviewNavigation,reviewItems,nextReviewIndex,focusReviewPetition,syncReviewNavigation,suggestedReviewer} from './review-navigation.js?v=review-context2';
 import {createReviewDraftStore,restoreDraft,draftPreview,draftEnvelope,downloadableDraft} from './review-drafts.js?v=phase2';
 import {createFinal} from './live-document.js?v=approval-progress1';
@@ -38,7 +39,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
   let refreshing=null,refreshError='',readingError='',confirmingReading=false;
   let selectedResponse=null,finalSummary={},suspended=false,reached=1,redactionPosition=null;
   let resumeRequest=null,partialRedaction=false,previewController=null;
-  let correctionNotice=null;
+  let correctionNotice=null,redactionSaveError='',savingResponses=false;
   let checkingCorrection=false;
   const initialCache=new Map();
   const stageKey=id=>'pqrs-stage-'+id;
@@ -208,7 +209,7 @@ export function createLive({open,close,notice,releaseDemo,showMail,onBrowse,onPr
     if(workspace()&&step===1)view.innerHTML=identificationWorkspace(data,state,{initial,draft:initialForm,requestContent:current.identification?initialRequestContent(current,initial,initialForm,{workspace:true}):{},confirmation:!closed()?initialConfirmation(current,initial,initialForm,{workspace:true,busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',banner:identificationActions.banner(),showMail:Boolean(showMail),canContinue:canNavigate(),navigation:navigation()});
     else if(!current.identification)renderAnalysis(view,current);
     else if(step===1)view.innerHTML=identificationActions.banner()+identification({...data,initial_review_enabled:initialEnabled,automatic_initial_review:automaticInitial},state,{summary:initialEnabled?initialReviewSummary(current,initial,initialForm,{automatic:automaticInitial})+reviewNavigation(current,initial,initialForm,{cursor:reviewCursor,busy}):'',requestContent:initialEnabled?initialRequestContent(current,initial,initialForm):{},confirmation:initialEnabled&&!closed()?initialConfirmation(current,initial,initialForm,{busy,error:initialActionError,draftMessage,draftProblem,hasPrevious:Boolean(savedDraft),suggestedReviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))}):'',initial:{...initial,ready:initialReady(initial),can_prepare:canPrepare()}});
-else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{status:'starting'},mapping,drafts,review,{workspace:true,canContinue:canNavigate(),navigation:navigation(),showMail:Boolean(showMail),selectedRequest:selectedResponse,partialRedaction,correctionNotice,checkingCorrection,hideOutdated:true,refreshError,readingError,confirmingReading,reviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager')),initialPending:(initial.status||current.initial_review_status)==='idle'&&current.saved_stage>=2}):(refreshError?`<div class="alert" role="alert">${esc(refreshError)} <button data-action="live-refresh">Actualizar estado</button></div>`:'')+(job.status?responses(current,job,mapping,drafts,review):'<h1>Redacción de respuestas</h1><p role="status">Recuperando el avance guardado…</p>');}
+else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{status:'starting'},mapping,drafts,review,{workspace:true,canContinue:canNavigate(),navigation:navigation(),showMail:Boolean(showMail),selectedRequest:selectedResponse,partialRedaction,correctionNotice,checkingCorrection,saveError:redactionSaveError,savingResponses,hideOutdated:true,refreshError,readingError,confirmingReading,reviewer:suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager')),initialPending:(initial.status||current.initial_review_status)==='idle'&&current.saved_stage>=2}):(refreshError?`<div class="alert" role="alert">${esc(refreshError)} <button data-action="live-refresh">Actualizar estado</button></div>`:'')+(job.status?responses(current,job,mapping,drafts,review):'<h1>Redacción de respuestas</h1><p role="status">Recuperando el avance guardado…</p>');}
     else {const paper=final.view();if(workspace()){
       const heading=finalHeading();
       let frame=view.querySelector('.expediente-later');
@@ -228,7 +229,7 @@ else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{s
     if(closed()){
       view.insertAdjacentHTML('afterbegin','<p class="alert" role="status" data-closed-case-notice>Expediente finalizado · consulta disponible. Para editar o iniciar otro análisis, reabre la gestión desde «Detalles y gestión» en la bandeja.</p>');
       view.querySelectorAll('input,textarea,select:not(#original-page):not([data-review-index]):not([data-zoom]),[data-evidence-add]').forEach(e=>e.disabled=true);
-      const readActions=new Set(['live-preanalysis','live-queue','live-mail-origin','live-initial','live-initial-history','live-pending-history','live-responses','live-final','live-sources','original','clear-original','back-to-question','live-review-next','live-identification']);
+      const readActions=new Set(['live-preanalysis','live-queue','live-mail-origin','live-initial','live-initial-history','live-pending-history','live-responses','live-final','live-sources','live-response-return','live-response-return-end','live-stage-actions','original','clear-original','back-to-question','live-review-next','live-identification']);
       view.querySelectorAll('[data-action]').forEach(e=>{if(!readActions.has(e.dataset.action))e.disabled=true;});
     }
     if(busy)view.querySelectorAll('button,input,select,textarea').forEach(b=>b.disabled=true);
@@ -377,7 +378,7 @@ else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{s
   async function select(id,options={}){
     if(current&&initialForm&&!persistDraft()){draftFeedback();notice(draftMessage);return;}
     const opening=current?.id!==id;
-    if(opening){reviewCursor=-1;selectedResponse=null;redactionPosition=null;correctionNotice=null;}
+    if(opening){reviewCursor=-1;selectedResponse=null;redactionPosition=null;correctionNotice=null;redactionSaveError='';}
     previewController?.abort();
     await config();
     clearTimeout(timer);const sequence=++token;
@@ -464,10 +465,11 @@ else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{s
   });
   function correct(index=0){
     const caseId=current.id,version=current.version;
-    open('Corregir solicitud',`<form id="live-correction"><label class="field">Solicitud<select id="live-request">${data.requests.map((r,i)=>`<option value="${i}">${esc(r.label)}. ${esc(r.title)}</option>`).join('')}</select></label><label class="field">Título<input id="live-title" required maxlength="240"></label><label class="field">Qué solicita<textarea id="live-description" required maxlength="8000"></textarea></label><p>Se conserva la referencia al documento original.</p><button class="primary">Guardar corrección</button></form><p id="live-correction-error" role="alert"></p>`);
+    open('Corregir solicitud',`<form id="live-correction"><label class="field">Solicitud<select id="live-request">${data.requests.map((r,i)=>`<option value="${i}">${esc(r.label)}. ${esc(r.title)}</option>`).join('')}</select></label><label class="field">Título<input id="live-title" required maxlength="240"></label><label class="field">Qué solicita<textarea id="live-description" required maxlength="8000"></textarea></label><p>Se conserva la referencia al documento original.</p><div class="dialog-actions"><button type="button" id="live-correction-cancel">Cancelar</button><button class="primary" type="submit">Guardar corrección</button></div></form><p id="live-correction-error" role="alert"></p>`,{eyebrow:'CONTEXTO DE LA PETICIÓN'});
+    document.querySelector('#live-correction-cancel').onclick=close;
     const selector=document.querySelector('#live-request');selector.value=String(index);const fill=()=>{const r=data.requests[Number(selector.value)];document.querySelector('#live-title').value=r.title;document.querySelector('#live-description').value=r.description;};selector.onchange=fill;fill();
-    document.querySelector('#live-correction').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('button').disabled=true;
-      try{const identification=structuredClone(current.identification);const row=identification.requests[Number(selector.value)];row.title=document.querySelector('#live-title').value;row.description=document.querySelector('#live-description').value;await api(`/api/cases/${caseId}/identification`,{version,identification},'PUT');close();await select(caseId);}catch(e){if(form.isConnected){document.querySelector('#live-correction-error').textContent=e.message;form.querySelector('button').disabled=false;}}
+    document.querySelector('#live-correction').onsubmit=async event=>{event.preventDefault();const form=event.currentTarget;form.querySelector('[type="submit"]').disabled=true;
+      try{const identification=structuredClone(current.identification);const row=identification.requests[Number(selector.value)];row.title=document.querySelector('#live-title').value;row.description=document.querySelector('#live-description').value;await api(`/api/cases/${caseId}/identification`,{version,identification},'PUT');close();await select(caseId);}catch(e){if(form.isConnected){document.querySelector('#live-correction-error').textContent=e.message;form.querySelector('[type="submit"]').disabled=false;}}
     };
   }
   view.addEventListener('change',event=>{
@@ -489,6 +491,23 @@ else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{s
     if(request)void run(()=>intake.uploadForm(request.id,false,null,files[0]));
   });
   view.addEventListener('click',e=>{if(!current||busy||suspended)return;const b=e.target.closest('[data-action]');if(!b||b.disabled)return;
+    if(b.dataset.action==='live-stage-actions'){focusStageReview(view);return;}
+    if(['live-response-return','live-response-return-end'].includes(b.dataset.action)&&step===2){
+      focusResponse(view,b.dataset.requestId);return;
+    }
+    if(b.dataset.action==='live-save-responses-and-queue'){
+      const caseId=current.id;
+      redactionSaveError='';savingResponses=true;
+      void run(async()=>{
+        try{
+          await editor.saveAll(caseId);
+          if(current?.id===caseId){await onBrowse();notice('Cambios de Redacción guardados.');}
+        }catch(error){
+          if(current?.id===caseId)redactionSaveError=error.message;
+        }finally{savingResponses=false;}
+      }).then(()=>view.querySelector('[data-redaction-save-error]')?.focus({preventScroll:true}));
+      return;
+    }
     if(b.dataset.action==='live-confirm-responses'){
       const caseId=current.id,contentHash=review.reading_confirmation?.content_hash;
       const reviewer=suggestedReviewer(reviewManagers,localStorage.getItem('pqrs-pilot-manager'))||view.querySelector('#response-reading-actor')?.value.trim();

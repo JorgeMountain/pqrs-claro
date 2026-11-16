@@ -83,6 +83,18 @@ el reintento se inicia con la acción de la interfaz.
 
 ### Al retomar una petición en Redacción
 
+**Guardar y volver a la bandeja** conserva las respuestas que el gestor haya
+editado, incluso si cerró sus paneles con la X. La pantalla espera a que se
+guarden todas antes de volver a la bandeja. Al reabrir o recargar el expediente,
+se recupera el texto guardado con sus referencias. Cada cambio conserva la
+atribución del responsable y deja la respuesta pendiente de revisión.
+
+Si una respuesta falla al guardar, el gestor permanece en Redacción y ve qué
+petición necesita atención. El texto local se conserva y puede reintentarse
+el guardado. Las respuestas ya guardadas conservan su revisión. Si otra
+sesión modificó una respuesta o cambiaron sus permisos de consulta, el gestor
+debe revisar esa edición antes de continuar.
+
 Al elegir **Ver fuentes**, Redacción recuerda en ese navegador el expediente,
 su versión y la petición seleccionada. Al volver desde la bandeja o abrir un
 enlace a esa petición, comprueba que sigue vigente y carga primero su cita,
@@ -137,4 +149,16 @@ la misma pestaña el aviso, la cita, el enlace al original y el nuevo pendiente.
 
 ```powershell
 .\scripts\test.ps1 tests/check_redaction_browser.py
+```
+
+El guardado al salir se comprueba con dos respuestas editadas cuyos paneles
+se cierran con la X. La prueba vuelve desde la bandeja, recarga la página y
+verifica el texto, su autor y las referencias. También comprueba el reintento
+tras un fallo parcial y los conflictos con otra sesión. El aviso de error
+se comprueba en ventanas de 390 y 1440 píxeles. Usa Chrome, una base temporal
+y dobles de IA, sin modificar expedientes reales.
+
+```powershell
+.\scripts\test.ps1 tests/check_redaction_save_browser.py
+node --test tests/test_response_save.mjs
 ```

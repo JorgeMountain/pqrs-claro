@@ -72,6 +72,23 @@ test('las notas guardadas permanecen visibles aunque las observaciones vacías s
   assert.match(content.P2.notes,/form="initial-decision-form" name="note-1"/);
 });
 
+test('una edición local pendiente usa el estado por revisar aunque la revisión anterior esté guardada',()=>{
+  const saved={...initial,status:'approved',can_prepare:true};
+  const draft={case_id:current.id,revision:saved.revision,requests:[{request_id:'P1',petition_type:'documents',note:'Aclaración pendiente de confirmar.'}]};
+  const before=JSON.stringify(saved);
+  const render=local=>identificationWorkspace(current,{}, {initial:saved,draft:local});
+  assert.equal((render(null).match(/class="expediente-petition-state complete">Revisión guardada/g)||[]).length,3);
+  assert.match(render(null),/class="expediente-status complete">Revisión guardada/);
+  const editing=render(draft);
+  assert.equal((editing.match(/class="expediente-petition-state review">Por revisar/g)||[]).length,3);
+  assert.match(editing,/class="expediente-status review">Por revisar/);
+  assert.doesNotMatch(editing,/class="expediente-petition-state complete">Por revisar/);
+  assert.equal((render({...draft,revision:saved.revision-1}).match(/class="expediente-petition-state complete">Revisión guardada/g)||[]).length,3);
+  assert.match(identificationWorkspace({...current,error:'Fallo de lectura'}, {}, {initial:saved,draft}),/class="expediente-status error">Requiere atención/);
+  assert.match(identificationWorkspace(current,{}, {initial:{...saved,stale:true},draft}),/class="expediente-status review">Por actualizar/);
+  assert.equal(JSON.stringify(saved),before,'the local visual state must not mutate the saved review');
+});
+
 test('el resumen de tipos se actualiza al corregir una clasificación sin confirmar la revisión',()=>{
   const counts={innerHTML:''},button={},status={};
   const elements=new Map([['[data-identification-types]',counts],['#initial-decision-form',{dataset:{workspace:'true'}}],['[data-action="live-initial-confirm"]',button],['[data-global-review]',status]]);
@@ -82,6 +99,41 @@ test('el resumen de tipos se actualiza al corregir una clasificación sin confir
   assert.match(counts.innerHTML,/<strong>1<\/strong> Información/);
   assert.equal(button.disabled,true);
   assert.match(status.textContent,/Confirma la revisión/);
+});
+
+test('las etiquetas cambian al editar y vuelven al estado guardado solo tras persistir la revisión',()=>{
+  const value={...initial,status:'approved',can_prepare:true};
+  const decision={reviewed_by:'José',document:{route:'continue',reviewed:true},requests:initial.report.requests.map(r=>({...r,route:'continue',reviewed:true}))};
+  const badgeFor=base=>{
+    const classes=new Set([base,'complete']);
+    return {textContent:'Revisión guardada',classList:{contains:name=>classes.has(name),toggle(name,present){if(present)classes.add(name);else classes.delete(name);}}};
+  };
+  const badges=decision.requests.map(()=>badgeFor('expediente-petition-state')),header=badgeFor('expediente-status');
+  const button={},elements=new Map([['#initial-decision-form',{dataset:{workspace:'true'}}],['[data-action="live-initial-confirm"]',button],['.expediente-heading .expediente-status',header],...badges.map((badge,i)=>[`#identified-${i} .expediente-petition-state`,badge])]);
+  const view={querySelector:selector=>elements.get(selector),getAttribute:()=>null};
+  const assertBadges=saved=>[header,...badges].forEach(badge=>{
+    assert.equal(badge.textContent,saved?'Revisión guardada':'Por revisar');
+    assert.equal(badge.classList.contains('complete'),saved);
+    assert.equal(badge.classList.contains('review'),!saved);
+  });
+  updateInitialConfirmation(view,value,decision,{saved:true});assertBadges(true);
+  decision.requests[0].note='Nueva observación sin confirmar';
+  decision.document.reviewed=false;decision.requests.forEach(row=>row.reviewed=false);
+  updateInitialConfirmation(view,value,decision);assertBadges(false);
+  assert.equal(button.disabled,true);
+  assert.equal(decision.document.reviewed,false);
+  assert.ok(decision.requests.every(row=>!row.reviewed));
+  decision.document.reviewed=true;decision.requests.forEach(row=>row.reviewed=true);
+  updateInitialConfirmation(view,value,decision);assertBadges(false);
+  updateInitialConfirmation(view,value,decision,{saved:true});assertBadges(true);
+  assert.equal(value.can_prepare,true,'presentation does not change the saved authorization');
+  for(const tone of ['error','loading','processing']){
+    header.classList.toggle('complete',false);header.classList.toggle(tone,true);header.textContent='Estado de '+tone;
+    updateInitialConfirmation(view,value,decision);
+    assert.equal(header.textContent,'Estado de '+tone);
+    assert.equal(header.classList.contains(tone),true);
+    header.classList.toggle(tone,false);
+  }
 });
 
 test('explica la ruta general que bloquea aunque todas las peticiones permitan continuar',()=>{
@@ -153,7 +205,7 @@ test('visitar Borrador no da por terminada una redacción sin respuestas',()=>{
 
 test('la versión generada completa Borrador sin confundir la etapa actual con una aprobación nueva',()=>{
   const html=expedienteHeading(current,3,{canContinue:true,redactionComplete:true,draftComplete:true,activeLabel:'En revisión'});
-  assert.match(html,/class="complete stage-3" aria-current="step"/);
+  assert.match(html,/class="complete current stage-3" aria-current="step"/);
   assert.match(html,/<strong>Borrador<\/strong><small>Versión generada/);
   assert.match(html,/data-action="live-final"/);
   assert.equal((html.match(/aria-current="step"/g)||[]).length,1);
@@ -183,6 +235,21 @@ test('consultar una etapa anterior conserva las etapas completadas y cuatro cont
   assert.match(html,/<strong>Redacción<\/strong><small>Completado/);
   assert.match(html,/<strong>Borrador<\/strong><small>Guardado/);
   assert.equal((html.match(/aria-current="step"/g)||[]).length,1);
+});
+
+test('la etapa actual sigue seleccionada al consultar una etapa completada',()=>{
+  for(const stage of [0,1,2,3]){
+    const html=expedienteSteps(stage,{navigation:{available:[true,true,true,true],completed:[true,true,true,true]},draftComplete:true});
+    const items=[...html.matchAll(/<li class="([^"]+)"[^>]*>([\s\S]*?)<\/li>/g)];
+    assert.equal(items.length,4);
+    items.forEach((item,index)=>{
+      const classes=item[1].split(' ');
+      assert.equal(classes.includes('current'),index===stage);
+      assert.equal(classes.includes('complete'),true);
+      assert.match(item[2],/class="lucide lucide-check"/,'the completed check remains visible');
+    });
+    assert.equal((html.match(/aria-current="step"/g)||[]).length,1);
+  }
 });
 
 test('recuperar resultados guardados no se presenta como otra identificación con IA',()=>{

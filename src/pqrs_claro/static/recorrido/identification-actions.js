@@ -15,10 +15,10 @@ export function createIdentificationActions({api,open,close,notice,getCase,onSav
     if(!row)return;
     const caseId=current.id,version=current.version,before=structuredClone(current.identification);
     if(before.requests.length===1){
-      open('No se puede dejar la petición vacía','<p>Esta es la única solicitud identificada. Puedes corregirla con «Editar». Para confirmar la petición debe quedar al menos una solicitud.</p>');
+      open('No se puede dejar la petición vacía','<p>Esta es la única solicitud identificada. Puedes corregirla con «Editar». Para confirmar la petición debe quedar al menos una solicitud.</p>',{eyebrow:'CONTEXTO DE LA PETICIÓN'});
       return;
     }
-    open('Descartar como solicitud',`<p><strong>${esc(row.title)}</strong></p><p>Se retirará de las solicitudes que vas a confirmar y no se preparará una respuesta para este fragmento. El texto seguirá en el documento original.</p><div class="actionbar"><button id="discard-cancel" type="button">Cancelar</button><button id="discard-confirm" type="button" class="primary">No es una solicitud · descartar</button></div><p id="discard-error" role="alert"></p>`);
+    open('Descartar como solicitud',`<p><strong>${esc(row.title)}</strong></p><p>Se retirará de las solicitudes que vas a confirmar y no se preparará una respuesta para este fragmento. El texto seguirá en el documento original.</p><div class="actionbar dialog-actions"><button id="discard-cancel" type="button">Cancelar</button><button id="discard-confirm" type="button" class="danger">No es una solicitud · descartar</button></div><p id="discard-error" role="alert"></p>`,{eyebrow:'CONTEXTO DE LA PETICIÓN'});
     document.querySelector('#discard-cancel').onclick=close;
     const button=document.querySelector('#discard-confirm'),error=document.querySelector('#discard-error');
     button.onclick=async()=>{

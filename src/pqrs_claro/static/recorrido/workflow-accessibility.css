@@ -1,0 +1,158 @@
+/* Escala de lectura de la interfaz. No alcanza al papel del oficio ni al PDF. */
+.expediente-steps .expediente-stage small,
+.pre-steps small,
+.pre-steps strong,
+.expediente-workspace .expediente-petition-state,
+.expediente-workspace .expediente-summary-state,
+.redaction-workspace .redaction-state,
+.draft-workspace .draft-review-status {
+  font-size: 12px;
+  line-height: 1.4;
+}
+.pre-steps { height: auto; min-height: 54px; }
+
+/* Una revisión pendiente conserva el mismo tratamiento en cada pantalla. */
+.inbox-state.review,
+.expediente-status.review,
+.expediente-petition-state.review,
+.redaction-state.review {
+  color: #fff;
+  background: var(--color-purple);
+}
+
+.redaction-workspace .redaction-source-location,
+.redaction-workspace .redaction-source :is(a, details),
+.redaction-workspace .redaction-context-request p,
+.redaction-workspace .redaction-human-note,
+.redaction-workspace .redaction-context .scope-actions button,
+.redaction-workspace .redaction-upload,
+.redaction-workspace .redaction-sources-heading .text-button {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.redaction-workspace .redaction-source-location { overflow-wrap: anywhere; }
+.redaction-workspace .redaction-source a,
+.redaction-workspace .redaction-source summary,
+.redaction-workspace .redaction-sources-heading .text-button,
+.redaction-workspace .redaction-row-actions button {
+  min-height: 36px;
+}
+.redaction-workspace .redaction-source summary { padding: 6px 0; }
+
+/* Atajos en el flujo: no cubren texto ni controles al desplazarse. */
+.workflow-shortcuts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.workflow-shortcuts > .text-button,
+.redaction-workspace .redaction-return,
+.redaction-workspace .redaction-context-navigation > .text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 8px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  color: var(--color-green);
+}
+.redaction-workspace .redaction-return > svg { flex: none; }
+.redaction-context-navigation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-line);
+}
+:is(.pre-confirm, .expediente-confirmation, .response-reading, .draft-confirmation, .stage-actions, .expediente-waiting),
+#redaction-context,
+#redaction-context-title,
+.redaction-response > summary { scroll-margin: 12px; }
+:is(.pre-confirm, .expediente-confirmation, .response-reading, .draft-confirmation, .stage-actions, .expediente-waiting):focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 3px;
+}
+
+.expediente-workspace .expediente-review-options,
+.expediente-workspace .expediente-review-options :is(p, button),
+.expediente-workspace .expediente-draft-status,
+.expediente-workspace .expediente-route-hint,
+.preanalysis .pre-resolution small,
+.preanalysis .pre-warning button {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.draft-workspace .draft-editor-heading > p,
+.draft-workspace .document-tool-status,
+.draft-workspace .document-tool-status :is(details, summary, p),
+.draft-workspace .document-fields label,
+.draft-workspace .document-settings :is(.field, .small),
+.draft-workspace .document-attachments,
+.draft-workspace .document-attachments p,
+.draft-workspace .draft-adjustment-copy :is(small, span),
+.draft-workspace .draft-adjustment-body,
+.draft-workspace .draft-adjustment-body :is(.draft-adjustment-location, .draft-adjustment-excerpt),
+.draft-workspace .draft-adjustment-nav > span,
+.draft-workspace .draft-adjustment-hint,
+.draft-workspace .draft-confirmation :is(p, small),
+.draft-workspace .document-save-state {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.draft-workspace .draft-adjustment-actions button,
+.draft-workspace .draft-adjustment-nav button,
+.draft-workspace .document-tools.is-compact .doc-tools-more > summary,
+.draft-workspace :is(.document-tools, .doc-tools) select,
+.draft-workspace :is(.document-tools, .doc-tools) button:not([data-tool=in], [data-tool=out], [data-tool=full]) {
+  font-size: 13px;
+  min-height: 36px;
+}
+.draft-workspace .draft-adjustment-nav { flex-wrap: wrap; }
+
+#drawer .pending-optional,
+#drawer .pending-support-choice .pending-support-selected { font-size: 12px; }
+#drawer .pending-task details,
+#drawer .pending-form-footer .pending-help,
+#drawer .pending-support-filter button,
+#drawer .pending-support-status,
+#drawer .pending-support-filter-note,
+#drawer .pending-support-choice small,
+#drawer .pending-support-hint,
+#drawer .pending-support-full,
+#drawer .pending-support-original {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Borde visible para campos que pueden editarse; las tarjetas siguen suaves. */
+:where(.preanalysis, .expediente-workspace, .redaction-workspace, .draft-workspace, #drawer)
+  :is(textarea, select, input:not([type=checkbox], [type=radio], [type=range], [type=file], [type=hidden])):enabled:not([readonly], [aria-invalid=true]) {
+  border: 1px solid var(--color-control-line);
+}
+
+@media (max-width: 600px) {
+  .expediente-steps .expediente-stage small { overflow-wrap: anywhere; }
+  .inbox-table td[data-label]::before { font-size: 12px; }
+  .workflow-shortcuts,
+  .redaction-context-navigation { flex-direction: column; align-items: stretch; }
+  .workflow-shortcuts > .text-button,
+  .redaction-workspace .redaction-context-navigation > .text-button { width: 100%; }
+}
+
+/* La barra de navegación móvil permanece arriba al desplazarse (61 px). */
+@media (max-width: 760px) {
+  :is(.pre-confirm, .expediente-confirmation, .response-reading, .draft-confirmation, .stage-actions, .expediente-waiting),
+  #redaction-context,
+  #redaction-context-title,
+  .redaction-response > summary { scroll-margin-top: 76px; }
+}
