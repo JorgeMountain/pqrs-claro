@@ -84,6 +84,104 @@ def test_positive_historical_fact_requires_attribution():
     assert "historical_attribution" in codes("El comité aprobó el plan del taller en 2022.")
 
 
+@pytest.mark.parametrize("text", [
+    "La circular, fechada en 2022, consignó que el taller estaba en preparación.",
+    "El calendario editorial del archivo municipal prevé publicar el informe en 2022.",
+    "El comunicado anunció la fecha prevista para el taller en 2022.",
+    "Las circulares anuncian la programación prevista para el taller.",
+    "Los calendarios preveían publicar los informes al finalizar el taller.",
+    "El calendario previó la publicación del informe en 2022.",
+])
+def test_documentary_reports_and_forecasts_are_explicit_attributions(text):
+    assert "historical_attribution" not in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "La circular está archivada. El comité aprobó el plan del taller en 2022.",
+    "El calendario editorial está disponible. El taller fue aprobado en 2022.",
+    "El comunicado tiene una página. La decisión del comité es definitiva.",
+    "El comité prevé publicar su decisión en 2022.",
+    "El calendario previo está archivado. El comité aprobó la jornada.",
+    "El calendario contiene un anuncio. El comité aprobó la jornada.",
+    "El comunicado contiene un nuevo anuncio del taller. El comité aprobó la jornada.",
+])
+def test_document_mention_or_actor_forecast_alone_is_not_attribution(text):
+    assert "historical_attribution" in codes(text)
+
+
+def test_documentary_forecast_does_not_hide_an_actual_delivery_claim():
+    assert "no_operational_claim" in codes(
+        "El comunicado anuncia la publicación prevista. Se adjunta el informe solicitado."
+    )
+
+
+@pytest.mark.parametrize("text", [
+    "El aviso prevé publicar el resultado el jueves en el tablero.",
+    "El acta de recepción consigna que la revisión concluyó el lunes.",
+    "El informe describe el estado de la revisión.",
+    "Las resoluciones señalan los requisitos de la solicitud.",
+    "Los manuales indican cómo presentar la solicitud.",
+])
+def test_shared_document_classes_allow_brief_documentary_attribution(text):
+    assert "historical_attribution" not in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "El aviso está archivado. El equipo informó que la jornada concluyó.",
+    "El acta tiene dos páginas. El comité declaró aprobado el resultado.",
+    "El informe está disponible. La oficina señaló que terminó la revisión.",
+    "El equipo informó que la revisión concluyó el lunes.",
+])
+def test_brief_document_mention_does_not_attribute_another_actors_report(text):
+    assert "historical_attribution" in codes(text)
+
+
+@pytest.mark.parametrize("title,text", [
+    ("Boletín técnico 418 de 2022 - Estación de pruebas",
+     "El Boletín técnico 418 indica que la revisión sigue en curso."),
+    ("Registro de ensayo 927 de 2022",
+     "El Registro de ensayo 927 de 2022 consignó que el ensayo concluyó el lunes."),
+    ("Balance de laboratorio 62-A - Equipo de medición",
+     "El Balance de laboratorio 62-A anunció una nueva revisión."),
+])
+def test_exact_brief_title_of_cited_source_can_attribute_its_own_report(title, text):
+    assert "historical_attribution" not in codes(text, [{**HISTORY, "title": title}])
+
+
+@pytest.mark.parametrize("text", [
+    "El Boletín técnico 418 está archivado. El comité aprobó la jornada.",
+    "El Boletín técnico 419 indica que la revisión sigue en curso.",
+    "El Boletín técnico 4180 indica que la revisión sigue en curso.",
+    "El Boletín técnico 418-A indica que la revisión sigue en curso.",
+    "El Boletín técnico 418. El comité informó que aprobó la jornada.",
+    "El Boletín técnico 418, el comité informó que aprobó la jornada.",
+    "El Boletín clínico 418 indica que la revisión sigue en curso.",
+    "El Boletín técnico 418 de 2023 indica que la revisión sigue en curso.",
+    "El Boletín técnico 418 informativo está archivado. El comité aprobó la jornada.",
+    "El Boletín técnico 418, registro del taller, está archivado. El comité aprobó la jornada.",
+])
+def test_cited_title_fallback_rejects_other_identity_or_another_actors_predicate(text):
+    assert "historical_attribution" in codes(text, [{
+        **HISTORY, "title": "Boletín técnico 418 de 2022 - Estación de pruebas",
+    }])
+
+
+@pytest.mark.parametrize("change", ["uncited", "superseded", "old_version", "unreadable"])
+def test_cited_title_fallback_requires_the_current_readable_cited_source(change):
+    source = {**HISTORY, "title": "Bitácora de ensayo 927 de 2022"}
+    if change == "uncited":
+        source["title"] = "Bitácora de ensayo 928 de 2022"
+    elif change == "superseded":
+        source["validity"] = "superseded"
+    elif change == "old_version":
+        source["is_latest"] = False
+    else:
+        source["extraction_status"] = "pending"
+    assert "historical_attribution" in codes(
+        "La Bitácora de ensayo 927 informa que el ensayo concluyó.", [source],
+    )
+
+
 @pytest.mark.parametrize(
     "text",
     [

@@ -7,6 +7,7 @@ from pqrs_claro.evidence_contract import (
     catalog_audit,
     group_checks,
     normalize_pending,
+    pending_registry,
 )
 
 
@@ -324,3 +325,104 @@ def test_information_reuses_declared_check_subject_to_specific_application():
         request(description="Entregue copia de los planes."), proposed
     )
     assert delivery["missing"][0]["kind"] == "document"
+
+
+@pytest.mark.parametrize("resolved", [False, True])
+def test_registry_is_reused_without_reconstructing_legacy_views(resolved):
+    inquiry = request(description="Confirme si fue concedido el préstamo de un microscopio.")
+    raw = {
+        "kind": "fact", "description": "Confirmar la aprobación del préstamo.",
+        "basis": "content_gap", "affected_claim": "El préstamo está aprobado.",
+        "why_unresolved": "El registro solo contiene la solicitud.",
+        "linked_source_ids": ["one"], "linked_chunk_ids": ["one:1:1:1"],
+    }
+    result = apply_evidence_contract(inquiry, finding([raw]))
+    check = result["checks"][0]
+    check["resolution"] = {"status": "resolved" if resolved else "open"}
+    result["missing"] = []
+    result["actions"] = []
+    before = deepcopy(result)
+    paraphrase = {
+        "kind": "document", "description": "Obtener la autorización del préstamo.",
+        "stage": "fulfillment", "existing_check_keys": [check["check_key"]],
+    }
+
+    assert pending_registry(inquiry, result) == [check]
+    pending = normalize_pending(inquiry, result, [paraphrase, paraphrase])
+    assert pending == ([] if resolved else [check])
+    assert normalize_pending(inquiry, result, pending) == pending
+    assert result == before
+    assert result["supports"] == before["supports"]
+
+
+def test_registry_keeps_new_controls_and_distinct_purposes():
+    inquiry = request(description="Confirme el origen y la integridad del informe de un ensayo.")
+    controls = [{
+        "kind": "fact", "description": "Contrastar la identidad de quien firmó el informe.",
+        "basis": "content_gap", "affected_claim": "La firma pertenece al responsable.",
+        "why_unresolved": "El registro no identifica al firmante.",
+        "linked_source_ids": ["one"], "linked_chunk_ids": ["one:1:1:1"],
+    }, {
+        "kind": "fact", "description": "Cotejar la integridad de los resultados del ensayo.",
+        "basis": "content_gap", "affected_claim": "Los resultados están completos.",
+        "why_unresolved": "La tabla remite a un anexo no identificado.",
+        "linked_source_ids": ["one"], "linked_chunk_ids": ["one:1:2:4"],
+    }]
+    result = apply_evidence_contract(inquiry, finding(controls[:1]))
+    first = deepcopy(result["checks"][0])
+    result["missing"].append(controls[1])
+
+    registered = pending_registry(inquiry, result)
+    assert len(registered) == 2
+    assert registered[0] == first
+    assert {item["affected_claim"] for item in registered} == {
+        item["affected_claim"] for item in controls
+    }
+    pending = normalize_pending(inquiry, result, [{
+        "kind": "fact", "description": "Verificar nuevamente a quien suscribió el informe.",
+        "existing_check_keys": [first["check_key"]],
+    }])
+    assert pending == registered
+    assert all(item["resolution"] == {"status": "open"} for item in pending)
+
+
+def test_registry_prefers_complete_control_over_partial_legacy_copy():
+    inquiry = request()
+    result = apply_evidence_contract(inquiry, finding([{
+        "kind": "fact", "description": "Confirmar el periodo del nombramiento.",
+        "linked_source_ids": ["one"],
+    }]))
+    check = deepcopy(result["checks"][0])
+    result["missing"] = [{
+        "kind": check["kind"], "description": check["description"],
+        "check_key": check["check_key"],
+    }]
+    assert normalize_pending(inquiry, result, []) == [check]
+
+
+def test_referenced_paraphrase_does_not_duplicate_an_open_control():
+    inquiry = request(description="Informe si se autorizó la reserva del observatorio escolar.")
+    result = apply_evidence_contract(inquiry, finding([{
+        "kind": "fact", "description": "Confirmar la autorización de la reserva.",
+        "basis": "content_gap", "affected_claim": "La reserva fue autorizada.",
+        "why_unresolved": "El calendario solo registra una solicitud de reserva.",
+        "linked_source_ids": ["one"], "linked_chunk_ids": ["one:1:1:1"],
+    }]))
+    check = deepcopy(result["checks"][0])
+    pending = normalize_pending(inquiry, result, [{
+        "kind": "fact", "description": "Corroborar que existe autorización para reservar.",
+        "existing_check_keys": [check["check_key"]],
+    }])
+    assert pending == [check]
+    assert pending[0]["blocks_approval"] is True
+    assert pending[0]["resolution"] == {"status": "open"}
+
+
+def test_pending_reference_cannot_target_unknown_control():
+    from pqrs_claro.models import DomainError
+
+    with pytest.raises(DomainError, match="no corresponde a la pregunta"):
+        normalize_pending(request(), finding(), [{
+            "kind": "fact", "description": "Confirmar la identidad.",
+            "existing_check_keys": ["control-de-otro-expediente"],
+        }])

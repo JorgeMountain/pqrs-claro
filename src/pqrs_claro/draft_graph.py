@@ -7,7 +7,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .draft_repair import CitationRepairRejected, repair_targets
+from .draft_repair import CitationRepairRejected, has_repair_targets, repair_targets
 
 
 class DraftEngine(Protocol):
@@ -52,7 +52,7 @@ def build_draft_graph(engine: DraftEngine, checkpointer: Any):
         capable = getattr(engine, "can_repair", callable(getattr(engine, "repair", None)))
         return (
             "ajustar_citas"
-            if capable and repair_targets(state["checks"], state["draft"])
+            if capable and has_repair_targets(state["checks"], state["draft"], state["plan"])
             else END
         )
 
@@ -88,12 +88,14 @@ def build_draft_graph(engine: DraftEngine, checkpointer: Any):
                 },
             }
         removed = adjusted.pop("_removed_request_scope_indices", [])
+        added = adjusted.pop("_added_unit_ids", [])
         return {
             "draft": adjusted,
             "repair": {
                 "attempts": 1,
                 "target_indices": repair_targets(state["checks"], before),
                 "removed_request_scope_indices": removed,
+                "added_unit_ids": added,
                 "before_draft": state["draft"],
                 "before_checks": state["checks"],
                 "changed": adjusted != state["draft"],

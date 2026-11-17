@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "authored_before_results": true,
+  "sent_to_model": false,
+  "cases": {
+    "FS-OBS": {
+      "P1": {
+        "points": ["Apertura todavía sin decisión final", "Tablón de inscripciones el 20 de noviembre a las 16:00", "Seguimiento específico registrado para comprobar apertura de la jornada OA-314", "Seguimiento futuro no bloqueante y sin afirmar apertura, cancelación o notificación realizadas"],
+        "source_keys": ["observatorio_jornada"],
+        "legitimate_pending": [{"purpose": "Comprobar decisión final de apertura de la jornada OA-314 cuando se publique e informar el resultado solicitado", "stage": "fulfillment", "blocks_approval": false}],
+        "forbidden": ["documento final faltante exigible hoy", "pendiente de autenticidad sin defecto concreto", "crear dos controles equivalentes de seguimiento", "transferir seguimiento a la memoria anual de P2"]
+      },
+      "P2": {
+        "points": ["Memoria todavía en edición", "Publicación prevista el 3 de diciembre de 2026", "Biblioteca digital como lugar de publicación", "PDF y versión de lectura accesible"],
+        "source_keys": ["observatorio_memoria"],
+        "legitimate_pending": [],
+        "forbidden": ["crear seguimiento automático de publicación", "pedir memoria definitiva para explicar calendario", "pedir entrega de la memoria no solicitada", "heredar seguimiento de jornada de P1"]
+      }
+    },
+    "FS-MUS": {
+      "P1": {
+        "points": ["Acta localizada de una página", "Secretaría del Museo conserva original", "Firma borrosa impide atribuirla sin cotejo con original o muestra fiable", "Cotejo de firma registrado aparte de preparación y entrega de copia certificada"],
+        "source_keys": ["museo_acta"],
+        "legitimate_pending": [{"purpose": "Cotejar firma existente y su atribución a Elena Rivera", "stage": "evidence", "blocks_approval": true}, {"purpose": "Preparar y entregar copia certificada solicitada", "stage": "fulfillment", "blocks_approval": false}],
+        "forbidden": ["mezclar cotejo de firma existente con entrega no bloqueante", "afirmar autoría de la firma sin cotejo", "exigir firma de futura respuesta como evidencia previa", "pedir vigencia normativa no consultada", "duplicar cotejo material"]
+      },
+      "P2": {
+        "points": ["Ficha PM-17 localizada y legible", "Una página disponible para reproducción simple", "Preparación y entrega de copia simple registradas", "No introduce cotejo de firma ni certificación no solicitada"],
+        "source_keys": ["museo_ficha"],
+        "legitimate_pending": [{"purpose": "Preparar entrega de copia simple de ficha PM-17", "stage": "fulfillment", "blocks_approval": false}],
+        "forbidden": ["control de firma por simple palabra copia", "certificar o autenticar por iniciativa", "heredar defecto del Acta 286 a ficha PM-17", "afirmar envío realizado"]
+      }
+    },
+    "FS-VIV": {
+      "P1": {
+        "points": ["Inspección sanitaria todavía en curso", "Entrega del 24 de noviembre condicionada a liberación", "Tablero de distribución el 21 de noviembre", "Seguimiento específico no bloqueante de resultado sanitario VR-228 registrado"],
+        "source_keys": ["vivero_programacion"],
+        "legitimate_pending": [{"purpose": "Comprobar resultado de liberación sanitaria VR-228 cuando se registre", "stage": "fulfillment", "blocks_approval": false}],
+        "forbidden": ["confirmar lote liberado o entrega cumplida", "exigir resultado futuro como documento faltante actual", "seguimiento genérico sin objeto", "crear doble seguimiento del mismo resultado"]
+      },
+      "P2": {
+        "points": ["Oficio 619 localizado de una página", "Cadena de certificado sin verificar y validación pendiente", "Control específico de validación de firma digital separado y bloqueante", "Preparación y entrega de copia autenticada futuras y no bloqueantes"],
+        "source_keys": ["vivero_oficio"],
+        "legitimate_pending": [{"purpose": "Validar cadena del certificado y firma digital del Oficio 619", "stage": "evidence", "blocks_approval": true}, {"purpose": "Preparar y entregar copia autenticada del oficio", "stage": "fulfillment", "blocks_approval": false}],
+        "forbidden": ["declarar firma válida o inválida sin resultado de validación", "mezclar validación material con entrega no bloqueante", "considerar firmada la respuesta futura", "duplicar la validación por paráfrasis"]
+      }
+    }
+  },
+  "acceptance": "Cada criterio se evalúa semánticamente y contra controles estructurados. Un texto correcto sin tarea solicitada falla el criterio operativo. Un cotejo material que pasa a fulfillment/no bloqueante falla conservación, aunque su texto sobreviva. Los negativos no deben recibir controles nuevos de seguimiento o firma. Metadata, ausencia de extracción y permisos no equivalen a documento inexistente. Conservar todo resultado de cada variante y no cambiar esta rúbrica tras conocer respuestas. El seguimiento futuro puede convivir con una respuesta informativa completa y no obliga a que exista ya la decisión."
+}

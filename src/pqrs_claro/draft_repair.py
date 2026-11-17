@@ -15,9 +15,16 @@ class ParagraphPatch(StrictModel):
     cited_chunk_ids: list[str] = Field(min_length=1, max_length=8)
 
 
+class OmittedUnitParagraph(StrictModel):
+    unit_id: str = Field(min_length=1, max_length=40)
+    text: str = Field(min_length=1, max_length=5000)
+    cited_chunk_ids: list[str] = Field(min_length=1, max_length=8)
+
+
 class CitationRepair(StrictModel):
     paragraphs: list[ParagraphPatch] = Field(max_length=20)
     remove_request_scope_indices: list[int] = Field(default_factory=list, max_length=20)
+    omitted_unit_paragraphs: list[OmittedUnitParagraph] = Field(default_factory=list, max_length=20)
 
 
 REPAIR_INSTRUCTIONS = """
@@ -33,12 +40,27 @@ del inventario; no sustituyas nombres disponibles por un órgano genérico ni bo
 una opción, una cita local o un pendiente legítimo para lograr aprobación.
 Si se señaló procedure_scope_mixing, separa o retira únicamente la regla del
 procedimiento ajeno, conservando la respuesta pertinente y sus condiciones.
+Si se señaló unsupported_temporal_implication, contrasta la expresión afectada
+con el tiempo y estado del hecho en su pasaje. Corrige solo el presupuesto no
+respaldado de ejecución o resultado, incluso si aparece dentro de una negación
+o pregunta indirecta. No basta añadir atribución si se mantiene ese presupuesto.
+Conserva el pasado explícitamente respaldado y el pasado del anuncio, el presente
+en curso y las condiciones. No sustituyas tiempos verbales de forma automática.
+Mantén las fechas, lugares y condiciones que contestan lo pedido, sus citas y
+el seguimiento pendiente; no reduzcas la respuesta a una cautela genérica ni
+añadas una comprobación para evitar responder contenido disponible.
 Devuelve patches en paragraphs con paragraph_index, text y cited_chunk_ids.
-No agregues, dividas ni reordenes párrafos. Devuelve únicamente los que
+No dividas ni reordenes párrafos. Devuelve únicamente los que
 realmente necesitan ajuste. Puedes devolver paragraphs vacío si las observaciones
 no permiten una corrección respaldada; no cambies texto correcto para satisfacer
 una alerta equivocada. No rebajes una afirmación correcta ni omitas el objeto de
 la pregunta simplemente para evitar una alerta sobre fechas.
+Solo cuando missing_answer_units contiene una unidad obligatoria omitida sin
+párrafo de destino, puedes completarla en omitted_unit_paragraphs: unit_id, text
+y cited_chunk_ids. Se anexará un párrafo por unidad, conservando los anteriores.
+Usa exactamente las fuentes de esa unidad y sus condiciones, sin inventar otra
+obligación ni narrar contexto opcional. No agregues una unidad que no aparece
+en missing_answer_units. Deja esta lista vacía si no hay una corrección respaldada.
 Al ajustar un párrafo, conserva la contestación directa y su atribución en prosa
 institucional clara, con la explicación y el límite que correspondan. No introduzcas
 rótulos internos, una repetición de la pregunta ni bloques normativos de plantilla.
@@ -116,3 +138,25 @@ def repair_targets(checks: dict, draft: dict) -> list[int]:
         if type(issue.get("paragraph_index")) is int
         and 0 <= issue["paragraph_index"] < size
     })
+
+
+def repair_unit_ids(checks: dict, draft: dict, plan: dict) -> list[str]:
+    """Only reviewed, grounded omissions with no safe existing paragraph target."""
+    if checks.get("status") != "needs_changes":
+        return []
+    available = max(0, 20 - len(draft.get("paragraphs", [])))
+    missing = set((checks.get("request_trace") or {}).get("missing_unit_ids", []))
+    omitted = {
+        row.get("unit_id") for row in checks.get("unit_checks", [])
+        if row.get("status") == "omitted" and not row.get("pending_indexes")
+        and not row.get("paragraph_indexes")
+    }
+    return [
+        unit["id"] for unit in plan.get("coverage_units", [])
+        if unit.get("required") is True and unit.get("kind") != "context"
+        and unit.get("citations") and unit.get("id") in missing & omitted
+    ][:available]
+
+
+def has_repair_targets(checks: dict, draft: dict, plan: dict) -> bool:
+    return bool(repair_targets(checks, draft) or repair_unit_ids(checks, draft, plan))

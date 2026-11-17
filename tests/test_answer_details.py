@@ -172,6 +172,50 @@ def test_source_and_answer_word_numbers_share_exact_unicode_crlf_positions():
     assert (units, draft) == before
 
 
+def article_authority_case(text, selected):
+    request, index, aliases, proposal = fixture()
+    source_text = "La Mesa de\nDiseño Rural revisa el informe.\n"
+    index[KEY]["quote"] = source_text
+    citation = {"chunk_id": "S1", "line_start": 1, "line_end": 2}
+    proposal.update(citations=[citation], details=[{
+        "kind": "authority", "citation": citation,
+        "members": [word_range(source_text, "La Mesa de\nDiseño Rural")],
+        "reason": "Identifica la autoridad que revisa el informe.",
+    }])
+    units = materialize_detailed_units([proposal], request, index, aliases)
+    draft = {"paragraphs": [{"text": text, "cited_chunk_ids": [KEY]}], "pending": []}
+    checks = [{"detail_id": "U1-K1", "status": "answered", "pending_indexes": [],
+               "explanation": "El rango señala la autoridad.", "evidence": [{
+                   "paragraph_index": 0, "member_index": 1, **word_range(text, selected),
+               }]}]
+    return units, checks, draft
+
+
+def test_exact_authority_recovers_only_the_immediately_preceding_article():
+    args = article_authority_case("El informe lo revisa la Mesa de Diseño Rural.", A)
+    before = deepcopy(args)
+    assert detail_issues(*args) == []
+    assert args == before  # No rewriting the source, draft, citations or model's range.
+
+
+@pytest.mark.parametrize("text,selected", [
+    ("La Mesa de Diseño Urbano revisa el informe.", "Mesa de Diseño Urbano"),
+    ("Mesa de Diseño Rural revisa el informe.", A),
+    ("La nueva Mesa de Diseño Rural revisa el informe.", A),
+    ("La. Mesa de Diseño Rural revisa el informe.", A),
+    ("La Mesa de Diseño Rural consta en el plan; otra Mesa de Diseño Rural revisa el informe.",
+     "otra Mesa de Diseño Rural"),
+])
+def test_article_recovery_cannot_replace_identity_or_search_a_nonadjacent_name(text, selected):
+    assert "answer_detail_omitted" in codes(detail_issues(*article_authority_case(text, selected)))
+
+
+def test_article_recovery_still_requires_the_details_citation_on_the_paragraph():
+    args = article_authority_case("El informe lo revisa la Mesa de Diseño Rural.", A)
+    args[2]["paragraphs"][0]["cited_chunk_ids"] = []
+    assert "detail_review_invalid" in codes(detail_issues(*args))
+
+
 @pytest.mark.parametrize(
     "defect",
     [

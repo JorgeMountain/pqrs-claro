@@ -11,9 +11,10 @@ from openai import OpenAI, OpenAIError
 from pydantic import Field, ValidationError
 
 from .config import DEFAULT_SOURCE_SERVICE_TIER
-from .evidence_contract import apply_evidence_contract
+from .evidence_contract import apply_evidence_contract, requested_delivery_task
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
+from .request_intent import PENDING_TASK_GUIDANCE
 from .request_requirements import SourceRequirementCheck
 from .response_scope import RESPONSE_SCOPE_GUIDANCE
 from .source_context import request_for_assessment
@@ -60,6 +61,7 @@ class _Missing(StrictModel):
         "extraction_error",
         "document_search",
         "validity",
+        "requested_followup",
     ] = "specific_gap"
     source_chunk_ids: list[str] = Field(default_factory=list, max_length=8)
     stage: Literal["evidence", "fulfillment"] = "evidence"
@@ -131,7 +133,7 @@ class _LocatedSourceSelection(_SourceSelection):
     declared_checks: list[_LocatedDeclaredCheck] = Field(default_factory=list, max_length=8)
 
 
-INSTRUCTIONS = RESPONSE_SCOPE_GUIDANCE + """
+INSTRUCTIONS = RESPONSE_SCOPE_GUIDANCE + PENDING_TASK_GUIDANCE + """
 Evalúa fuentes candidatas para UNA solicitud de una petición institucional.
 Si recibes citation_repair, corrige la evaluación previa y devuelve una evaluación completa.
 Sus errors identifican inconsistencias de citas: usa solo aliases existentes y seleccionados
@@ -354,6 +356,10 @@ señala solo una duda concreta.
 missing contiene brechas concretas; reason_code clasifica el motivo, source_chunk_ids
 indica los aliases afectados (vacío si no hay archivo candidato), stage evidence o
 fulfillment. No crees una tarea genérica para cada fragmento ni para cada fuente descartada.
+Si propones un seguimiento futuro expresamente pedido, usa requested_followup,
+stage fulfillment, affected_claim igual al claim de la cobertura que describe
+el evento pendiente y source_chunk_ids de sus citas. No lo repitas en otra entrada;
+la aplicación conserva esa misma actuación. Una fecha futura aislada no lo autoriza.
 Una respuesta previa puede sustentar una nueva pregunta sobre el MISMO hecho y periodo.
 Si el pasaje declara explícitamente una comprobación (qué se cotejó y qué se concluyó),
 regístrala en declared_checks con chunk_id seleccionado, fact, line_start y line_end
@@ -1194,6 +1200,9 @@ class OpenAISourceAssessor:
                 position < proposed_missing_count
                 and located
                 and not needs_issued_version
+                # A located copy may still await preparation/delivery. That is
+                # not a false claim of absence and must retain its declared task.
+                and not requested_delivery_task(request, item)
                 and item.get("reason_code") in {None, "specific_gap", "document_search"}
                 and item.get("basis") in {None, "unspecified", "unavailable_document"}
                 and (item["kind"] == "document" or absence.search(_plain(item["description"])))

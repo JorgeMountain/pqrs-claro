@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "authored_before_results": true,
+  "sent_to_model": false,
+  "cases": {
+    "TRACE-SON": {
+      "P1": {
+        "points": ["Dos modalidades: presencial sin cuenta o casillero con cuenta activa", "Cinco días calendario desde habilitación", "Tramos deteriorados identificados, sin reconstrucción presentada como original", "Revisar casillero y spam; correo adicional no amplía plazo"],
+        "source_keys": ["sonido_guia"],
+        "legitimate_pending": [],
+        "forbidden": ["omitir alternativa, deterioro o revisión de spam", "pedir crear cuenta ya activa", "inferir entrega o habilitación realizada", "vigencia como bloqueo de exposición documental"]
+      },
+      "P2": {
+        "points": ["Acta localizada y completa con dos páginas", "Secretaría del Archivo custodia original", "Firma ilegible y falta cotejo justifican comprobación para certificar", "Preparación y entrega siguen pendientes sin afirmarlas ejecutadas"],
+        "source_keys": ["sonido_acta"],
+        "legitimate_pending": ["cotejo concreto de firma/autenticidad con original", "certificar/preparar/entregar copia como actuación futura"],
+        "forbidden": ["ausencia de documento completo", "vigencia no solicitada", "cerrar cotejo de firma sin evidencia", "duplicar la misma comprobación de firma por paráfrasis"]
+      }
+    },
+    "TRACE-INS": {
+      "P1": {
+        "points": ["Constancia del coordinador o matrícula vigente; basta una", "Instrumento, taller y código comunes ya aportados", "Dos días hábiles desde aviso en casillero", "Vuelve al inventario y no hay multa por no recogida"],
+        "source_keys": ["instrumentos_guia"],
+        "legitimate_pending": [],
+        "forbidden": ["convertir alternativas en requisitos acumulativos", "pedir datos ya aportados", "afirmar reserva ejecutada", "inventar multa"]
+      },
+      "P2": {
+        "points": ["El Manual no confirma devolución particular", "Acuse individual de IN-48 del 9 noviembre con fecha y estado es respaldo necesario", "Recepción es unidad prevista, no identifica persona que efectivamente recibió", "Pendiente concreto del acuse sin afirmar inexistencia institucional"],
+        "source_keys": ["instrumentos_guia"],
+        "legitimate_pending": ["localizar acuse individual de recepción y su responsable"],
+        "forbidden": ["confirmar devolución usando regla o reserva", "inventar estado/nombre", "declarar que acuse no existe", "cerrar el pendiente sin respaldo"]
+      }
+    },
+    "TRACE-HUE": {
+      "P1": {
+        "points": ["Martes a jueves, bloques de cuarenta minutos", "Número de participantes y acompañante; menores acompañados toda la visita", "Cancelar en casillero doce horas antes", "Otro bloque o saldo posterior; saldo no equivale a dinero"],
+        "source_keys": ["huerta_regla"],
+        "legitimate_pending": [],
+        "forbidden": ["ejecutar cancelación o reembolso no pedidos", "pedir número de participantes ya aportado", "omitir condición de acompañamiento", "hacer acumulativas las opciones"]
+      },
+      "P2": {
+        "points": ["Aviso preventivo no cancela reserva", "La coordinación aún evalúa cierre por tormenta", "Consultar decisión final en casillero el día anterior", "Pendiente concreto de decisión final sin repedir reserva o participantes"],
+        "source_keys": ["huerta_cierre"],
+        "legitimate_pending": ["comprobar decisión final de cierre del 25 noviembre"],
+        "forbidden": ["cierre o cancelación confirmados", "previsión externa tomada como decisión", "pendiente genérico sin objeto", "repetir el mismo control al redactar"]
+      }
+    }
+  },
+  "offline_scenarios": [
+    {"id": "retrieved_omitted", "purpose": "Eliminar de un borrador correcto el inciso sobre un aviso; la evidencia literal permanece. La traza debe señalar omisión de redacción, mantener citas y dirigir el ajuste al inciso existente."},
+    {"id": "not_retrieved", "purpose": "Retirar del conjunto recuperado el único pasaje requerido. La traza no debe afirmar que el documento falta globalmente ni inventar una respuesta."},
+    {"id": "permission_revoked", "purpose": "Retirar el vínculo de colección. El respaldo anterior no queda utilizable ni su control resuelto se transfiere al nuevo ámbito."},
+    {"id": "unextracted", "purpose": "Archivo presente sin texto legible debe conservar problema de extracción; no convertirlo en inexistencia documental."},
+    {"id": "resolved_paraphrase", "purpose": "Reintroducir la vista antigua y una paráfrasis con referencia al check_key ya resuelto. Debe conservar el registro y resolución sin crear otro control."},
+    {"id": "distinct_material_check", "purpose": "Firma ilegible y competencia de firmante son dudas materiales distintas; ni igualdad de archivo ni parecido textual permiten fusionarlas."},
+    {"id": "version_changed", "purpose": "Sustituir fuente por una versión nueva con contenido cambiado. No transferir aprobación anterior ni mantener citas o párrafos como actuales."}
+  ],
+  "acceptance": "Comparar contenido y controles por significado, conservando todo resultado fallido. Citas mecánicamente válidas y tests de software no equivalen a calidad semántica. Si master no omite o duplica en esta muestra, reportar conservación, no reducción ficticia. Los escenarios inyectados se informan por separado de los errores espontáneos."
+}
