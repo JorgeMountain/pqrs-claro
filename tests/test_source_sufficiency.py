@@ -124,6 +124,8 @@ def coverage(item=None, **changes):
         "aspect": "Requisitos de inscripción descritos para el periodo 2021.",
         "claim": "El documento señala que se requiere formulario y constancia de matrícula.",
         "use": "attributed_content",
+        "application": {"status": "not_requested", "uncertainty_indexes": [],
+                        "explanation": "Se describe el contenido del antecedente para 2021."},
         "citations": [{"chunk_id": item["chunk_id"], "quote": item["quote"]}],
         "explanation": (
             "El pasaje identifica el oficio, el periodo y los dos requisitos pedidos. "

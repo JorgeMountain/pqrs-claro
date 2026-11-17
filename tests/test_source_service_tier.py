@@ -75,6 +75,11 @@ def test_normal_source_search_uses_fast_then_honors_standard_after_restart(
         repair = "citation_repair" in json.loads(kwargs["input"])
         # La primera respuesta cita una línea inexistente. La segunda corrige el rango.
         answer = located(original, 1, 1 if repair else 99)
+        from pqrs_claro.request_requirements import RequirementCheck
+        answer.requirement_checks = [RequirementCheck(
+            requirement_id=part["id"], status="supported", coverage_indexes=[0],
+            missing_indexes=[], explanation="Cobertura literal simulada de esta pregunta.")
+            for part in json.loads(kwargs["input"])["request"]["request_requirements"]]
         return SimpleNamespace(status="completed", output_parsed=answer)
 
     sdk = SimpleNamespace(responses=SimpleNamespace(parse=parse))

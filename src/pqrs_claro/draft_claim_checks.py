@@ -57,6 +57,7 @@ _INQUIRY = re.compile(
     r"\b(?:la solicitud|la pregunta|la peticion|la consulta|el interrogante)\b.{0,60}"
     r"\b(?:solicita|pregunta|plantea|pide|consulta|versa|se refiere|busca)\b|"
     r"\b(?:se solicita|se pregunta|se pide|solicita confirmar|solicita informar)\b|"
+    r"\bse consulta (?:por|sobre|acerca de|respecto de)\b|"
     r"\b(?:tambien|ademas) (?:plantea|solicita|pregunta|pide|consulta)\b|"
     r"\b(?:queda|sigue|permanece|esta|deja)\w* (?:expresamente )?pendiente\b|"
     r"\b(?:requiere|debe|debera)\w* (?:ser )?(?:verific\w*|cotej\w*|confirm\w*)\b"
@@ -66,11 +67,17 @@ _ASSERTIVE_START = (
     r"en (?:el semestre )?(?:19|20)\d{2}|"
     r"se (?:adjunta\w*|entrega\w*|certifica\w*|remiti\w*|niega|deniega)|"
     r"(?:el|la|los|las) (?:\w+\s+){1,4}"
-    r"(?:es|son|esta\w*|fue\w*|pertenece\w*|dict\w*|dirigi\w*|aprob\w*))"
+    r"(?:es|son|esta\w*|fue\w*|pertenece\w*|dict\w*|dirigi\w*|aprob\w*|"
+    r"identific\w*|precis\w*))"
 )
 _BOUNDARY = re.compile(
     rf"(?<=[.!?;])\s+|\s+(?:pero|sin embargo|no obstante|mientras que)\s+|"
     rf",\s*(?={_ASSERTIVE_START}\b)|\s+y\s+(?={_ASSERTIVE_START}\b)"
+)
+_DOCUMENT_PERIOD_LIMIT = re.compile(
+    r"\b(?:el|este|ese|aquel|los|estos|esos) "
+    r"(?:texto|documento|pasaje|fragmento|fuente|antecedente)s? "
+    r"no (?:identifica\w*|precisa\w*|delimita\w*)\b"
 )
 _OPERATION = re.compile(
     r"\b(?:se adjunta(?:n)?|adjuntamos|se entrega(?:n)?|hacemos entrega|se hace entrega|"
@@ -122,6 +129,13 @@ def _nonassertive(clause: str, end: int | None = None) -> bool:
         and _INQUIRY.search(clause)
         and not re.search(r"\b(?:fue|era|ha sido|quedo|se confirmo|se aprobo)\b", clause)
     )
+
+
+def _conditional(clause: str, start: int) -> bool:
+    # Only the condition before its comma/semicolon is hypothetical. An ensuing
+    # assertion ("si procede, se entrega ...") must still be checked normally.
+    return bool(re.search(r"\b(?:si|cuando|en caso de que)\b[^,;.!?]{0,160}$",
+                          clause[:start]))
 
 
 def _search_description(clause: str, current: re.Match) -> bool:
@@ -283,6 +297,7 @@ def paragraph_claim_checks(
             )
             if year.group() not in source_years and not (
                 _nonassertive(clause, year.start()) or question_object
+                or _DOCUMENT_PERIOD_LIMIT.search(clause[:year.start()])
             ):
                 unsupported_years.append(year.group())
     check(
@@ -331,6 +346,7 @@ def paragraph_claim_checks(
             )
             if not (
                 _nonassertive(clause, operation.start())
+                or _conditional(clause, operation.start())
                 or re.search(r"\b(?:no|tampoco)\s+$", clause[: operation.start()])
                 or historical_remission
             ):
@@ -345,6 +361,7 @@ def paragraph_claim_checks(
         for clause in clauses
         for match in re.finditer(r"\bno existe(?:n)?\b", clause)
         if not _nonassertive(clause, match.start()) and not _ATTRIBUTION.search(clause)
+        and not _conditional(clause, match.start())
     ]
     check(
         "no_nonexistence_inference",

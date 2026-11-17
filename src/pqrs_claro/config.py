@@ -27,6 +27,7 @@ class Settings:
     environment_label: str = "PQRS · revisión inicial y confirmación humana"
     semantic_matrix_cache_mb: int = 512
     source_service_tier: str = DEFAULT_SOURCE_SERVICE_TIER
+    procedure_scope_pilot: bool = False
 
     @classmethod
     def load(cls):
@@ -75,8 +76,16 @@ class Settings:
                       or local.get("PQRS_CLARO_CLASSIFICATION_PROVIDER") or "openai").strip()
         if classifier not in {"openai", "jev"}:
             raise ValueError("PQRS_CLARO_CLASSIFICATION_PROVIDER debe ser openai o jev.")
+        procedure_scope_value = (
+            os.environ.get("PQRS_PROCEDURE_SCOPE_PILOT")
+            or local.get("PQRS_PROCEDURE_SCOPE_PILOT") or "false"
+        ).strip().lower()
+        if procedure_scope_value not in {"true", "false", "1", "0", "yes", "no", "on", "off"}:
+            raise ValueError("PQRS_PROCEDURE_SCOPE_PILOT debe indicar true o false.")
+        procedure_scope_pilot = procedure_scope_value in {"true", "1", "yes", "on"}
         return cls(data_dir=data, api_key=key, model=model, port=port,
                    source_concurrency=source_concurrency, draft_concurrency=draft_concurrency,
                    initial_classification_provider=classifier,
                    semantic_matrix_cache_mb=matrix_cache_mb,
-                   source_service_tier=source_service_tier)
+                   source_service_tier=source_service_tier,
+                   procedure_scope_pilot=procedure_scope_pilot)

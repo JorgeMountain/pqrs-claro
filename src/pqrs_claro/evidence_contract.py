@@ -246,8 +246,16 @@ def normalize_item(request, raw, sources=(), search_audit=None):
         if reason not in {"transcription", "issued_version", "provenance", "validity"}:
             reason = "source_identity"
     versions = sorted((source_version(s) for s in linked), key=lambda s: s["source_id"])
-    versions = list({v["source_id"]: v for v in versions}.values())
-    scope = "document" if reason in DOCUMENT_CHECKS and links else request_scope(request)
+    unique_versions = {}
+    for version in versions:
+        # El inventario resumido posterior no puede borrar la huella del respaldo.
+        unique_versions.setdefault(version["source_id"], version)
+    versions = list(unique_versions.values())
+    material = item.get("basis") in {"content_gap", "contradiction"} and not (
+        reason == "issued_version" and item.get("catalog_check") == "document_status"
+    )
+    scope = ("document" if reason in DOCUMENT_CHECKS and links and not material
+             else request_scope(request))
     if reason == "transcription" and item.get("linked_chunk_ids"):
         scope = "passage"
     # Comprobaciones generales del mismo archivo se comparten entre preguntas;
@@ -255,6 +263,14 @@ def normalize_item(request, raw, sources=(), search_audit=None):
     identity = {"reason": reason, "stage": stage, "versions": versions, "scope": scope}
     if scope not in {"document", "passage"}:
         identity["description"] = _plain(item.get("description"))
+    if material:
+        # Dos discrepancias del mismo archivo no son un único cotejo humano.
+        # Un cambio de afirmación tampoco puede reutilizar su aprobación anterior.
+        identity["material"] = {
+            field: _plain(item.get(field, ""))
+            for field in ("description", "affected_claim", "why_unresolved", "basis")
+        }
+        identity["chunks"] = sorted(item.get("linked_chunk_ids", []))
     if reason == "transcription":
         identity["chunks"] = sorted(item.get("linked_chunk_ids", []))
     key = "check-" + _hash(identity)[:24]
@@ -314,6 +330,117 @@ def _information_gap(request, raw, finding):
     }
 
 
+def _complete_versions(item):
+    versions = item.get("source_versions", [])
+    if not versions or not all(
+        version.get("source_id") and version.get("document_id")
+        and version.get("version") is not None
+        and re.fullmatch(r"[0-9a-fA-F]{64}", str(version.get("sha256", "")))
+        for version in versions
+    ):
+        return None
+    return sorted(versions, key=lambda version: version["source_id"])
+
+
+def _document_authentication(item, request, sources, *, allow_resolved=False):
+    """Conservative purpose check; neither a reason code nor a signature suffices."""
+    if (
+        item.get("basis") not in {"content_gap", "contradiction"}
+        or item.get("stage") != "evidence"
+        or item.get("state") != "confirmation_pending"
+        or item.get("resolution", {}).get("status") not in (
+            {"open", "resolved"} if allow_resolved else {"open"}
+        )
+        or item.get("scope_key") != request_scope(request)
+        or item.get("request_ids") != [request["id"]]
+        or item.get("reason_code") not in {
+            "provenance", "source_identity", "issued_version", "applicability", "fact_confirmation"
+        }
+    ):
+        return False
+    claim = _plain(item.get("affected_claim", ""))
+    description = _plain(item.get("description", ""))
+    provenance = r"\b(?:procedencia|procede[n]?|origen|trazabilidad)\b"
+    authentic = r"\bautentic\w*\b"
+    # Autenticar una firma o un sello aislados no acredita el origen del archivo.
+    component_only = re.search(
+        r"\bautenticidad de (?:la |el )?(?:firma|sello)\b|"
+        r"\b(?:firma|sello)\b.{0,70}\b(?:es|sea|son|sean)\s+autentic\w*", claim
+    )
+    documentary = bool(re.search(r"\b(?:copia|ejemplar|archivo|documento|original)\b", claim))
+    if not documentary:
+        linked = set(item.get("linked_source_ids", []))
+        documentary = any(
+            (source.get("source_id") or source.get("id")) in linked
+            for source in named_document_candidates(claim, sources)
+        )
+    purpose = (
+        re.search(provenance, claim)
+        and re.search(provenance + r"|\bregistro de ingreso\b|\bcadena de custodia\b", description)
+    ) or (not component_only and re.search(authentic, claim)
+          and re.search(authentic, description))
+    return bool(documentary and purpose)
+
+
+def _consolidate_provenance(request, items, sources, decisions=(), *, resolved_checks=()):
+    """Absorb only local catalog redundancy; never resolve a material check."""
+    decisions = deepcopy(list(decisions))
+    catalog_originals = {
+        row["original"]["check_key"]: row["original"] for row in decisions
+        if row.get("decision") == "covered_by_specific_check"
+        and row.get("original", {}).get("catalog_check") == "review_status"
+        and row["original"].get("check_key")
+    }
+    catalog_originals.update(
+        (item["check_key"], item) for item in items
+        if item.get("catalog_check") == "review_status"
+    )
+    material = [item for item in items if _document_authentication(item, request, sources)]
+    reviewed = [item for item in [*items, *resolved_checks]
+                if item.get("resolution", {}).get("status") == "resolved"
+                and item["resolution"].get("application_id")
+                and item["resolution"].get("verification_id")
+                and _document_authentication(item, request, sources, allow_resolved=True)]
+    retained = []
+    for item in items:
+        versions = _complete_versions(item)
+        covering = []
+        if (item.get("check_key") in catalog_originals and versions
+            and item.get("reason_code") == "provenance"
+            and item.get("basis") == "metadata_only"
+            and item.get("stage") == "evidence"
+            and item.get("scope_key") == "document"
+            and item.get("request_ids") == [request["id"]]
+            and item.get("resolution", {}).get("status") == "open"):
+            covering = sorted({specific["check_key"] for specific in material
+                               if _complete_versions(specific) == versions})
+            # Solo una relación auditada ANTES de la revisión permite omitir su
+            # genérico al redactar. No trasladar una aprobación a otra obligación.
+            prior = {key for row in decisions
+                     if row.get("decision") == "covered_by_specific_check"
+                     and row.get("original", {}).get("check_key") == item["check_key"]
+                     for key in row.get("covering_check_keys", [])}
+            covering = sorted(set(covering) | {
+                specific["check_key"] for specific in reviewed
+                if specific["check_key"] in prior and _complete_versions(specific) == versions
+            })
+        if not covering:
+            retained.append(item)
+            continue
+        if not any(row.get("decision") == "covered_by_specific_check"
+                   and row.get("original", {}).get("check_key") == item["check_key"]
+                   and row.get("covering_check_keys") == covering for row in decisions):
+            decisions.append({
+                "decision": "covered_by_specific_check",
+                "original": deepcopy(catalog_originals[item["check_key"]]),
+                "covering_check_keys": covering,
+                "reason": "El cotejo concreto de autenticidad conserva abierta la revisión "
+                          "de procedencia del mismo archivo y versión; no se añade otra tarea "
+                          "por el estado del catálogo ni se declara verificación realizada.",
+            })
+    return retained, decisions
+
+
 def normalize_pending(request, finding, proposed):
     """Conserva metadatos de fuentes y evita reintroducir comprobaciones resueltas."""
     sources = finding.get("supports", [])
@@ -323,7 +450,7 @@ def normalize_pending(request, finding, proposed):
         for item in finding.get("checks", [])
         if item.get("resolution", {}).get("status") == "resolved"
     }
-    result = {}
+    items = []
     from .request_intent import fulfillment_actions
 
     for raw in [
@@ -343,7 +470,14 @@ def normalize_pending(request, finding, proposed):
             )
         )
         if pending_identity(item) not in resolved:
-            result.setdefault(pending_identity(item), item)
+            items.append(item)
+    items, _ = _consolidate_provenance(
+        request, items, sources, finding.get("gap_decisions", []),
+        resolved_checks=finding.get("checks", []),
+    )
+    result = {}
+    for item in items:
+        result.setdefault(pending_identity(item), item)
     return list(result.values())
 
 
@@ -378,7 +512,7 @@ def apply_evidence_contract(request, finding, candidates=None, *, applications=(
         unique.setdefault(sid, source)
     sources = list(unique.values())
     audit = request.get("search_audit", result.get("search_audit", {}))
-    checks = {}
+    items = []
     from .request_intent import fulfillment_actions
 
     raw_items = [
@@ -388,18 +522,31 @@ def apply_evidence_contract(request, finding, candidates=None, *, applications=(
     for raw in raw_items:
         raw = _information_gap(request, raw, result)
         item = normalize_item(request, raw, sources, audit)
-        checks.setdefault(item["check_key"], item)
+        items.append(item)
     for application in applications:
-        item = checks.get(application.get("check_key"))
-        if not item or not application_matches_check(application, item, request["id"]):
-            continue
-        item["resolution"] = {
-            "status": "resolved",
-            "application_id": application["id"],
-            "verification_id": application["verification_id"],
-            "basis": application.get("basis"),
-            "recorded_by": application.get("recorded_by"),
-        }
+        for item in items:
+            if not application_matches_check(application, item, request["id"]):
+                continue
+            item["resolution"] = {
+                "status": "resolved",
+                "application_id": application["id"],
+                "verification_id": application["verification_id"],
+                "basis": application.get("basis"),
+                "recorded_by": application.get("recorded_by"),
+            }
+    retained, decisions = _consolidate_provenance(
+        request, items, sources, result.get("gap_decisions", [])
+    )
+    if decisions:
+        result["gap_decisions"] = decisions
+    removed = {item["check_key"] for item in items} - {item["check_key"] for item in retained}
+    descriptions = {item.get("description") for item in items if item["check_key"] in removed}
+    if descriptions:
+        result["warnings"] = [warning for warning in result.get("warnings", [])
+                              if warning not in descriptions]
+    checks = {}
+    for item in retained:
+        checks.setdefault(item["check_key"], item)
     from .request_intent import classify_request_intent
 
     result["request_intent"] = classify_request_intent(request)

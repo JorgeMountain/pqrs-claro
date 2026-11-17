@@ -15,7 +15,7 @@ from .performance_metrics import operation, submit_context, track_case
 from .request_intent import classify_request_intent
 from .service import user_error
 from .source_assessment import OpenAISourceAssessor
-from .source_context import build_source_requests
+from .source_context import CONTEXT_VERSION, build_source_requests
 from .source_graph import build_source_graph
 from .source_library import digest
 from .source_passages import PASSAGE_SELECTION_VERSION, diagnostic
@@ -29,9 +29,9 @@ from .source_semantic import (
 )
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 20
+SOURCE_ANALYSIS_VERSION = 27
 # Version the prompt, schema and validation policy used by a reader checkpoint.
-SOURCE_READER_POLICY_VERSION = 1
+SOURCE_READER_POLICY_VERSION = 7
 INTERACTIVE_SEMANTIC_BUDGET_SECONDS = 15
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,11 @@ def retrieval_signature(data_dir):
             data_dir / "semantic" / "models" / MODEL_REVISION / MODEL_FILE
         ).is_file(),
     }
+
+
+def document_context_signature(case):
+    return digest({"version": CONTEXT_VERSION, "original": case.get("sha256"),
+                   "pages": case.get("pages", [])})
 
 
 def _request_checkpoint(case_id, request, context, attempt):
@@ -112,6 +117,7 @@ class SourceService:
             fingerprint = digest(
                 {
                     "identification": case["identification"],
+                    "document_context": document_context_signature(case),
                     "catalog": self.catalog(case_id) if _catalog is None else _catalog,
                     "verifications": self.verification_fingerprint(case_id, sources),
                     "sources": sources,
@@ -170,6 +176,7 @@ class SourceService:
             )
         fingerprint_inputs = {
             "identification": case["identification"],
+            "document_context": document_context_signature(case),
             "catalog": catalog,
             "verifications": self.verification_fingerprint(case_id, sources),
             "sources": sources,
@@ -300,6 +307,7 @@ class SourceService:
                 "analysis_version": SOURCE_ANALYSIS_VERSION,
                 "reader_policy": reader_policy,
                 "original": case["sha256"], "pages": case.get("pages"),
+                "document_context": document_context_signature(case),
                 "metadata": {k: v for k, v in case["identification"].items()
                              if k != "requests"}, "sources": sources,
                 "catalog": catalog, "model": self.settings.model,

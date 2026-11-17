@@ -25,6 +25,42 @@ def codes(text, sources=None, **kwargs):
     }
 
 
+@pytest.mark.parametrize("text", [
+    "Si no existe el depósito, se debe consultar la alternativa prevista.",
+    "Cuando no existe una sede local, el documento prevé atención remota.",
+    "En caso de que no exista la oficina, debe consultarse la unidad central.",
+])
+def test_conditional_absence_is_not_an_assertion_of_nonexistence(text):
+    assert "no_nonexistence_inference" not in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Si no existe el depósito, se debe consultar. No existe la constancia.",
+    "Si el trámite está abierto, no existe el archivo solicitado.",
+    "No existe el depósito solicitado.",
+])
+def test_condition_in_another_clause_cannot_hide_asserted_nonexistence(text):
+    assert "no_nonexistence_inference" in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "El reglamento indica que, si los anexos se entregan después del plazo, "
+    "corresponde al interesado solicitar una excepción.",
+    "Cuando se adjuntan planos, el procedimiento exige su escala.",
+])
+def test_conditional_procedure_does_not_claim_our_delivery(text):
+    assert "no_operational_claim" not in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Si procede, se entregan los archivos solicitados.",
+    "Cuando se adjuntan planos se revisa su escala. Adjuntamos los archivos.",
+    "Si se entregan copias, se certifica que son auténticas.",
+])
+def test_following_actual_delivery_is_not_exempted_by_condition(text):
+    assert "no_operational_claim" in codes(text)
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -78,6 +114,24 @@ def test_years_in_questions_and_explicit_limits_are_not_fact_assertions(text):
 )
 def test_missing_year_cannot_be_laundered_by_another_question_or_negation(text):
     assert "period_grounded" in codes(text, request={"description": "Pregunta sobre 2025"})
+
+
+@pytest.mark.parametrize("text", [
+    "Aunque se consulta por el ciclo 2031, el texto no identifica ese ciclo como el de 2031.",
+    "El documento no precisa que ese periodo corresponda a 2032.",
+    "Se consulta sobre 2033; debe cotejarse la aplicación de la regla.",
+])
+def test_question_and_documentary_period_limit_do_not_date_an_event(text):
+    assert "period_grounded" not in codes(text)
+
+
+@pytest.mark.parametrize("text", [
+    "Se consulta por 2031, el documento identifica ese ciclo como el de 2031.",
+    "El texto no precisa el ciclo 2032, pero el comité aprobó la solicitud en 2032.",
+    "El comité no identificó la solicitud en 2033.",
+])
+def test_documentary_period_limit_does_not_exempt_a_separate_assertion(text):
+    assert "period_grounded" in codes(text)
 
 
 @pytest.mark.parametrize(

@@ -42,7 +42,13 @@ class FakeReviewEngine:
                 )
             )
         return dict(
-            status="needs_changes" if issues else "passed", issues=issues, local_checks=checks
+            status="needs_changes" if issues else "passed", issues=issues, local_checks=checks,
+            requirement_checks=[{
+                "requirement_id": item["id"],
+                "status": "answered" if review["paragraphs"] else "omitted",
+                "paragraph_indexes": [0] if review["paragraphs"] else [],
+                "pending_indexes": [], "explanation": "Cobertura simulada del doble de prueba.",
+            } for item in request.get("request_requirements", [])],
         )
 
 
@@ -724,8 +730,10 @@ def test_reopening_pending_ignores_references_to_retired_fact(review_app):
     assert response.json()["pending"][0]["resolution"] is None
 
 
-def test_candidate_added_during_sync_can_be_explicitly_cited_to_resolve_document(review_app):
-    app, client, _, _ = review_app
+def test_candidate_added_during_sync_can_be_explicitly_cited_to_resolve_document(
+    review_app, monkeypatch,
+):
+    app, client, worker, _ = review_app
     case, _, row = prepare(
         app, client, pending=[dict(kind="document", description="Falta el acta del caso.")]
     )
@@ -796,8 +804,21 @@ def test_candidate_added_during_sync_can_be_explicitly_cited_to_resolve_document
     ]
     paragraphs[0]["cited_chunk_ids"] = [chunk["chunk_id"]]
     saved = save(client, case, synced, paragraphs=paragraphs, resolutions=decisions).json()
+    refreshed = []
+
+    def prepare_units(request, value):
+        # Explicit provider double: this test checks candidate access/resolution;
+        # detail completeness is covered independently by the inventory tests.
+        refreshed.append(deepcopy(value))
+        return []
+
+    monkeypatch.setattr(worker, "prepare_units", prepare_units, raising=False)
     assessed = assess(app, client, case, saved)
     assert assessed["status"] == "ready", assessed
+    assert len(refreshed) == 1
+    assert refreshed[0]["paragraphs"] == saved["paragraphs"]
+    assert refreshed[0]["pending"] == saved["pending"]
+    assert candidate in refreshed[0]["available_supports"]
     assert approve(client, case, assessed).status_code == 200
 
 

@@ -135,6 +135,7 @@ def ready_map(app, case):
         id=uuid4().hex,
         case_id=case["id"],
         fingerprint=fingerprint,
+        reader_policy=app.state.sources.reader_policy(),
         status="ready",
         source_snapshot=sources,
         source_count=len(sources),

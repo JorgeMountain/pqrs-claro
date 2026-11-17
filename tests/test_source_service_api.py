@@ -327,7 +327,7 @@ def test_reader_identity_invalidates_ready_result_and_previous_checkpoint(source
     assert third["status"] == "ready" and assessor.calls == {"P1": 3, "P2": 3}
 
 
-def test_legacy_saved_read_remains_visible_but_does_not_supply_new_catalog(source_app, pdf_bytes):
+def test_legacy_saved_read_requires_new_context_and_coverage_policy(source_app, pdf_bytes):
     app, client, assessor, _ = source_app
     case = make_case(client, pdf_bytes)
     upload_source(client)
@@ -336,9 +336,13 @@ def test_legacy_saved_read_remains_visible_but_does_not_supply_new_catalog(sourc
     first.pop("reader_policy")
     first.pop("analysis_version")
     app.state.library.save_run(first)
-    assert app.state.sources.get(case["id"])["status"] == "ready"
+    assert app.state.sources.get(case["id"])["status"] == "stale"
     start_search(client, case)
-    assert wait_search(app, client, case["id"])["id"] == first["id"]
+    renewed = wait_search(app, client, case["id"])
+    assert renewed["id"] != first["id"]
+    assert renewed["reader_policy"] == app.state.sources.reader_policy()
+    # This fixture removed only the saved run policy; its separate checkpoint
+    # was already produced under the current policy and may safely be reused.
     assessor.reader_cache_key = "explicit-policy"
     assert app.state.sources.get(case["id"])["status"] == "stale"
     start_search(client, case)

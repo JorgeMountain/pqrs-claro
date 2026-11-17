@@ -8,18 +8,21 @@ from uuid import uuid4
 
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from .answer_coverage import DETAIL_POLICY_HASH
 from .draft_repair import repair_targets
 from .draft_store import DraftStore
 from .intake_drafting import drafting_context
 from .models import DomainError
 from .performance_metrics import operation, submit_context, track_case
+from .procedure_scope import PROCEDURE_SCOPE_POLICY_HASH
 from .service import user_error
 from .source_context import build_source_requests
 from .source_library import SourceScopeError, digest
 from .source_service import retrieval_signature
 from .storage import Conflict, now
 
-DRAFT_VERSION = 12
+DRAFT_VERSION = 24
+PILOT_DRAFT_VERSION = 25
 
 
 class _InputsChanged(Exception):
@@ -88,7 +91,11 @@ class DraftService:
                 "source_results": source_run.get("results", []),
                 "source_fingerprint": source_run.get("fingerprint"),
                 "model": self.settings.model,
-                "draft_version": DRAFT_VERSION,
+                "draft_version": (PILOT_DRAFT_VERSION
+                                  if self.settings.procedure_scope_pilot else DRAFT_VERSION),
+                "detail_policy": DETAIL_POLICY_HASH,
+                **({"procedure_scope_policy": PROCEDURE_SCOPE_POLICY_HASH}
+                   if self.settings.procedure_scope_pilot else {}),
             }
         )
 
@@ -344,7 +351,8 @@ class DraftService:
                 source_fingerprint=source_run["fingerprint"],
                 case_version=case["version"],
                 model=self.settings.model,
-                draft_version=DRAFT_VERSION,
+                draft_version=(PILOT_DRAFT_VERSION
+                               if self.settings.procedure_scope_pilot else DRAFT_VERSION),
                 results=[
                     r
                     for r in (previous or {}).get("results", [])
@@ -478,7 +486,10 @@ class DraftService:
             from .draft_engine import OpenAIDraftEngine
             from .draft_graph import build_draft_graph
 
-            engine = self.engine or OpenAIDraftEngine(self.settings.api_key, self.settings.model)
+            engine = self.engine or OpenAIDraftEngine(
+                self.settings.api_key, self.settings.model,
+                procedure_scope_pilot=self.settings.procedure_scope_pilot,
+            )
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "draft_checkpoints.sqlite")
             ) as warmup:
@@ -570,7 +581,9 @@ class DraftService:
                                 "request": request,
                                 "finding": finding,
                                 "model": self.settings.model,
-                                "version": DRAFT_VERSION,
+                                "version": (PILOT_DRAFT_VERSION
+                                            if self.settings.procedure_scope_pilot
+                                            else DRAFT_VERSION),
                                 "engine_policy": getattr(engine, "cache_key", None),
                                 "original": case["sha256"],
                             }

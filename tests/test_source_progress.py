@@ -75,7 +75,8 @@ def test_progress_skips_catalog_while_running_but_checks_terminal_freshness(tmp_
     service = SourceService(SimpleNamespace(data_dir=tmp_path, model="test"), cases, library)
     try:
         _, sources, _, fingerprint = service.inputs("case-1")
-        run = make_run(source_snapshot=sources, fingerprint=fingerprint, total_count=0)
+        run = make_run(source_snapshot=sources, fingerprint=fingerprint, total_count=0,
+                       reader_policy=service.reader_policy())
         library.save_run(run)
         with monkeypatch.context() as patch:
             def forbidden(*_):

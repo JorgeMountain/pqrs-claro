@@ -14,6 +14,7 @@ from test_preparation import wait
 
 def add_gap(app, case):
     run = app.state.library.latest_run(case["id"])
+    run["reader_policy"] = app.state.sources.reader_policy()
     run["results"][0]["missing"] = [
         dict(
             kind="clarification",
