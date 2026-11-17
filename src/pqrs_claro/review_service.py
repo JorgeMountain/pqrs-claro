@@ -8,10 +8,12 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
+from .answer_coverage import DETAIL_POLICY_HASH, has_current_details, validate_units
 from .document_decisions import canonical_document_decision
 from .evidence_contract import normalize_pending, pending_identity
 from .models import DomainError
 from .performance_metrics import track_case
+from .procedure_scope import PROCEDURE_SCOPE_POLICY_HASH
 from .response_reading import reading_state
 from .review_store import ReviewStore
 from .service import user_error
@@ -21,7 +23,8 @@ from .source_documents import document_matches, requested_document
 from .source_library import digest
 from .storage import Conflict, now
 
-REVIEW_VERSION = 7
+REVIEW_VERSION = 19
+PROCEDURE_SCOPE_REVIEW_VERSION = 20
 
 
 def pending_id(item):
@@ -61,6 +64,7 @@ def input_hash(row):
                 "request_id",
                 "base_fingerprint",
                 "sufficiency",
+                "coverage_units",
                 "paragraphs",
                 "facts",
                 "pending",
@@ -98,16 +102,22 @@ class ReviewService:
 
     def _base(self, case_id):
         case, sources, fingerprint, current = self.drafts_service._current(case_id)
+        inputs = {
+            "inputs": fingerprint,
+            "model": self.settings.model,
+            "review_version": REVIEW_VERSION,
+            "detail_policy": DETAIL_POLICY_HASH,
+        }
+        if self.settings.procedure_scope_pilot:
+            inputs.update(
+                review_version=PROCEDURE_SCOPE_REVIEW_VERSION,
+                procedure_scope_pilot=True,
+                procedure_scope_policy=PROCEDURE_SCOPE_POLICY_HASH,
+            )
         return (
             case,
             sources,
-            digest(
-                {
-                    "inputs": fingerprint,
-                    "model": self.settings.model,
-                    "review_version": REVIEW_VERSION,
-                }
-            ),
+            digest(inputs),
             current,
         )
 
@@ -141,6 +151,10 @@ class ReviewService:
                 error="Actualiza las fuentes y sincroniza la revisión. Tu texto se conserva.",
                 check_thread_id=None,
             )
+            # An empty legacy inventory is not evidence that the current policy
+            # examined the sources. Rebuild it too; current empty inventories
+            # (for example, a copy-only request) remain valid until inputs change.
+            row["coverage_units"] = None
             row = self.store.save(row, expected=row["revision"], event="inputs_changed")
         elif row.get("assessment") and row["assessment"].get("input_hash") != input_hash(row):
             invalidate(row)
@@ -154,6 +168,9 @@ class ReviewService:
         # chunk from an earlier revision, absent from the new available_supports.
         ids.update(c.split(":", 1)[0] for row in rows for p in row["paragraphs"]
                    for c in p.get("cited_chunk_ids", []) if ":" in c)
+        ids.update(c["chunk_id"].split(":", 1)[0] for row in rows
+                   for unit in row.get("coverage_units") or []
+                   for c in unit.get("citations", []) if ":" in c["chunk_id"])
         denied = ids - self.library.visible_source_ids(case_id, ids)
         linked = set(self.library.linked_collections(case_id))
         for row in rows:
@@ -162,6 +179,9 @@ class ReviewService:
                         if s["source_id"] in denied}
             excluded.update(c for p in row["paragraphs"] for c in p.get("cited_chunk_ids", [])
                             if c.split(":", 1)[0] in denied)
+            excluded.update(c["chunk_id"] for unit in row.get("coverage_units") or []
+                            for c in unit.get("citations", [])
+                            if c["chunk_id"].split(":", 1)[0] in denied)
             if not excluded and not self.library.scope_revoked(case_id, captured, current=linked):
                 yield row
                 continue
@@ -182,6 +202,7 @@ class ReviewService:
                    "available_supports": supports,
                    "paragraphs": paragraphs, "source_checks": [], "evidence_states": [],
                    "pending": [], "verifications": [], "sufficiency": {}, "request_intent": None,
+                   "coverage_units": [],
                    "assessment": None, "approval": None,
                    "error": "Cambió el permiso de consulta. Actualiza las fuentes del expediente."}
 
@@ -327,7 +348,7 @@ class ReviewService:
         for document in finding.get("candidate_documents", []):
             for fragment in document["chunks"]:
                 chunk = chunks[fragment["chunk_id"]]
-                roles = _allowed_roles(chunk["category"], kind)
+                roles = _allowed_roles(chunk["category"], kind, request=request, source=chunk)
                 role = (
                     "document"
                     if "document" in roles
@@ -412,9 +433,12 @@ class ReviewService:
                 if request["id"] not in findings:
                     continue
                 finding, old = findings[request["id"]], previous.get(request["id"])
-                draft = (results.get(request["id"], {}).get("draft") or {}) if draft_current else {}
-                if results.get(request["id"], {}).get("status") == "error":
+                result = results.get(request["id"], {}) if draft_current else {}
+                draft = result.get("draft") or {}
+                plan = result.get("plan") or {}
+                if result.get("status") == "error":
                     draft = {}
+                    plan = {}
                 expected_review = draft_run.get("review_snapshots", {}).get(request["id"])
                 if (
                     old
@@ -423,7 +447,23 @@ class ReviewService:
                     and (self.drafts_service._review_input(old) != expected_review)
                 ):
                     draft = {}
+                    plan = {}
                 supports = self._supports(request, finding, chunks)
+                if "coverage_units" in plan:
+                    coverage_units = validate_units(
+                        plan["coverage_units"], request,
+                        {source["chunk_id"]: source for source in supports},
+                    )
+                elif old and (
+                    old.get("coverage_units")
+                    or ("coverage_units" in old and old["coverage_units"] is None)
+                    or old["base_fingerprint"] != fingerprint
+                    or old.get("stale")
+                ):
+                    # No current plan: the next check refreshes only the units, not the text.
+                    coverage_units = None
+                else:
+                    coverage_units = []
                 pending = self._pending((old or {}).get("pending", []), finding, draft, request)
                 adopting = bool(old and not old["paragraphs"] and draft.get("paragraphs"))
                 if (
@@ -451,6 +491,7 @@ class ReviewService:
                         verifications=deepcopy(finding.get("verifications", [])),
                         request_intent=deepcopy(finding.get("request_intent")),
                         sufficiency=deepcopy(finding.get("sufficiency", {})),
+                        coverage_units=deepcopy(coverage_units),
                     )
                 else:
                     row = dict(
@@ -483,6 +524,7 @@ class ReviewService:
                         verifications=deepcopy(finding.get("verifications", [])),
                         request_intent=deepcopy(finding.get("request_intent")),
                         sufficiency=deepcopy(finding.get("sufficiency", {})),
+                        coverage_units=deepcopy(coverage_units),
                     )
                 if adopting:
                     row.update(
@@ -697,7 +739,10 @@ class ReviewService:
     def _engine(self):
         from .review_engine import OpenAIReviewEngine
 
-        return self.engine or OpenAIReviewEngine(self.settings.api_key, self.settings.model)
+        return self.engine or OpenAIReviewEngine(
+            self.settings.api_key, self.settings.model,
+            procedure_scope_pilot=self.settings.procedure_scope_pilot,
+        )
 
     @track_case("review", "original")
     def run(self, original):
@@ -707,10 +752,39 @@ class ReviewService:
         try:
             if not self._current(original):
                 raise Conflict("Las fuentes cambiaron durante la comprobación.")
+            engine = self._engine()
+            if "coverage_units" in original and (
+                original["coverage_units"] is None
+                or not has_current_details(original["coverage_units"])
+            ):
+                prepare = getattr(engine, "prepare_units", None)
+                if not callable(prepare):
+                    raise DomainError(
+                        "El inventario de respuesta quedó desactualizado. "
+                        "Prepara un plan con las fuentes actuales antes de comprobar; "
+                        "el texto y los pendientes guardados se conservan."
+                    )
+                units = prepare(original["request_snapshot"], deepcopy(original))
+                units = validate_units(
+                    units, original["request_snapshot"],
+                    {s["chunk_id"]: s for s in original["available_supports"]},
+                )
+                with self.lock, self.library.lock:
+                    row = self.store.get(*key)
+                    if (row["revision"] != original["revision"]
+                            or row["check_thread_id"] != original["check_thread_id"]):
+                        return
+                    if not self._current(row):
+                        self._project(row)
+                        return
+                    row["coverage_units"] = units
+                    original = self.store.save(
+                        row, expected=original["revision"], event="coverage_units_refreshed",
+                    )
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "review_checkpoints.sqlite")
             ) as saver:
-                graph = build_review_graph(self._engine(), saver)
+                graph = build_review_graph(engine, saver)
                 state = graph.invoke(
                     {
                         "request": original["request_snapshot"],
@@ -839,7 +913,10 @@ class ReviewService:
                     state.values.get("evaluated_input_hash") != fingerprint
                     or input_hash(state.values.get("review", {})) != fingerprint
                     or state.values.get("assessment")
-                    != {key: assessment[key] for key in ("status", "issues", "local_checks")}
+                    != {key: assessment[key] for key in (
+                        "status", "issues", "local_checks", "requirement_checks", "unit_checks",
+                        "detail_checks",
+                    )}
                 ):
                     raise Conflict(
                         "La pausa de aprobación no corresponde a esta evaluación. "

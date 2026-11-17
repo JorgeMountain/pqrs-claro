@@ -12,7 +12,9 @@ from collections import Counter, OrderedDict, defaultdict
 from functools import lru_cache
 from typing import Any
 
+from .source_context import _scope_quotes
 from .source_documents import (
+    NORM_DOCUMENT_KINDS,
     document_matches,
     named_document_candidates,
     numbered_document_references,
@@ -612,6 +614,31 @@ def _adjacent_answer(anchor, eligible, *, passages=None):
     return result if len(result) > 1 else []
 
 
+def _source_continuation(anchor, passages):
+    """One adjacent original passage; never synthesize a larger citation.
+
+    A conditional instruction or the end of a list need not repeat the query.
+    Coordinates and source/version/hash must agree, and missing page/line ranges
+    cannot be silently bridged. New chapter headings are not continuations.
+    """
+    if anchor.get("category") not in {"national_norm", "institutional_norm", "case_evidence"}:
+        return []
+    for row in passages.following(anchor, 1):
+        if any(row.get(key) != anchor.get(key) for key in
+               ("source_id", "document_id", "version", "sha256")):
+            return []
+        page, start = int(row.get("page", 0)), int(row.get("line_start", 1))
+        anchor_page, end = int(anchor.get("page", 0)), int(anchor.get("line_end", 1))
+        contiguous = ((page == anchor_page and start <= end + 1
+                       and int(row.get("line_end", 1)) > end)
+                      or (page == anchor_page + 1 and start == 1))
+        if (contiguous and len(row["quote"]) <= 6500
+                and not re.match(r"^\s*(?:cap[ií]tulo|t[ií]tulo|secci[oó]n)\b",
+                                 row["quote"], re.IGNORECASE)):
+            return [{**row, "adjacent_to": anchor["chunk_id"]}]
+    return []
+
+
 def _targeted_passages(request, eligible, *, index, passages=None):
     """Prioriza una ubicación explícita de un archivo nombrado, con citas intactas.
 
@@ -682,7 +709,7 @@ def _targeted_passages(request, eligible, *, index, passages=None):
     return result
 
 
-def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
+def _retrieve_base(request, chunks, limit=24, *, index=None, semantic=None, capture=None):
     """Combina consulta atómica, contexto, identidad, entidades y significado.
 
     Conserva resultados léxicos útiles y abre espacio a fuentes complementarias.
@@ -742,6 +769,8 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         and row["source_id"] == authorized[row["chunk_id"]]["source_id"]
         and row["quote"] == authorized[row["chunk_id"]]["quote"]
     ] for name, rows in channels.items()}
+    if capture is not None:
+        capture.update(passages=passages, index=index, channels=channels)
     selected, seen, counts = [], set(), Counter()
     requested_documents = {c["document_id"] for c in general
                            if c.get("document_identity_rank", 0)}
@@ -779,7 +808,7 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         add(ranked_by_id.get(row["chunk_id"], row), "topic")
     # El asunto ayuda a localizar el documento; la pregunta atómica selecciona
     # su contenido. Una portada coincidente no sustituye el pasaje de respuesta.
-    for row in _document_content(request, eligible, index=index, passages=passages):
+    for row in _baseline_document_content(request, eligible, index=index, passages=passages):
         add(ranked_by_id.get(row["chunk_id"], row), "document_content")
     # Protege resultados ya útiles, incluida la prioridad del objeto pedido.
     for row in baseline[:8]:
@@ -839,6 +868,108 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
         row, name = representatives[key]
         add(row, name)
     return selected
+
+
+def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
+    """Keep the baseline selection; replace at most four weak tail candidates.
+
+    Additional named-document bodies and adjacent originals do not reclaim slots
+    from the baseline's body/semantic/identity evidence or historical answer chain.
+    """
+    context = request.get("context") or {}
+    original = context.get("document_context") or {}
+    baseline_request = request
+    if original.get("origin") == "original_petition":
+        related = [f"{entry.get('title') or ''} {entry.get('description') or ''}"
+                   for name in ("ancestors", "children", "referenced_requests", "preceding_section")
+                   for entry in context.get(name, [])]
+        baseline_request = {**request, "retrieval_queries": related,
+                            "retrieval_context": "\n".join(related)}
+    capture = {}
+    baseline = _retrieve_base(baseline_request, chunks, limit, index=index,
+                              semantic=semantic, capture=capture)
+    if not capture or limit <= 0:
+        return baseline
+    limit = min(24, limit)
+    passages, index = capture["passages"], capture["index"]
+    seen = {row["chunk_id"] for row in baseline}
+    named_ids = _named_scope_sources(request, [rows[0] for rows in passages.by_source.values()])
+    bodies = ([row for row in _document_content(request, passages.rows, index=index,
+                                                passages=passages)
+               if row["source_id"] in named_ids] if named_ids else [])
+    missing_bodies = [row for row in bodies if row["chunk_id"] not in seen][:2]
+    proposals = []
+    semantic_rows = capture["channels"]["semantic"]
+    if not any(row.get("retrieval_channel") == "semantic" for row in baseline):
+        quota = 1 if missing_bodies else 3
+        proposals.extend({**row, "retrieval_channel": "semantic"}
+                         for row in semantic_rows if row["chunk_id"] not in seen)
+        proposals = proposals[:quota]
+    proposals.extend({**row, "retrieval_channel": "document_content"} for row in missing_bodies)
+    # The best body of a named policy precedes unrelated historical neighbours.
+    # Consider one anchor per source, with both sides when a list spans a cut.
+    anchors, anchored = [], set()
+    body_anchors = [row for row in baseline if row.get("retrieval_channel") == "document_content"]
+    for row in [*bodies, *body_anchors, *baseline]:
+        if (row["chunk_id"] in seen or row in missing_bodies) and row["source_id"] not in anchored:
+            anchors.append(row)
+            anchored.add(row["source_id"])
+    neighbours, structural = [], set()
+    for anchor in anchors:
+        forward = _source_continuation(anchor, passages)
+        bullet = re.compile(r"^\s*(?:[-•●◦▪]|\d+[.)]|[a-z][.)])\s+\S")
+        anchor_end = [line for line in anchor["quote"].splitlines() if line.strip()][-12:]
+        for row in forward:
+            beginning = [line for line in row["quote"].splitlines() if line.strip()][:8]
+            if (any(bullet.match(line) for line in anchor_end)
+                    and any(bullet.match(line) for line in beginning)):
+                structural.add(row["chunk_id"])
+        # following builds the same original-coordinate ordering used for both directions.
+        passages.following(anchor, 1)
+        ordered, positions = passages._ordered[anchor["source_id"]]
+        position = positions[anchor["chunk_id"]]
+        previous = ordered[position - 1] if position else None
+        backward = []
+        if previous and _source_continuation(previous, passages):
+            following = _source_continuation(previous, passages)[0]
+            if following["chunk_id"] == anchor["chunk_id"]:
+                backward = [{**previous, "adjacent_to": anchor["chunk_id"]}]
+        options = [row for row in [*forward, *backward] if row["chunk_id"] not in seen]
+        # Scope is never used to rank the neighbour's body, only the atomic question.
+        query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
+        ranked = _rank({}, options, query=query) if options else []
+        order = {row["chunk_id"]: i for i, row in enumerate(ranked)}
+        options.sort(key=lambda row: order.get(row["chunk_id"], len(order)))
+        neighbours.extend({**row, "retrieval_channel": "source_continuation"} for row in options)
+    # An expressly named source still leads. A literal list continuing across a
+    # cut then precedes generic neighbours, without changing the four-slot cap.
+    neighbours.sort(key=lambda row: (row["source_id"] not in named_ids,
+                                     row["chunk_id"] not in structural))
+    proposals.extend(neighbours)
+    result, counts = list(baseline), Counter(row["document_id"] for row in baseline)
+    added = 0
+    for row in proposals:
+        if added >= 4 or row["chunk_id"] in seen or counts[row["document_id"]] >= 8:
+            continue
+        if len(result) >= limit:
+            removable = [(i, old) for i, old in enumerate(result)
+                         if old["chunk_id"] in {r["chunk_id"] for r in baseline}
+                         and old.get("retrieval_channel") in {"lexical", "context"}
+                         and not old.get("document_identity_rank")
+                         and old["source_id"] not in named_ids]
+            if not removable:
+                continue
+            # Prefer replacing a historical lexical tail over an original norm.
+            position, replaced = max(removable, key=lambda pair: (
+                pair[1].get("category") in HISTORICAL_CATEGORIES, pair[0]))
+            result.pop(position)
+            seen.remove(replaced["chunk_id"])
+            counts[replaced["document_id"]] -= 1
+        result.append(row)
+        seen.add(row["chunk_id"])
+        counts[row["document_id"]] += 1
+        added += 1
+    return result
 
 
 def _search_words(text, *, expand=False):
@@ -973,7 +1104,89 @@ def _date_passages(request, eligible, *, index=None, postings=None):
     return [originals[r["chunk_id"]] for r in ranked[:2]]
 
 
-def _document_content(request, eligible, *, index=None, passages=None):
+def _named_scope_sources(request, rows):
+    """Literal document-name clues, with atomic names preceding sibling mentions.
+
+    This only opens a body search. A title mentioned elsewhere in the original
+    does not make its rules applicable to the target request.
+    """
+    atomic = " ".join(str(request.get(key) or "") for key in ("title", "description"))
+    original = (request.get("context") or {}).get("document_context") or {}
+    scope = str(request.get("retrieval_context") or "")[:6000]
+    if original.get("origin") == "original_petition":
+        scope += "\n" + "\n".join(str(part.get("quote") or "")
+                                   for part in original.get("excerpts", []))[:12000]
+    kinds = NORM_DOCUMENT_KINDS | {"instructivo"}
+    named_policies = {"reglamento", "estatuto", "manual", "guia", "instructivo"}
+    candidates = [row for row in rows if row.get("category") in {
+        "national_norm", "institutional_norm", "historical_attachment", "case_evidence"}]
+
+    def matches(text):
+        located = {row["source_id"] for row in named_document_candidates(text, candidates)}
+        words = " " + _search_words(text) + " "
+        scores, best = {}, Counter()
+        for row in candidates:
+            names = [str(row.get(key) or "") for key in ("title", "filename")]
+            if re.search(r"\b(?:correo|gmail|fwd|remision|notificacion)\b",
+                         _plain_lexical_text(" ".join(names))):
+                continue
+            for name in names:
+                tokens = tokenize(_search_words(name))
+                for start, kind in enumerate(tokens):
+                    if kind not in kinds:
+                        continue
+                    identity = tokens[start:start + 8]
+                    minimum = 1 if kind in named_policies else 2
+                    for length in range(min(8, len(identity)), minimum, -1):
+                        prefix = identity[:length]
+                        distinctive = {w for w in prefix[1:] if w.isalpha()
+                                       and w not in {"general", "institucional", "normativa"}}
+                        if (len(distinctive) >= minimum
+                                and " " + " ".join(prefix) + " " in words):
+                            key = (row["source_id"], kind)
+                            scores[key] = max(scores.get(key, 0), length)
+                            best[kind] = max(best[kind], length)
+                            break
+        # A literal "Manual ayudas urbanas" outranks the shared prefix
+        # "Manual ayudas" from a sibling rural manual.
+        return located | {source for (source, kind), size in scores.items() if size == best[kind]}
+
+    located = matches(atomic) or matches(scope)
+    if located or original.get("origin") != "original_petition":
+        return located
+    try:
+        # Shared scope only: never combine a type/qualifier from unrelated sibling questions.
+        shared = " ".join(_scope_quotes(original))[:12000]
+    except (KeyError, TypeError, AttributeError):
+        return set()
+    shared_words, atomic_words = set(tokenize(_search_words(shared))), set(tokenize(
+        _search_words(atomic)))
+    requested_kinds = named_policies.intersection(shared_words | atomic_words)
+    if {"norma", "normativa", "regla"}.intersection(shared_words | atomic_words):
+        requested_kinds.update(named_policies)
+    generic = {"general", "institucional", "normativa", "universitario", "academico",
+               "superior", "vigente", "documento", "procedimiento", "pdf"}
+    scored, strongest = {}, {}
+    for row in candidates:
+        for key in ("title", "filename"):
+            tokens = tokenize(_search_words(str(row.get(key) or "")))
+            for position, kind in enumerate(tokens):
+                if kind not in requested_kinds:
+                    continue
+                # A short qualifier next to the type, not institution names or a
+                # long recital elsewhere in the act's title, defines this clue.
+                qualifiers = {word for word in tokens[position + 1:position + 3]
+                              if word.isalpha() and word not in generic and word not in kinds}
+                score = (len(qualifiers & atomic_words), len(qualifiers & shared_words))
+                if not any(score):
+                    continue
+                identity = (row["source_id"], kind)
+                scored[identity] = max(scored.get(identity, (0, 0)), score)
+                strongest[kind] = max(strongest.get(kind, (0, 0)), score)
+    return {source for (source, kind), score in scored.items() if score == strongest[kind]}
+
+
+def _baseline_document_content(request, eligible, *, index=None, passages=None):
     """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
 
     El corpus ya está filtrado por permisos y versión. El asunto solo localiza
@@ -1014,3 +1227,83 @@ def _document_content(request, eligible, *, index=None, passages=None):
                                  index, prepared, body=True)[:4]:
             result.append(passages.by_id[hit["chunk_id"]])
     return result
+
+
+
+def _document_content(request, eligible, *, index=None, passages=None):
+    """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
+
+    El corpus ya está filtrado por permisos y versión. El asunto solo localiza
+    documentos, nunca se convierte en evidencia ni sustituye la pregunta. Se
+    requieren coincidencias en metadatos y luego en el cuerpo. Una norma general
+    puede tener solo un término del ámbito en su título; no exigir que su nombre
+    enumere el trámite de cada artículo. Las citas se devuelven sin normalizar.
+    """
+    query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
+    subject = str((request.get("context") or {}).get("subject") or "")[:1200]
+    if passages is None:
+        passages = _PassageGroups(eligible)
+    metadata, originals, prepared = [], [], {}
+    for siblings in passages.by_source.values():
+        row = siblings[0]
+        originals.append(row)
+        metadata.append(_normalized_passage(row, " ".join(
+            str(row.get(key) or "") for key in ("title", "filename", "historical_group")
+        ), index, prepared))
+    # IDs/dates in a letterhead are not subject matter. Explicit numbered
+    # document identities are handled separately rather than matching that year
+    # against every act in the catalogue.
+    context = " ".join(word for word in tokenize(_search_words(
+        str(request.get("retrieval_context") or "")[:6000])) if word.isalpha())
+    topic = _search_words(" ".join((subject, context, query)))
+    generic = {"universidad", "institucional", "documento", "respuesta", "consulta", "solicita"}
+    terms = {w for w in tokenize(topic) if len(w) >= 3 and w not in generic}
+    norms = {"national_norm", "institutional_norm"}
+    named_ids = _named_scope_sources(request, originals)
+    matches = [row for row in metadata
+               if row["source_id"] in named_ids
+               or len(terms.intersection(prepared[terms_key(row)] if index is not None
+                                         else tokenize(row["quote"])))
+               >= (1 if row.get("category") in norms else 2)]
+    if not matches:
+        return []
+    # No favorecer documentos largos por repetir su título en cada fragmento.
+    ranked = _rank_context(matches, topic, index, prepared)
+    ranked_ids = {row["source_id"] for row in ranked}
+    ranked.extend(row for row in matches if row["source_id"] in named_ids - ranked_ids)
+    rule_terms = {"reglamento", "estatuto", "norma", "normativa", "manual", "acuerdo",
+                  "resolucion", "circular", "instructivo"}
+    body_cache = {}
+
+    def body_hits(document):
+        source_id = document["source_id"]
+        if source_id not in body_cache:
+            body = passages.by_source[source_id]
+            if index is None:
+                body = [_normalized_passage(row, row["quote"], index, prepared, body=True)
+                        for row in body]
+            body_cache[source_id] = _rank_context(
+                body, _search_words(query, expand=True), index, prepared, body=True)[:4]
+        return body_cache[source_id]
+
+    documents = [row for row in ranked if row["source_id"] in named_ids][:6]
+    # A sibling's title with no atomic body match cannot consume a document slot.
+    documents = [row for row in documents if body_hits(row)][:2]
+    if terms.intersection(rule_terms):
+        documents.extend(row for row in ranked if row.get("category") in norms
+                         and all(row["source_id"] != d["source_id"] for d in documents))
+        documents = documents[:2]
+    for row in ranked:
+        if all(row["source_id"] != selected["source_id"] for selected in documents):
+            documents.append(row)
+        if len(documents) == 3:
+            break
+    hits_by_document = []
+    for document in documents:
+        # Reservar más que los dos primeros: títulos de trámite y referencias
+        # al portal pueden puntuar por encima del contenido de la respuesta.
+        # El cupo semántico conserva espacio adicional dentro del mismo archivo.
+        hits_by_document.append(body_hits(document))
+    # The first document cannot consume every body slot before another is read.
+    return [passages.by_id[hits[position]["chunk_id"]] for position in range(4)
+            for hits in hits_by_document if position < len(hits)]

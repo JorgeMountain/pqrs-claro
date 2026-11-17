@@ -157,13 +157,22 @@ def test_custom_aliases_are_preserved_without_adding_human_fact_aliases():
 
 
 def test_three_remote_stages_receive_identical_citation_scope_and_original_passages():
-    selected = source()
+    selected = source(quote="En 2017 el comité aprobó la plaza.\r\n\r\n"
+                            "El pasaje corresponde a ese período.\n")
     request, found = inquiry(), finding([selected])
+    original = deepcopy(found)
     calls = []
     responses = iter([
         {"objective": "Describir el antecedente.", "points": [{
             "description": "Atribuir la conclusión al oficio de 2025 para el período 2017.",
             "cited_chunk_ids": ["S1"],
+        }], "coverage_units": [{
+            "requirement_id": "R1", "kind": "context", "required": False,
+            "claim": "El pasaje describe la decisión de 2017.",
+            "citations": [{"chunk_id": "S1", "line_start": 1, "line_end": 3}],
+            "reason": "Permite distinguir el alcance temporal del antecedente.",
+            "details": [],
+            "no_details_reason": "No identifica autoridades por nombre ni ofrece alternativas.",
         }]},
         {"paragraphs": [{
             "text": "Según el Oficio 0412-2025, en 2017 el comité aprobó la plaza.",
@@ -180,14 +189,33 @@ def test_three_remote_stages_receive_identical_citation_scope_and_original_passa
 
     worker = OpenAIDraftEngine("fictitious", "test-model")
     worker.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    # This test compares evidence payloads; the blind reader has separate tests.
+    worker._procedure_scope = lambda request, paragraphs: {"issues": [], "local_checks": []}
     plan = worker.plan(request, found)
     draft = worker.write(request, found, plan)
     worker.check(request, found, plan, draft)
     assert len(calls) == 3
-    for context in calls:
+    assert found == original
+    assert plan["coverage_units"][0]["citations"] == [{
+        "chunk_id": selected["chunk_id"], "quote": selected["quote"],
+    }]
+    for stage, context in enumerate(calls):
         assert context["citation_context"] == calls[0]["citation_context"]
-        assert context["finding"]["supports"][0]["quote"] == selected["quote"]
-        assert context["finding"]["supports"][0]["chunk_id"] == "S1"
+        passage = context["finding"]["supports"][0]
+        if stage == 0:
+            assert "quote" not in passage
+            assert [line[0] for line in passage["numbered_lines"]] == [1, 2, 3]
+            assert [[word[1] for word in line[1]] for line in passage["numbered_lines"]] == [
+                line.split() for line in selected["quote"].splitlines()
+            ]
+            word_numbers = [word[0] for line in passage["numbered_lines"] for word in line[1]]
+            assert word_numbers == list(range(1, len(selected["quote"].split()) + 1))
+        else:
+            assert passage["quote"] == selected["quote"]
+            assert context["plan"]["coverage_units"][0]["citations"] == [{
+                "chunk_id": "S1", "quote": selected["quote"],
+            }]
+        assert passage["chunk_id"] == "S1"
         assert context["citation_context"]["passages"][0]["title"] == selected["title"]
 
 
@@ -233,6 +261,7 @@ def test_direct_prose_keeps_original_components_and_each_paragraphs_own_support(
 
     worker = OpenAIDraftEngine("fictitious", "test-model")
     worker.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    worker._procedure_scope = lambda request, paragraphs: {"issues": [], "local_checks": []}
     before = deepcopy((request, found))
     plan = worker.plan(request, found)
     draft = worker.write(request, found, plan)

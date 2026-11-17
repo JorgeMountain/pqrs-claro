@@ -22,7 +22,9 @@ def _plain(value: str) -> str:
 _INFORMATION = re.compile(
     r"\b(?:informar|informe[n]?|aclarar|aclare[n]?|precisar|precise[n]?|"
     r"confirmar|confirme[n]?|responder|responda[n]?|explicar|explique[n]?|"
-    r"indicar|indique[n]?|saber|conocer)\b"
+    r"indicar|indique[n]?|enumerar|enumere[n]?|describir|describa[n]?|"
+    r"detallar|detalle[n]?|listar|liste[n]?|senalar|senale[n]?|saber|conocer|"
+    r"informacion|explicacion|descripcion)\b"
 )
 _DELIVERY = re.compile(
     r"\b(?:copias?|anexar|anexe[n]?|adjuntar|adjunte[n]?|remitir|remita[n]?|"
@@ -40,20 +42,71 @@ def _request_clauses(text: str) -> list[str]:
     # Una oración puede contener varios actos coordinados. La parte subordinada a
     # «informar si / quién» describe la pregunta y no manda ejecutar esos verbos.
     clauses = re.split(
-        r"[.!?]\s+|\n+|;\s*(?=(?:solicita|pide|solicito|pido)\b)|"
+        r"[.!?]\s+|\n+|;\s*(?=(?:no\s+)?(?:solicita|pide|solicito|pido|"
+        r"anexe[n]?|adjunte[n]?|remita[n]?|entregue[n]?|envie[n]?|"
+        r"explique[n]?|informe[n]?|detalle[n]?|enumere[n]?|indique[n]?|describa[n]?|"
+        r"aclare[n]?|precise[n]?|responda[n]?|liste[n]?|senale[n]?)\b)|"
         r"\b(?:tambien|ademas)\s+(?=(?:solicita|pide|solicito|pido)\b)", text
     )
-    return [clause.strip() for clause in clauses if clause.strip()]
+    result = []
+    for clause in clauses:
+        # An explicit exclusion is not a second command. Preserve a later positive
+        # instruction after its contrast, e.g. "no solicito copia; solo explique".
+        clause = re.sub(
+            r"\bno\s+(?:(?:le|les)\s+)?(?:solicito|solicita|pido|pide|"
+            r"requiero|requiere|necesito|necesita|deseo|desea)\b"
+            r".*?(?=(?:[;,]\s*|\b)(?:pero|solo|solamente|ademas)\b|$)",
+            "", clause,
+        )
+        if not _is_information_clause(clause):
+            clause = re.sub(
+                r"\bno\s+(?:se\s+)?(?:anexe[n]?|adjunte[n]?|remita[n]?|entregue[n]?|"
+                r"envie[n]?|facilite[n]?|anexar|adjuntar|remitir|entregar|enviar|facilitar)\b"
+                r".*?(?=(?:[;,]\s*|\b)(?:pero|solo|solamente|ademas)\b|$)",
+                "", clause,
+            )
+        if clause.strip():
+            result.append(clause.strip())
+    return result
 
 
 def _is_information_clause(clause: str) -> bool:
-    if re.match(r"^[¿\s]*(?:quien|quienes|cuando|como|por que|puede|podia|existe)\b", clause):
+    if re.match(
+        r"^[¿\s]*(?:que|cual|cuales|quien|quienes|cuando|como|donde|cuanto|"
+        r"cuantos|cuantas|por que|puede|podia|existe)\b", clause
+    ):
         return True
     information = _INFORMATION.search(clause)
     if not information:
         return False
     other = [match for pattern in (_DELIVERY, _FUTURE) if (match := pattern.search(clause))]
     return not other or information.start() < min(match.start() for match in other)
+
+
+def _coordinated_delivery(clause: str) -> re.Match[str] | None:
+    """An infinitive coordinated with an informational mandate can be a new act.
+
+    A verb inside "qué debe entregar y remitir el interesado" remains described
+    procedure. No domain, actor name or document type decides the classification.
+    """
+    command = re.search(
+        r"\b(?:y|ademas)\s+(?:que\s+)?(?:se\s+)?"
+        r"(?:anexe[n]?|adjunte[n]?|remita[n]?|entregue[n]?|envie[n]?|"
+        r"facilite[n]?|expida[n]?|emita[n]?|certifique[n]?|firme[n]?|verifique[n]?)\b",
+        clause,
+    )
+    if command and not re.search(r"\bpara\s+que\b", clause[:command.start()]):
+        return command
+    command = re.search(
+        r"\b(?:y|ademas)\s+(?:anexar|adjuntar|remitir|entregar|enviar|facilitar)\b",
+        clause,
+    )
+    if command and not re.search(
+        r"\b(?:que|quien|quienes|cual|cuales|como|cuando|donde|para|"
+        r"debe\w*|debia\w*|puede\w*|podia\w*)\b", clause[:command.start()]
+    ):
+        return command
+    return None
 
 
 def _certification_requested(text: str) -> bool:
@@ -104,19 +157,15 @@ def classify_request_intent(request: dict[str, Any]) -> dict[str, Any]:
             intents.add("information")
             # Un verbo dentro del contenido interrogado no es una orden nueva.
             # Sí lo es «... y que adjunte una copia / y expida una certificación».
-            coordinated = re.search(
-                r"\b(?:y|ademas)\s+(?:que\s+)?(?:se\s+)?"
-                r"(?:anexe[n]?|adjunte[n]?|remita[n]?|entregue[n]?|envie[n]?|"
-                r"expida[n]?|emita[n]?|certifique[n]?|firme[n]?|verifique[n]?)\b",
-                clause,
-            )
+            coordinated = _coordinated_delivery(clause)
             if not coordinated:
                 continue
             clause = clause[coordinated.start():]
         # Una condición «no se entreguen documentos sin ...» no es una entrega
         # adicional; conserva la vigilancia pedida en su cláusula principal.
         directive = re.sub(
-            r"\bno\s+(?:se\s+)?(?:entregue[n]?|adjunte[n]?|envie[n]?|remita[n]?)\b",
+            r"\bno\s+(?:se\s+)?(?:entregue[n]?|adjunte[n]?|envie[n]?|remita[n]?|"
+            r"entregar|adjuntar|enviar|remitir|facilitar)\b",
             "condicion", clause,
         )
         delivery, future = _DELIVERY.search(directive), _FUTURE.search(directive)
@@ -147,6 +196,26 @@ def classify_request_intent(request: dict[str, Any]) -> dict[str, Any]:
         "document_delivery_requested": "document_delivery" in intents,
         "future_action_requested": "future_action" in intents,
     }
+
+
+def delivery_request_text(request: dict[str, Any]) -> str:
+    """Texto de la entrega pedida, sin usar otro documento de una consulta coordinada.
+
+    «Explique el reglamento X y adjunte la circular Y» pide la copia de Y. El
+    encabezado de X no debe habilitarse como si fuera el archivo solicitado.
+    """
+    text = _plain(str(request.get("description") or request.get("title") or ""))
+    deliveries = []
+    for clause in _request_clauses(text):
+        if _is_information_clause(clause):
+            command = _coordinated_delivery(clause)
+            if not command:
+                continue
+            clause = clause[command.start():]
+        delivery, future = _DELIVERY.search(clause), _FUTURE.search(clause)
+        if delivery and (not future or delivery.start() < future.start()):
+            deliveries.append(clause[delivery.start():])
+    return "; ".join(deliveries)
 
 
 def fulfillment_actions(request: dict[str, Any]) -> list[dict[str, Any]]:

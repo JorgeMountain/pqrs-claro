@@ -83,6 +83,8 @@ def api_document_coverage(alias, original):
             f"{alias} identifica el archivo solicitado mediante su encabezado. "
             "La localización del archivo no acredita su entrega al peticionario."
         ),
+        "application": {"status": "not_requested", "uncertainty_indexes": [],
+                        "explanation": "Se pide localizar la copia, no aplicar una regla."},
     }
 
 
@@ -165,6 +167,10 @@ def test_assessment_uses_structured_responses_and_literal_references():
     from pqrs_claro.source_passages import numbered_lines
     assert sent == {**{k: v for k, v in original.items() if k != "quote"}, "chunk_id": "C1",
                     "allowed_roles": ["fact", "document"],
+                    "allowed_coverage_uses": {
+                        "fact": ["attributed_content", "verified_fact", "official_status"],
+                        "document": ["attributed_content", "document_delivery", "official_status"],
+                    },
                     "numbered_lines": numbered_lines(original["quote"])}
     assert original["chunk_id"] == "acta-1"
     assert result["request_id"] == "P1"
@@ -212,7 +218,12 @@ def test_assessor_maps_closed_aliases_to_exact_original_chunks_in_selection_orde
     from pqrs_claro.source_passages import numbered_lines
     assert sent == [
         {**{k: v for k, v in source.items() if k != "quote"}, "chunk_id": f"C{i}",
-         "allowed_roles": ["fact", "document"], "numbered_lines": numbered_lines(source["quote"])}
+         "allowed_roles": ["fact", "document"],
+         "allowed_coverage_uses": {
+             "fact": ["attributed_content", "verified_fact", "official_status"],
+             "document": ["attributed_content", "document_delivery", "official_status"],
+         },
+         "numbered_lines": numbered_lines(source["quote"])}
         for i, source in enumerate(originals, 1)
     ]
     assert [support["chunk_id"] for support in result["supports"]] == [

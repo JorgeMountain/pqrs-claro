@@ -12,7 +12,16 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from pydantic import Field, StrictBool, ValidationError
 
+from .answer_coverage import (
+    MAX_DETAILS_PER_UNIT,
+    MAX_UNITS,
+    DetailCheck,
+    UnitCheck,
+    detail_issues,
+    unit_issues,
+)
 from .models import DomainError, StrictModel
+from .request_requirements import DraftRequirementCheck, draft_requirement_issues
 from .review_engine import structural_checks, validate_review_input
 from .review_models import Actor, InputHash, ReviewApprove
 
@@ -48,6 +57,11 @@ class _GraphAssessment(StrictModel):
     status: Literal["passed", "needs_changes"]
     issues: list[_GraphIssue]
     local_checks: list[_Check]
+    requirement_checks: list[DraftRequirementCheck] = Field(default_factory=list, max_length=64)
+    unit_checks: list[UnitCheck] = Field(default_factory=list, max_length=64)
+    detail_checks: list[DetailCheck] = Field(
+        default_factory=list, max_length=MAX_UNITS * MAX_DETAILS_PER_UNIT,
+    )
 
 
 class _Decision(StrictModel):
@@ -77,6 +91,15 @@ def _current(state: ReviewState) -> None:
 def _approval_ready(state: ReviewState) -> bool:
     assessment = state["assessment"]
     _, issues = structural_checks(validate_review_input(state["request"], state["review"]))
+    issues.extend(draft_requirement_issues(state["request"], assessment, state["review"]))
+    issues.extend(unit_issues(
+        state["review"].get("coverage_units", []), assessment.get("unit_checks", []),
+        state["review"],
+    ))
+    issues.extend(detail_issues(
+        state["review"].get("coverage_units", []), assessment.get("detail_checks", []),
+        state["review"],
+    ))
     return (
         assessment["status"] == "passed"
         and not assessment["issues"]
@@ -114,6 +137,13 @@ def build_review_graph(engine: ReviewEngine, checkpointer: Any):
         # Defensa independiente del proveedor: aunque sugiera passed, una respuesta
         # vacía, sin citas vigentes o con pendientes abiertos no puede llegar a aprobar.
         local, issues = structural_checks(state["review"])
+        issues.extend(draft_requirement_issues(state["request"], assessment, state["review"]))
+        issues.extend(unit_issues(
+            state["review"].get("coverage_units", []), assessment["unit_checks"], state["review"],
+        ))
+        issues.extend(detail_issues(
+            state["review"].get("coverage_units", []), assessment["detail_checks"], state["review"],
+        ))
         for item in local:
             if item not in assessment["local_checks"]:
                 assessment["local_checks"].append(item)

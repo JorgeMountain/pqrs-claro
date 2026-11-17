@@ -134,6 +134,9 @@ def engine(*values):
         )
 
     result.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    # These fixtures isolate the existing evidence stages. The independent
+    # text-only pass has dedicated contract and end-to-end graph tests.
+    result._procedure_scope = lambda request, paragraphs: {"issues": [], "local_checks": []}
     return result, calls
 
 
@@ -161,7 +164,14 @@ def test_three_structured_calls_keep_literal_sources_and_never_approve():
     assert "quote" not in draft["paragraphs"][0]
     for call in calls:
         payload = json.loads(call["input"])
-        assert payload["finding"]["supports"][0]["quote"] == support()["quote"]
+        provided = payload["finding"]["supports"][0]
+        literal = provided.get("quote")
+        if literal is None:
+            numbered = provided["numbered_lines"]
+            assert [row[0] for row in numbered] == list(range(1, len(numbered) + 1))
+            assert [word[1] for row in numbered for word in row[1]] == support()["quote"].split()
+        else:
+            assert literal == support()["quote"]
         assert payload["finding"]["supports"][0]["chunk_id"] == "S1"
         assert call["store"] is False
         assert call["truncation"] == "disabled"
@@ -512,7 +522,7 @@ def test_checkpoint_resume_preserves_plan_and_draft_after_check_failure():
     assert result["checks"]["status"] == "passed"
     assert len(calls) == 4
     assert [call["text_format"].__name__ for call in calls] == [
-        "_Plan", "_DraftSelection", "_Checks", "_Checks"
+        "_PlanSelection", "_DraftSelection", "_Checks", "_Checks"
     ]
 
 
@@ -700,5 +710,10 @@ def test_verified_file_does_not_clear_authorship_issue_in_forwarded_text(verific
         provided = json.loads(call["input"])["finding"]["supports"][0]
         assert provided["category"] == "historical_attachment"
         assert provided["role"] == "historical_evidence"
-        assert provided["quote"] == attachment["quote"]
+        literal = provided.get("quote")
+        if literal is None:
+            assert [word[1] for row in provided["numbered_lines"] for word in row[1]] == (
+                attachment["quote"].split())
+        else:
+            assert literal == attachment["quote"]
         assert provided["verification_status"] == verification

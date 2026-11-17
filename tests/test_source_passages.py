@@ -132,6 +132,10 @@ def test_shared_fields_restore_exact_candidates_and_locations_on_repair():
             [n, line] for n, line in enumerate(expected["quote"].splitlines(True), 1)
         ]
         restored.pop("allowed_roles")
+        assert restored.pop("allowed_coverage_uses") == {
+            "fact": ["attributed_content", "verified_fact", "official_status"],
+            "document": ["attributed_content", "document_delivery", "official_status"],
+        }
         want = {k: v for k, v in expected.items() if k != "quote"}
         want["chunk_id"] = f"C{i}"
         assert json.dumps(restored, sort_keys=True) == json.dumps(want, sort_keys=True)

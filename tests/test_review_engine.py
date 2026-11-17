@@ -145,6 +145,11 @@ def engine(value=None):
         )
 
     worker.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    # This factory tests the evidence contract only. Scope integration tests use
+    # the real blind first pass with their own explicit provider responses.
+    worker._procedure_scope = lambda request, paragraphs: {
+        "issues": [], "local_checks": [], "readings": [],
+    }
     return worker, calls
 
 

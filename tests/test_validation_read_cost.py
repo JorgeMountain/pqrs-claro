@@ -43,6 +43,7 @@ def validation(tmp_path):
     sources.library.save_run({
         "id": "test-run", "case_id": case["id"], "status": "ready", "stale": False,
         "fingerprint": fingerprint, "source_snapshot": snapshot,
+        "reader_policy": sources.reader_policy(),
         "results": [{"request_id": "P1", "status": "references_found"}],
     })
     drafts = DraftService(settings, cases, library, sources)
