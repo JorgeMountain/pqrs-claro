@@ -32,6 +32,7 @@ from .procedure_scope import (
     assess_procedure_scope,
     reconcile_procedure_scope_checks,
 )
+from .request_intent import PENDING_TASK_GUIDANCE
 from .request_requirements import (
     PROCEDURE_SCOPE_CHECK_GUIDANCE,
     REQUIREMENT_REPAIR_INSTRUCTION,
@@ -89,6 +90,13 @@ review.coverage_units conserva unidades del plan vinculadas a la petición y a c
 literales. Comprueba cada unidad contra el TEXTO GUARDADO y devuelve unit_checks;
 no copies una evaluación anterior ni supongas que una cita conserva su condición.
 No conviertas cada detalle del documento en un requisito adicional a lo preguntado.
+Comprueba por separado cada dato expresamente solicitado, aunque no aparezca en
+el inventario. Conservar un seguimiento de fulfillment no responde por sí solo
+la fecha, lugar o condición que también se haya preguntado y pueda respaldarse.
+Si se pidió explicar una discrepancia o comparación, comprueba que se entienda la
+relación entre ambos términos según los pasajes, aunque el inventario omita uno.
+No exijas otros códigos incidentales si el contraste ya es inequívoco. Explicarlo
+no acredita resolverlo ni su autenticidad.
 No cierres ni elimines controles de transcripción, conflicto o cumplimiento por
 completar las unidades narrativas. El plan no sustituye la evidencia ni la petición.
 request.context.document_context.excerpts delimita población, nivel, período y propósito;
@@ -281,11 +289,13 @@ debe corregirse y por qué, en español claro. Nunca devuelvas párrafos alterna
 """
 
 _INSTRUCTIONS = (
-    RESPONSE_SCOPE_GUIDANCE + PROCEDURE_SCOPE_CHECK_GUIDANCE + UNIT_CHECK_GUIDANCE
+    RESPONSE_SCOPE_GUIDANCE + PENDING_TASK_GUIDANCE
+    + PROCEDURE_SCOPE_CHECK_GUIDANCE + UNIT_CHECK_GUIDANCE
     + DETAIL_CHECK_GUIDANCE + _ASSESSMENT_BODY + DOCUMENT_STATE_GUIDANCE
 )
 _PILOT_INSTRUCTIONS = (
-    RESPONSE_SCOPE_GUIDANCE + PROCEDURE_SCOPE_CHECK_GUIDANCE + UNIT_CHECK_GUIDANCE
+    RESPONSE_SCOPE_GUIDANCE + PENDING_TASK_GUIDANCE
+    + PROCEDURE_SCOPE_CHECK_GUIDANCE + UNIT_CHECK_GUIDANCE
     + PROCEDURE_SCOPE_CHECK_INSTRUCTIONS + DETAIL_CHECK_GUIDANCE + _ASSESSMENT_BODY
     + DOCUMENT_STATE_GUIDANCE
 )

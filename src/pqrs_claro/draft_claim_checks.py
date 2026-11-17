@@ -12,6 +12,7 @@ import re
 import unicodedata
 
 from .source_assessment import _historical_document_status
+from .source_documents import _DOCUMENT_KINDS
 from .source_retrieval import HISTORICAL_CATEGORIES
 
 
@@ -27,13 +28,16 @@ def _plain(text: str) -> str:
 
 _YEAR = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
 _CURRENT = re.compile(r"\b(?:actualmente|a dia de hoy|hoy en dia|en la actualidad)\b")
-_SOURCE = (
-    r"(?:oficio|antecedente|borrador|correo|anexo|documento|archivo|pasaje|fuente|fragmento)s?"
-)
+_SOURCE_KINDS = set(_DOCUMENT_KINDS.split("|")) | {
+    "antecedente", "borrador", "anexo", "documento", "archivo", "pasaje", "fuente",
+    "fragmento", "calendario", "comunicado", "aviso",
+}
+_SOURCE = "(?:" + "|".join(re.escape(kind) + ("s?" if kind[-1] in "aeiou" else "(?:es)?")
+                          for kind in sorted(_SOURCE_KINDS)) + ")"
 _REPORT = (
     r"(?:indic\w*|senal\w*|inform\w*|registr\w*|refir\w*|refier\w*|consign\w*|"
     r"mencion\w*|declar\w*|afirm\w*|describ\w*|recog\w*|establec\w*|conclu\w*|"
-    r"identific\w*|precis\w*)"
+    r"identific\w*|precis\w*|anunci(?:a|an|aron)|preve(?:n|ia|ian)?|previeron|anunció|previó)"
 )
 _ATTRIBUTION = re.compile(
     rf"\b(?:segun|de acuerdo con|conforme a)\b|"
@@ -41,7 +45,7 @@ _ATTRIBUTION = re.compile(
     rf"(?:mismo\s+)?{_SOURCE}\b|"
     rf"\b(?:respuesta|comunicacion|referencia) (?:institucional )?"
     rf"(?:historica|anterior|previa)\b|"
-    rf"\b{_SOURCE}\b.{{0,120}}\b(?:historico|historica|{_REPORT})\b|"
+    rf"\b{_SOURCE}\b[^.!?;]{{0,120}}\b(?:historico|historica|{_REPORT})\b|"
     rf"\b(?:atribu\w*|contenido|conclusion)\b.{{0,70}}\b{_SOURCE}s?\b"
 )
 _LIMIT = re.compile(
@@ -242,6 +246,39 @@ def is_request_scope_only(text: str, request: dict | None) -> bool:
     return saw_request
 
 
+_TITLE_REPORT = (
+    r"(?:(?:indic|señal|inform|registr|consign|mencion|declar|afirm|identific|precis|anunci)"
+    r"(?:a|an|ó|aron)|(?:describ|establec|recog)(?:e|en|ió|ieron)|"
+    r"concluy(?:e|en|ó|eron)|prevé|prevén|previó|previeron)"
+)
+
+
+def _cited_title_attribution(text: str, sources: list[dict]) -> bool:
+    """Accept a brief exact cited title as subject, never an unrelated mention."""
+    def normalize(value):
+        return " ".join(unicodedata.normalize("NFKC", str(value)).casefold().split())
+
+    sentences = re.split(r"(?<=[.!?;])\s+", normalize(text))
+    for source in sources:
+        if (source.get("is_latest") is False or source.get("validity") == "superseded"
+                or source.get("extraction_status", "ready") != "ready"):
+            continue
+        title = normalize(source.get("title") or "")
+        identity = re.match(r"^[^\d.!?;]{2,100}\d+(?:-[a-z0-9]+)*\b", title)
+        if not identity:
+            continue
+        # The only optional intervening words are an exact year suffix from this
+        # title. No arbitrary prose/actor can bridge the title and its predicate.
+        year = re.match(r"\s+de(?:l)?\s+(?:19|20)\d{2}\b", title[identity.end():])
+        suffix = rf"(?:{re.escape(year.group())})?" if year else ""
+        report = re.compile(
+            rf"(?<!\w){re.escape(identity.group())}(?![\w.-]){suffix}\s+{_TITLE_REPORT}\b"
+        )
+        if any(report.search(sentence) for sentence in sentences):
+            return True
+    return False
+
+
 def paragraph_claim_checks(
     text: str,
     sources: list[dict],
@@ -271,7 +308,11 @@ def paragraph_claim_checks(
 
     clauses = _clauses(text)
     historical = [source for source in sources if source.get("category") in HISTORICAL_CATEGORIES]
-    attributed = bool(_ATTRIBUTION.search(_plain(text)))
+    # Preserve the accent on new ambiguous past forms: "previó" / "anunció"
+    # report an event; "calendario previo" / "contiene un anuncio" do not.
+    attributed = bool(_ATTRIBUTION.search(_plain(text))
+                      or _ATTRIBUTION.search(" ".join(text.casefold().split()))
+                      or _cited_title_attribution(text, historical))
     factual_clauses = [clause for clause in clauses if not _nonassertive(clause)]
     check(
         "historical_attribution",

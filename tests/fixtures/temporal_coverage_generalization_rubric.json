@@ -1,0 +1,123 @@
+{
+  "schema": 1,
+  "authored_before_results": true,
+  "sent_to_model": false,
+  "reference_date": "2026-11-17",
+  "scope": "Solo se puntúa contenido expresamente solicitado y controles derivados de esa solicitud. Extensión, número de páginas, detalles del plano y otros metadatos no pedidos no suman ni restan. Cada criterio compuesto exige conservar todos los detalles que la pregunta pide en ese criterio.",
+  "cases": {
+    "TC-TEX": {
+      "P1": {
+        "points": [
+          "Explica que la entrega depende de superar el control de humedad y que el resultado todavía no consta; no convierte el evento futuro en un resultado pasado ya obtenido",
+          "Conserva los tres datos pedidos de la entrega prevista: 27 de noviembre de 2026, 09:30 y muelle oriental",
+          "Conserva la fecha, hora y lugar de publicación de la decisión: 23 de noviembre de 2026 a las 15:00, tablero de recepción",
+          "Registra un único seguimiento específico de la decisión TM-482 y comunicación del resultado cuando se publique, como fulfillment no bloqueante"
+        ],
+        "source_keys": ["textil_entrega"],
+        "legitimate_pending": [
+          {"purpose": "Comprobar la decisión de autorización de entrega TM-482 cuando se publique e informar su resultado", "stage": "fulfillment", "blocks_approval": false}
+        ],
+        "forbidden": [
+          "dar por aprobado o rechazado el control de humedad",
+          "afirmar realizada la entrega o la publicación",
+          "usar una formulación que dé por obtenido en el pasado un resultado que sigue anunciado como futuro",
+          "exigir hoy la decisión futura como documento faltante",
+          "duplicar el seguimiento específico con uno genérico"
+        ]
+      },
+      "P2": {
+        "points": [
+          "Atribuye al Acta 927 la recepción ya registrada del rollo RS-109 el 6 de noviembre de 2026",
+          "Conserva la hora de recepción preguntada: 10:20",
+          "Conserva la identidad de la unidad receptora preguntada: Unidad de Recepción Textil",
+          "Conserva el lugar preguntado, sala de embalaje norte, y describe la recepción como pasada según el acta, sin reconvertirla en actuación futura"
+        ],
+        "source_keys": ["textil_recepcion"],
+        "legitimate_pending": [],
+        "forbidden": [
+          "cambiar una recepción pasada documentada a tiempo futuro",
+          "heredar el seguimiento del lote TM-482 o confundirlo con RS-109",
+          "pedir de nuevo fecha, hora, receptor o lugar ya presentes en el acta",
+          "crear un cotejo actual para una consulta limitada a lo que registra el acta"
+        ]
+      }
+    },
+    "TC-RES": {
+      "P1": {
+        "points": [
+          "Enumera íntegramente los datos comunes pedidos: código de reserva, nombre de la persona visitante y alternativa elegida",
+          "Explica que conservar un crédito y cambiar fechas son dos alternativas, y que basta escoger una",
+          "Conserva plazo y naturaleza del crédito: cuarenta y cinco días calendario desde la cancelación y no un reembolso en dinero",
+          "Conserva los datos y condiciones particulares del cambio: nuevas fechas de entrada y salida, dentro del mismo trimestre de la reserva cancelada y sujeto a disponibilidad; no transfiere esos datos particulares al crédito"
+        ],
+        "source_keys": ["residencia_alternativas"],
+        "legitimate_pending": [],
+        "forbidden": [
+          "omitir un miembro de las listas expresamente preguntadas",
+          "convertir alternativas en requisitos acumulativos",
+          "confundir días calendario con hábiles",
+          "pedir fechas nuevas para la alternativa de conservar crédito",
+          "crear un trámite de cambio o entrega no solicitado en esta consulta informativa",
+          "pedir datos de una reserva individual para explicar la guía"
+        ]
+      },
+      "P2": {
+        "points": [
+          "Localiza el plano CR-8 solicitado como documento disponible para preparar su copia simple",
+          "Conserva una única actuación específica de preparación y entrega de esa copia como fulfillment no bloqueante",
+          "No añade certificación, firma ni cotejo de autenticidad a una copia simple sin defecto material identificado",
+          "No afirma que el archivo ya se haya adjuntado, remitido o entregado"
+        ],
+        "source_keys": ["residencia_plano"],
+        "legitimate_pending": [
+          {"purpose": "Preparar y enviar copia simple del plano CR-8", "stage": "fulfillment", "blocks_approval": false}
+        ],
+        "forbidden": [
+          "entrega específica más entrega genérica equivalente",
+          "exigir autenticación o firma no solicitada",
+          "afirmar envío realizado",
+          "heredar la discrepancia del Acta 518 de otro expediente"
+        ]
+      }
+    },
+    "TC-FIL": {
+      "P1": {
+        "points": [
+          "Conserva el estado pedido de preparación: catálogo en maquetación y edición definitiva aún sin publicar",
+          "Indica la fecha prevista preguntada: 4 de diciembre de 2026",
+          "Indica el lugar de publicación preguntado: repositorio audiovisual de la filmoteca",
+          "Conserva los dos formatos preguntados: HTML y PDF, sin crear seguimiento o entrega no solicitados"
+        ],
+        "source_keys": ["filmoteca_calendario"],
+        "legitimate_pending": [],
+        "forbidden": [
+          "crear seguimiento automático de una publicación futura solo porque se pregunta por el calendario",
+          "presentar la publicación prevista como realizada",
+          "pedir la edición definitiva para explicar su programación",
+          "heredar el cotejo de autenticidad del acta de P2"
+        ]
+      },
+      "P2": {
+        "points": [
+          "Localiza el Acta 518 solicitada, pero no da por confirmada la autenticidad de la reproducción ni declara falsedad sin cotejo",
+          "Conserva la discrepancia preguntada: código Q-518 remite al Acta 581 de la cinta AR-88, mientras el Acta 518 identifica la cinta AR-66",
+          "Indica que falta cotejar la reproducción con el original del Acta 518 y su registro de expedición, conserva ese control material bloqueante e identifica a la Unidad de Archivo de la Filmoteca como custodio",
+          "Conserva una única actuación futura no bloqueante de preparar y entregar la copia certificada, separada del cotejo material"
+        ],
+        "source_keys": ["filmoteca_acta"],
+        "legitimate_pending": [
+          {"purpose": "Cotejar reproducción del Acta 518 con su original y registro de expedición para aclarar la discrepancia del código", "stage": "evidence", "blocks_approval": true},
+          {"purpose": "Preparar y entregar la copia certificada del Acta 518", "stage": "fulfillment", "blocks_approval": false}
+        ],
+        "forbidden": [
+          "eliminar o convertir en no bloqueante la discrepancia material de autenticidad",
+          "confundir Acta 518 y Acta 581",
+          "deducir falsedad o autenticidad resueltas a partir del código inconsistente",
+          "afirmar certificación o entrega realizadas",
+          "duplicar el mismo cotejo material o la entrega mediante paráfrasis"
+        ]
+      }
+    }
+  },
+  "acceptance": "Evaluar por separado: cobertura textual de los 24 criterios expresamente solicitados; controles operativos, con identidad y etapa; referencias/citas válidas; y aprobación del checker. No declarar éxito por ready, por contener palabras clave o por tener datos solo en una fuente cuando fueron preguntados expresamente. Un evento futuro no se convierte en un hecho pasado; un hecho pasado citado no se transforma en futuro. Las citas y controles legítimos se preservan aunque un criterio falle. Los negativos no reciben seguimiento ni cotejos nuevos. Conservar todas las variantes e informar fallos sin cambiar esta rúbrica tras observar resultados. La metadata declara ficción para todo el corpus: no es autoridad institucional real; una discrepancia material de autenticidad se distingue de esa etiqueta global."
+}

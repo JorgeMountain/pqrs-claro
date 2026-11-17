@@ -396,9 +396,40 @@ def test_resolved_structured_check_is_not_reintroduced_by_redaction():
     worker.check(inquiry(), source_finding, plan, draft)
     assert draft["pending"] == []
     assert draft["status"] == "needs_review"
-    assert json.loads(calls[2]["input"])["finding"]["checks"][0]["resolution"] == (
+    assert json.loads(calls[2]["input"])["existing_pending"][0]["resolution"] == (
         resolved["resolution"]
     )
+
+
+def test_model_receives_one_registry_preserving_open_and_resolved_controls():
+    from pqrs_claro.evidence_contract import apply_evidence_contract
+
+    request = inquiry()
+    source_finding = apply_evidence_contract(request, finding(missing=[
+        {"kind": "fact", "description": "Confirmar el periodo de aplicación de la plaza."},
+        {"kind": "fact", "description": "Confirmar la identidad del solicitante de la plaza."},
+    ]))
+    opened, resolved = source_finding["checks"]
+    resolved["resolution"] = {
+        "status": "resolved", "verification_id": "revision-identidad-ficticia",
+    }
+    # Simular las copias de presentación que todavía usan consumidores antiguos.
+    source_finding["missing"] = [deepcopy(opened), deepcopy(opened)]
+    before = deepcopy(source_finding)
+
+    _, draft, _, calls = run(request=request, source_finding=source_finding)
+
+    assert source_finding == before
+    assert draft["pending"] == [opened]
+    for call in calls:
+        payload = json.loads(call["input"])
+        assert payload["existing_pending"] == [opened, resolved]
+        assert not {"missing", "actions", "checks"}.intersection(payload["finding"])
+        assert len({item["check_key"] for item in payload["existing_pending"]}) == 2
+        assert payload["finding"]["supports"][0]["source_id"] == support()["source_id"]
+    # El verificador recibe además el resultado que debe revisar; esto no es otra
+    # definición del registro ni permite que el borrador reabra controles cerrados.
+    assert json.loads(calls[2]["input"])["draft"]["pending"] == [opened]
 
 
 @pytest.mark.parametrize("resolved", [False, True])

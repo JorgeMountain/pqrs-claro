@@ -29,9 +29,9 @@ from .source_semantic import (
 )
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 27
+SOURCE_ANALYSIS_VERSION = 29
 # Version the prompt, schema and validation policy used by a reader checkpoint.
-SOURCE_READER_POLICY_VERSION = 7
+SOURCE_READER_POLICY_VERSION = 9
 INTERACTIVE_SEMANTIC_BUDGET_SECONDS = 15
 logger = logging.getLogger(__name__)
 

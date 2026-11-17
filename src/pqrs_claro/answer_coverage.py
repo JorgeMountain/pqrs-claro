@@ -535,6 +535,24 @@ def _word_quote(text, start, end):
     return text[left:right], left, right
 
 
+def _detail_evidence_quote(text, span, detail, member_index):
+    quote, _, _ = _word_quote(text, span["word_start"], span["word_end"])
+    if detail["kind"] != "authority" or span["word_start"] <= 1:
+        return quote
+    identity = _identity_tokens(detail["members"][member_index - 1]["quote"])
+    if (len(identity) <= 1 or identity[0] not in {"el", "la", "los", "las"}
+            or _identity_tokens(quote) != identity[1:]):
+        return quote
+    # A reviewer may select the complete name except its leading article. Read
+    # only the immediately preceding token; do not remove articles from names,
+    # search another clause or substitute evidence from a different citation.
+    article, _, _ = _word_quote(text, span["word_start"] - 1, span["word_start"] - 1)
+    if article.casefold() != identity[0]:
+        return quote  # Punctuation after the article is not contiguous identity.
+    expanded, _, _ = _word_quote(text, span["word_start"] - 1, span["word_end"])
+    return expanded if _identity_tokens(expanded) == identity else quote
+
+
 def materialize_detailed_units(proposals, request, index, aliases):
     proposed = _list(proposals, DetailedPlanUnitProposal)
     units = materialize_units(
@@ -644,9 +662,7 @@ def detail_issues(units, checks, draft, *, require_current=True):
                     not in paragraphs[pi].get("cited_chunk_ids", [])
                 ):
                     raise DomainError("El detalle no tiene evidencia actual y citada.")
-                quote, _, _ = _word_quote(
-                    paragraphs[pi]["text"], span["word_start"], span["word_end"]
-                )
+                quote = _detail_evidence_quote(paragraphs[pi]["text"], span, detail, mi)
                 evidence.setdefault(mi, []).append(quote)
                 seen.add(key)
                 target = pi if target is None else target

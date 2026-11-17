@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "label": "Corpus nuevo enteramente ficticio de tiempo verbal y cobertura de lo solicitado. Instituciones, personas, archivos e identificadores ficticios.",
+  "sources": [
+    {
+      "key": "textil_entrega",
+      "title": "Aviso técnico 214 de 2026 - Centro de Conservación Textil Maral",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "AVISO TÉCNICO 214. Centro de Conservación Textil Maral. 16 de noviembre de 2026.",
+        "La entrega del lote TM-482 se prevé para el 27 de noviembre de 2026 a las 09:30 en el muelle oriental del centro. La entrega está condicionada a que el lote supere el control de humedad; ese control sigue en curso.",
+        "La Unidad de Conservación Textil publicará la decisión final el 23 de noviembre de 2026 a las 15:00 en el tablero de recepción. El aviso conserva la programación, pero todavía no contiene el resultado del control ni la autorización de entrega."
+      ]]
+    },
+    {
+      "key": "textil_recepcion",
+      "title": "Acta de recepción 927 de 2026 - Centro de Conservación Textil Maral",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "ACTA DE RECEPCIÓN 927. Centro de Conservación Textil Maral. 6 de noviembre de 2026.",
+        "El 6 de noviembre de 2026, a las 10:20, la Unidad de Recepción Textil recibió el rollo RS-109 en la sala de embalaje norte. La recepción quedó registrada ese mismo día.",
+        "El rollo RS-109 se incorporó al depósito de textiles. Esta acta documenta esa recepción y no corresponde al lote TM-482."
+      ]]
+    },
+    {
+      "key": "residencia_alternativas",
+      "title": "Guía de reservas 642 de 2026 - Centro de Intercambio Cerena",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "GUÍA DE RESERVAS 642. Centro de Intercambio Cerena. Edición del 9 de noviembre de 2026.",
+        "Toda solicitud de cambio de una estancia cancelada incluye el código de reserva, el nombre de la persona visitante y la alternativa elegida.",
+        "La persona puede escoger entre conservar un crédito para una nueva estancia o cambiar las fechas de la estancia. Basta elegir una alternativa. El crédito puede utilizarse durante cuarenta y cinco días calendario desde la cancelación y no es un reembolso en dinero.",
+        "Para cambiar las fechas se indican las nuevas fechas de entrada y salida. Deben estar dentro del mismo trimestre de la reserva cancelada y están sujetas a disponibilidad de habitación. Estos datos adicionales corresponden al cambio de fechas; no se exigen para conservar el crédito."
+      ]]
+    },
+    {
+      "key": "residencia_plano",
+      "title": "Plano de acceso CR-8 - Centro de Intercambio Cerena",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "PLANO DE ACCESO CR-8. Centro de Intercambio Cerena. Edición del 4 de noviembre de 2026.",
+        "El acceso principal se encuentra junto al patio central; el recorrido accesible parte de la entrada occidental y llega al mostrador de recepción.",
+        "La reproducción del plano se conserva legible en el archivo de atención a visitantes y está disponible para consulta y copia simple."
+      ]]
+    },
+    {
+      "key": "filmoteca_calendario",
+      "title": "Calendario de publicación 229 de 2026 - Filmoteca Comunitaria de Arces",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "CALENDARIO DE PUBLICACIÓN 229. Filmoteca Comunitaria de Arces. 14 de noviembre de 2026.",
+        "El catálogo de restauraciones está en maquetación. Su publicación está prevista para el 4 de diciembre de 2026 en el repositorio audiovisual de la filmoteca.",
+        "El catálogo se ofrecerá en HTML y PDF. La edición definitiva aún no se ha publicado."
+      ]]
+    },
+    {
+      "key": "filmoteca_acta",
+      "title": "Acta 518 de 2026 - Filmoteca Comunitaria de Arces",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "ACTA 518. Filmoteca Comunitaria de Arces. 7 de noviembre de 2026. Reproducción de consulta.",
+        "El encabezado identifica la restauración de la cinta AR-66. La Unidad de Archivo de la Filmoteca conserva el original del acta.",
+        "El informe de revisión incorporado al pie señala una discrepancia: el código de verificación impreso Q-518 conduce al registro del Acta 581, relativa a la cinta AR-88. No consta el cotejo de esta reproducción con el original del Acta 518 ni con su registro de expedición. La discrepancia de código sigue sin aclararse."
+      ]]
+    }
+  ],
+  "cases": [
+    {
+      "id": "TC-TEX",
+      "title": "Programación de entrega y recepción ya registrada",
+      "introduction": [
+        "Consulto la programación del lote TM-482 y el antecedente de recepción del rollo RS-109 en el Centro de Conservación Textil Maral."
+      ],
+      "questions": [
+        "En relación con el Aviso técnico 214, indiquen qué condición debe cumplirse para entregar el lote TM-482, la fecha, la hora y el lugar previstos para la entrega, y cuándo y dónde se publicará la decisión final. Solicito que hagan seguimiento a esa decisión y me informen el resultado cuando se publique.",
+        "Según el Acta de recepción 927, ¿en qué fecha y a qué hora se recibió el rollo RS-109, qué unidad lo recibió y en qué lugar ocurrió la recepción?"
+      ]
+    },
+    {
+      "id": "TC-RES",
+      "title": "Alternativas de reserva y copia de plano",
+      "introduction": [
+        "Estoy revisando los servicios del Centro de Intercambio Cerena y su Guía de reservas 642."
+      ],
+      "questions": [
+        "¿Qué datos comunes enumera la Guía 642 para cambiar una estancia cancelada? Expliquen las dos alternativas, el plazo y la naturaleza del crédito, y los datos y condiciones adicionales que exige la alternativa de cambiar las fechas.",
+        "Envíen una copia simple del plano de acceso CR-8 disponible en el archivo de atención a visitantes."
+      ]
+    },
+    {
+      "id": "TC-FIL",
+      "title": "Calendario del catálogo y cotejo del acta",
+      "introduction": [
+        "Consulto el catálogo de restauraciones y la reproducción del Acta 518 de la Filmoteca Comunitaria de Arces."
+      ],
+      "questions": [
+        "¿Qué indica el Calendario 229 sobre el estado de preparación del catálogo de restauraciones, la fecha prevista de publicación, el lugar donde aparecerá y sus formatos?",
+        "Solicito copia certificada del Acta 518. ¿Puede confirmarse la autenticidad de la reproducción disponible? Expliquen la discrepancia de su código de verificación, qué cotejo falta para aclararla y quién conserva el original."
+      ]
+    }
+  ]
+}

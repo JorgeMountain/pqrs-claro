@@ -1,0 +1,113 @@
+{
+  "schema": 1,
+  "label": "Corpus enteramente ficticio nuevo de seguimiento solicitado y autenticidad documental.",
+  "sources": [
+    {
+      "key": "observatorio_jornada",
+      "title": "Circular 73 de 2026 - Observatorio Vecinal Andares",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "CIRCULAR 73. Observatorio Vecinal Andares. 16 de noviembre de 2026.",
+        "La jornada de observación del 22 de noviembre, con inscripción OA-314, está sujeta a la evaluación de nubosidad. El comité de observación aún no ha tomado la decisión de apertura. La decisión final se publicará en el tablón de inscripciones el 20 de noviembre a las 16:00.",
+        "Las inscripciones siguen registradas mientras se realiza la evaluación. El aviso presente informa el estado de la evaluación; no contiene la decisión final de apertura."
+      ]]
+    },
+    {
+      "key": "observatorio_memoria",
+      "title": "Calendario editorial 2026 - Observatorio Vecinal Andares",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "CALENDARIO EDITORIAL. Observatorio Vecinal Andares. 12 de noviembre de 2026.",
+        "La memoria anual de observaciones está en edición. Se prevé publicarla el 3 de diciembre de 2026 en la biblioteca digital del observatorio. Se ofrecerá en formato PDF y en una versión de lectura accesible.",
+        "Este calendario describe la publicación prevista. La edición definitiva de la memoria todavía no está disponible."
+      ]]
+    },
+    {
+      "key": "museo_acta",
+      "title": "Acta 286 de 2026 - Museo de Oficios de Bellavista",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "ACTA 286. Museo de Oficios de Bellavista. 10 de noviembre de 2026.",
+        "Se registra el préstamo de la prensa manual PM-17 a la sala de conservación. El documento consta de una página. La Secretaría del Museo conserva el original en el expediente de préstamos.",
+        "El recuadro final tiene impreso el nombre de Elena Rivera, coordinadora de conservación. El trazo manuscrito de la firma aparece borroso en esta reproducción y no permite compararlo con una muestra indubitada. No consta cotejo con el original."
+      ]]
+    },
+    {
+      "key": "museo_ficha",
+      "title": "Ficha de catálogo PM-17 - Museo de Oficios de Bellavista",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "FICHA DE CATÁLOGO PM-17. Museo de Oficios de Bellavista. Edición del 8 de noviembre de 2026.",
+        "Objeto: prensa manual de encuadernación. Material: hierro y madera. Ubicación de catálogo: sala de conservación. Extensión del archivo: una página.",
+        "La ficha se publica para consulta y reproducción simple. El texto y la ilustración del objeto se conservan legibles en el archivo de catálogo."
+      ]]
+    },
+    {
+      "key": "vivero_programacion",
+      "title": "Comunicado 54 de 2026 - Vivero Comunitario del Robledal",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "COMUNICADO 54. Vivero Comunitario del Robledal. 15 de noviembre de 2026.",
+        "La entrega de plantones del lote VR-228 se proyecta para el 24 de noviembre. El área de sanidad vegetal está terminando la inspección del lote; la entrega depende de su liberación sanitaria.",
+        "El resultado final de la inspección se registrará el 21 de noviembre en el tablero de distribución del vivero. Este comunicado no contiene el resultado de la inspección."
+      ]]
+    },
+    {
+      "key": "vivero_oficio",
+      "title": "Oficio 619 de 2026 - Vivero Comunitario del Robledal",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "not_applicable",
+      "pages": [[
+        "OFICIO 619. Vivero Comunitario del Robledal. 11 de noviembre de 2026.",
+        "Se comunica la recepción del equipo de riego ER-32. El oficio tiene una página y permanece en el archivo administrativo del vivero.",
+        "Al pie figura el nombre impreso de Daniel Suárez, encargado de almacén, junto a una firma digital. El informe de reproducción señala que no pudo verificarse la cadena del certificado del firmante y que su validación está pendiente. La recepción descrita en el texto y la autenticidad de la firma son comprobaciones distintas."
+      ]]
+    }
+  ],
+  "cases": [
+    {
+      "id": "FS-OBS",
+      "title": "Estado de la jornada y calendario editorial",
+      "introduction": [
+        "Tengo registrada la inscripción OA-314 para la jornada de observación del 22 de noviembre de 2026."
+      ],
+      "questions": [
+        "Solicito que comprueben la decisión final de apertura de mi jornada cuando se publique y me informen el resultado. Indiquen también dónde se consultará y en qué fecha está prevista.",
+        "¿Qué anuncia el calendario editorial sobre la fecha, el lugar de publicación y los formatos de la memoria anual de observaciones?"
+      ]
+    },
+    {
+      "id": "FS-MUS",
+      "title": "Copia del acta de préstamo y ficha del objeto",
+      "introduction": [
+        "Estoy consultando la documentación de la prensa manual PM-17 conservada por el museo."
+      ],
+      "questions": [
+        "Remitan copia certificada del Acta 286 de 2026 e indiquen si puede comprobarse que la firma corresponde a Elena Rivera. ¿Qué debe cotejarse y quién conserva el original?",
+        "Envíen una copia simple de la ficha de catálogo PM-17 que está disponible para consulta."
+      ]
+    },
+    {
+      "id": "FS-VIV",
+      "title": "Liberación del lote y autenticidad del oficio",
+      "introduction": [
+        "Estoy inscrito en la entrega del lote de plantones VR-228 y consulto el archivo del equipo de riego ER-32."
+      ],
+      "questions": [
+        "Les pido hacer seguimiento a la liberación sanitaria del lote VR-228 y comprobar su resultado cuando esté disponible. ¿Dónde y cuándo se registrará la decisión de la inspección?",
+        "Solicito copia autenticada del Oficio 619 de 2026 y confirmar si su firma digital está validada. Indiquen qué comprobación falta antes de certificar esa firma."
+      ]
+    }
+  ]
+}

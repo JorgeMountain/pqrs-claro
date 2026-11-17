@@ -11,6 +11,41 @@ import re
 import unicodedata
 from typing import Any
 
+TEMPORAL_SCOPE_GUIDANCE = """
+Conserva el tiempo de cada hecho según su pasaje: distingue la fecha del documento,
+el estado de la actuación y el momento previsto para su resultado. Un anuncio o
+una actuación en curso no acredita ejecución ni resultado obtenido. Una fecha
+prevista, aunque haya transcurrido, tampoco acredita que el acto se realizó.
+Comprueba este alcance desde la primera redacción y revisión, también dentro de
+negaciones y preguntas indirectas: decir que no se conoce cuál fue un resultado
+puede presuponer que ya se obtuvo. Si el pasaje no lo acredita, expresa únicamente
+que la fuente no informa el resultado, conservando el anuncio y su condición.
+No censures el pasado respaldado de un acto concluido ni el pretérito que atribuye
+un anuncio anterior; conserva también presentes en curso y supuestos condicionales.
+No conviertas una previsión en hecho ni una condición en resultado definitivo.
+Al acotar el tiempo conserva la fecha, el lugar y las condiciones que sí responden
+a lo solicitado, con sus citas. Mantén el seguimiento pedido y los controles
+legítimos; no agregues una duda o tarea solo por cautela cuando el contenido puede
+responderse con ese alcance, ni exijas hoy la prueba de un resultado futuro.
+"""
+
+
+PENDING_TASK_GUIDANCE = """
+Cada pendiente conserva un solo objeto y finalidad. Un cotejo material de una firma
+que YA aparece en el documento es evidencia: precisa qué defecto concreto impide
+validarla y usa fact_confirmation, separado de preparar, firmar o entregar una copia
+futura. No conviertas el cotejo en fulfillment al unirlo con «y preparar la copia».
+Preparación y entrega siguen siendo fulfillment no bloqueante; no acreditan autenticidad.
+No exijas cotejo por pedir copia simple, por mencionar un firmante o por una firma
+que todavía se tramitará en la respuesta. Conserva cotejos humanos ya documentados.
+Un seguimiento futuro expresamente solicitado se conserva como actuación específica
+no bloqueante, con su objeto y condición de ejecución. Que la explicación de lo
+conocido esté completa no acredita haber realizado ese seguimiento. No exijas hoy
+el documento de una decisión futura ni conviertas una consulta sobre calendario o
+procedimiento en una tarea de vigilancia no solicitada. Reutiliza el control conocido
+cuando exista, sin repetirlo ni trasladar una actuación de otra solicitud.
+""" + TEMPORAL_SCOPE_GUIDANCE
+
 
 def _plain(value: str) -> str:
     return "".join(

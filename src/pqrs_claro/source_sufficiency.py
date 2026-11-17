@@ -16,7 +16,7 @@ from .request_requirements import validate_requirement_checks
 from .source_documents import available_copy_matches
 from .source_uncertainties import validated_uncertainties
 
-POLICY_VERSION = 8
+POLICY_VERSION = 9
 
 DOCUMENT_STATE_GUIDANCE = """
 document_states separa tres dimensiones locales: availability=identified_copy

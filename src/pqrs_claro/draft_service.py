@@ -9,7 +9,7 @@ from uuid import uuid4
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .answer_coverage import DETAIL_POLICY_HASH
-from .draft_repair import repair_targets
+from .draft_repair import has_repair_targets
 from .draft_store import DraftStore
 from .intake_drafting import drafting_context
 from .models import DomainError
@@ -21,8 +21,8 @@ from .source_library import SourceScopeError, digest
 from .source_service import retrieval_signature
 from .storage import Conflict, now
 
-DRAFT_VERSION = 24
-PILOT_DRAFT_VERSION = 25
+DRAFT_VERSION = 30
+PILOT_DRAFT_VERSION = 31
 
 
 class _InputsChanged(Exception):
@@ -609,7 +609,8 @@ class DraftService:
                                     if (
                                         node == "comprobar"
                                         and guarded.can_repair
-                                        and repair_targets(state["checks"], state["draft"])
+                                        and has_repair_targets(
+                                            state["checks"], state["draft"], state["plan"])
                                     ):
                                         step = "ajustar_citas"
                                     progress(request["id"], step)

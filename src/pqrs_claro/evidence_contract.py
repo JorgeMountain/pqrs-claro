@@ -128,10 +128,118 @@ def _linked(item, sources):
     return sorted(identifier for identifier in ids if identifier)
 
 
+def _material_signature_task(item):
+    """Recognize a declared material check, never infer one from a copy request."""
+    if item.get("basis") not in {"content_gap", "contradiction"}:
+        return False
+    task = _plain(item.get("description", "")).split(". ", 1)[0]
+    check = re.match(
+        r"^(?:(?:completar|realizar|efectuar|terminar)\s+(?:(?:el|un)\s+)?"
+        r"(?:cotejo|contraste|verificacion|comprobacion|validacion)|"
+        r"cotejar|contrastar|verificar|comprobar|corroborar|validar)\b"
+        r".{0,150}\b(?:firma|firmas|trazo|firmante)\b", task,
+    )
+    if not check:
+        return False
+    before_signature = re.split(r"\b(?:firma|firmas|trazo|firmante)\b", check.group(), 1)[0]
+    if re.search(r"\b(?:competencia|facultad|vigencia|integridad|procedencia|"
+                 r"contenido|trazabilidad)\b", before_signature):
+        return False  # A different material check must keep its own purpose/identity.
+    # Checking that a future response gets signed is a delivery task. The rule
+    # concerns a signature already present in a source, not the future copy.
+    subject = task[:check.end() + 90].split(" y preparar", 1)[0]
+    if re.search(r"\b(?:respuesta|copia|certificacion|documento)\s+"
+                 r"(?:futur\w*|nuev\w*|que se (?:emitira|expedira))\b", subject):
+        return False
+    why = _plain(item.get("why_unresolved", ""))
+    if re.search(r"\bno\s+(?:se\s+)?(?:requiere|necesita)\s+(?:un\s+)?cotejo\b|"
+                 r"\bno\s+(?:hay|existe)\s+(?:ninguna\s+)?(?:duda|discrepancia)\b", why):
+        return False
+    existing = (re.search(r"\b(?:original|reproduccion|ejemplar|registro|expedicion|"
+                          r"documento|oficio|informe)\b", why)
+                or bool(item.get("linked_source_ids") or item.get("linked_chunk_ids")))
+    material = re.search(
+        r"\b(?:firma|trazo)\b.{0,100}\b(?:ilegible|borros\w*|distint\w*|diferent\w*|"
+        r"no coincide\w*|no corresponde\w*|no permite\w*)\b|"
+        r"\b(?:no|sin)\b.{0,80}\b(?:cotejo|contraste|verificacion|validacion|"
+        r"verificarse|validarse)\b|"
+        r"\b(?:cotejo|contraste|validacion|certificado|sello de tiempo)\b"
+        r".{0,60}\b(?:pendiente|no realizado|no consta|no verificad\w*)\b",
+        why,
+    )
+    return bool(existing and material)
+
+
+def _separate_signature_task(request, raw):
+    """Separate an explicitly mixed material check from already requested delivery.
+
+    The generic delivery action is emitted by fulfillment_actions; duplicating it
+    here would recreate the original problem. Keep the discarded conjunction as
+    audit data, not as another control or an automatic human approval.
+    """
+    if not _material_signature_task(raw):
+        return deepcopy(raw)
+    item = deepcopy(raw)
+    declared_identity = raw.get("reason_code") in {"provenance", "source_identity"}
+    item["stage"] = "evidence"
+    if not declared_identity:
+        item.update(kind="fact", reason_code="fact_confirmation")
+    from .request_intent import fulfillment_actions
+
+    delivery = [action for action in fulfillment_actions(request)
+                if action["reason_code"] in {"document_delivery", "certification_preparation"}]
+    description = str(item.get("description", ""))
+    boundary = re.search(
+        r"\s+(?:y(?:\s+luego)?|e|para\s+luego)\s+"
+        r"(?=(?:preparar|entregar|expedir|enviar|remitir)\b)|;\s*"
+        r"(?=(?:preparar|entregar|expedir|enviar|remitir)\b)",
+        description, re.IGNORECASE,
+    )
+    if delivery and boundary:
+        task, future = description[:boundary.start()].strip(), description[boundary.end():].strip()
+        if task and re.search(r"\b(?:copia|archivo|documento|ejemplar|certificaci[oó]n)\b",
+                              future, re.IGNORECASE):
+            item.update(description=task,
+                        original_description=item.get("original_description", description))
+            if not declared_identity:
+                item["affected_claim"] = task
+            item["separated_fulfillment"] = {
+                "description": future,
+                "represented_by": [action["reason_code"] for action in delivery],
+            }
+    return item
+
+
+def requested_delivery_task(request, item):
+    """A declared future delivery keeps its purpose despite a condition of authenticity."""
+    from .request_intent import classify_request_intent
+
+    if (item.get("stage") != "fulfillment"
+            or item.get("basis") not in {None, "unspecified", "metadata_only"}
+            or item.get("reason_code") not in {
+                None, "specific_gap", "requested_followup", "document_delivery"}
+            or not classify_request_intent(request)["document_delivery_requested"]):
+        return False
+    task = re.split(r"\b(?:una vez|despues de|tras|siempre que|cuando)\b",
+                    _plain(item.get("description", "")).split(". ", 1)[0], 1)[0]
+    return bool(
+        re.match(r"^(?:preparar|certificar|expedir|entregar|remitir|enviar|adjuntar|"
+                 r"proporcionar|facilitar)\b", task)
+        and re.search(r"\b(?:copia|copias|archivo|archivos|documento|documentos|"
+                      r"ejemplar|ejemplares|ficha)\b", task)
+        and not re.search(r"\b(?:cotejar|contrastar|verificar|validar|acreditar|"
+                          r"confirmar|comprobar)\b", task)
+    )
+
+
 def _fulfillment(item, request):
     # Sólo actos de esta respuesta. Un justificante de una entrega PASADA sigue
     # siendo evidencia: no se elimina por contener las palabras firma o envío.
     text = _plain(item.get("description", ""))
+    if _material_signature_task(item):
+        return False
+    if requested_delivery_task(request, item):
+        return True
     if item.get("kind") == "norm" or _reason(item) in {
         "provenance", "issued_version", "transcription", "extraction_error", "validity"
     }:
@@ -187,9 +295,12 @@ def _fulfillment(item, request):
 
 
 def normalize_item(request, raw, sources=(), search_audit=None):
-    item = deepcopy(raw)
-    reason = _reason(item)
-    links = _linked(item, sources)
+    links = _linked(raw, sources)
+    item = _separate_signature_task(request, raw)
+    delivery = requested_delivery_task(request, item)
+    if delivery:
+        item["reason_code"] = "document_delivery"
+    reason = "document_delivery" if delivery else _reason(item)
     stage = "fulfillment" if _fulfillment(item, request) else "evidence"
     state = "confirmation_pending"
     linked = [s for s in sources if (s.get("source_id") or s.get("id")) in links]
@@ -273,6 +384,15 @@ def normalize_item(request, raw, sources=(), search_audit=None):
         identity["chunks"] = sorted(item.get("linked_chunk_ids", []))
     if reason == "transcription":
         identity["chunks"] = sorted(item.get("linked_chunk_ids", []))
+    if reason == "requested_followup":
+        # A chunk may announce several future events. A closure of one literal
+        # passage must not close another merely because the summary is equal.
+        identity["followup"] = {
+            "requirement_ids": sorted(item.get("requirement_ids", [])),
+            "passages": sorted(item.get("followup_passages", []),
+                               key=lambda row: (row.get("chunk_id", ""), row.get("quote", ""))),
+            "claims": sorted(item.get("followup_claims", [])),
+        }
     key = "check-" + _hash(identity)[:24]
     return {
         **item,
@@ -441,23 +561,178 @@ def _consolidate_provenance(request, items, sources, decisions=(), *, resolved_c
     return retained, decisions
 
 
-def normalize_pending(request, finding, proposed):
-    """Conserva metadatos de fuentes y evita reintroducir comprobaciones resueltas."""
-    sources = finding.get("supports", [])
-    sources = [*sources, *finding.get("candidate_documents", [])]
-    resolved = {
-        pending_identity(item)
-        for item in finding.get("checks", [])
-        if item.get("resolution", {}).get("status") == "resolved"
-    }
-    items = []
-    from .request_intent import fulfillment_actions
+def _copy_delivery_signature(text):
+    """Literal object and explicit modality; uncertainty cannot prove coverage."""
+    text = re.split(r"\b(?:una vez|despues de|tras|siempre que|cuando)\b", _plain(text), 1)[0]
+    copies = list(re.finditer(r"\bcopia\b", text))
+    if not copies:
+        return None
+    if len(copies) != 1:
+        return set(), ("ambiguous", text)
+    tail = text[copies[0].end():].strip()
+    mode = re.match(r"^(simple|certificada|autenticada)\b\s*", tail)
+    modes = {mode[1]} if mode else set()
+    if re.search(r"\bcertificar\b", text):
+        modes.add("certificada")
+    if mode:
+        tail = tail[mode.end():]
+    object_match = re.match(r"^(?:del|de(?:\s+(?:el|la))?)\s+(.+)", tail)
+    if not object_match:
+        anaphoric = re.fullmatch(r"(?:solicitada|pedida|correspondiente)[\s,.]*", tail)
+        return modes, None if anaphoric else ("ambiguous", tail)
+    target = re.split(r"[,;!?]|\.(?:\s|$)", object_match[1], 1)[0].strip()
+    # Availability/location describes where this same current source is held,
+    # not a longer object name. Do not trim arbitrary prepositions or quoted titles.
+    if not re.search(r'["«»“”]', target):
+        target = re.split(r"\s+(?:disponible|conservad[oa])\s+en\b", target, 1)[0]
+    references = tuple(sorted(numbered_document_references(target)))
+    return modes, ("numbered", references) if references else ("literal", target)
 
+
+def _same_requested_copy(delivery_text, represented):
+    requested = _copy_delivery_signature(delivery_text)
+    if not requested or not requested[1] or requested[1][0] == "ambiguous":
+        return False
+    modes, target = requested
+    for gap in represented:
+        specifics = [signature for key in ("description", "affected_claim")
+                     if (signature := _copy_delivery_signature(gap.get(key, "")))]
+        objects = [obj for _, obj in specifics if obj is not None]
+        declared_modes = set().union(*(mode for mode, _ in specifics))
+        if objects and all(obj == target for obj in objects) and declared_modes == modes:
+            return True
+    return False
+
+
+def _delivery_is_represented(request, finding):
+    """Only exact requirement/gap/current-action links can replace inferred delivery."""
+    from .request_intent import classify_request_intent, delivery_request_text
+    from .request_requirements import build_requirements
+    from .source_retrieval import source_in_scope
+
+    requirements = request.get("request_requirements") or build_requirements(request)
+    requested = [r for r in requirements if classify_request_intent(
+        {"description": r.get("text", "")})["document_delivery_requested"]]
+    if not requested:
+        return False
+    sufficiency = finding.get("sufficiency") or {}
+    gaps = sufficiency.get("evaluated_gaps", [])
+    reviews = sufficiency.get("requirement_checks", [])
+    known = [*finding.get("checks", []), *finding.get("missing", []),
+             *finding.get("actions", [])]
+    sources = {s["chunk_id"]: s for s in finding.get("supports", [])
+               if s.get("chunk_id") and source_in_scope(request, s)
+               and s.get("is_latest") is not False and s.get("validity") != "superseded"
+               and s.get("extraction_status", "ready") == "ready"}
+    description = _plain(request.get("description") or request.get("title") or "")
+    for requirement in requested:
+        if _plain(requirement.get("text", "")) not in description:
+            return False
+        matching = [r for r in reviews if r.get("requirement_id") == requirement.get("id")]
+        if len(matching) != 1:
+            return False
+        indexes = matching[0].get("missing_indexes", [])
+        if not indexes:
+            # Complete content may identify a copy without turning its future
+            # delivery into missing evidence. Reuse that existing exact path;
+            # never rewrite the reader's supported state or missing indexes.
+            coverage = sufficiency.get("coverage", [])
+            covered = matching[0].get("coverage_indexes", [])
+            if (len(requested) != 1 or matching[0].get("status") != "supported"
+                    or len(covered) != 1 or type(covered[0]) is not int
+                    or not 0 <= covered[0] < len(coverage)):
+                return False
+            row = coverage[covered[0]]
+            citations = row.get("citations", [])
+            if row.get("use") != "attributed_content" or not citations:
+                return False
+            for citation in citations:
+                source = sources.get(citation.get("chunk_id"))
+                quote = citation.get("quote")
+                if (not source or source.get("role") == "rule" or not isinstance(quote, str)
+                        or not quote.strip() or quote not in source.get("quote", "")):
+                    return False
+            indexes = [i for i, gap in enumerate(gaps) if requested_delivery_task(request, gap)]
+            identities = {
+                _hash({key: item.get(key) for key in (
+                    "description", "affected_claim", "linked_chunk_ids", "source_versions")})
+                for item in known if requested_delivery_task(request, item)
+            }
+            if (len(indexes) != 1 or len(identities) != 1
+                    or set(gaps[indexes[0]].get("source_chunk_ids", []))
+                    != {citation["chunk_id"] for citation in citations}):
+                return False
+        represented = []
+        for index in indexes:
+            if type(index) is not int or not 0 <= index < len(gaps):
+                return False
+            gap = gaps[index]
+            chunks = set(gap.get("source_chunk_ids", []))
+            if (not requested_delivery_task(request, gap)
+                    or not chunks or not chunks <= sources.keys()):
+                continue
+            versions = sorted({sources[c]["source_id"]: source_version(sources[c])
+                               for c in chunks}.values(), key=lambda row: row["source_id"])
+            for item in known:
+                if (not requested_delivery_task(request, item)
+                        or gap.get("description") != item.get("description")
+                        or gap.get("affected_claim") != item.get("affected_claim")
+                        or chunks != set(item.get("linked_chunk_ids", []))):
+                    continue
+                previous = sorted(item.get("source_versions", []),
+                                  key=lambda row: row.get("source_id", ""))
+                if (previous and previous != versions) or (
+                        not previous and item.get("resolution", {}).get("status") == "resolved"):
+                    continue
+                represented.append(gap)
+                break
+        if not represented:
+            return False
+        delivery_text = delivery_request_text({"description": requirement["text"]})
+        references = set(numbered_document_references(delivery_text))
+        if (len(references) > 1 or "," in delivery_text
+                or re.search(r"\b(?:copias|archivos|documentos|ejemplares)\b", delivery_text)
+                or re.search(r"\b(?:y|e)\s+(?!(?:indiqu\w*|inform\w*|confirm\w*|"
+                             r"expliqu\w*|aclar\w*)\b)", delivery_text)):
+            # Lists and coordinated objects need an explicit inventory to prove
+            # completeness. Keep the generic obligation when that is absent.
+            return False
+        if not _same_requested_copy(delivery_text, represented):
+            return False
+    return True
+
+
+def _requested_actions(request, finding):
+    from .request_intent import fulfillment_actions
+    from .requested_followup import requested_followups
+
+    followups = requested_followups(request, finding, include_existing=True)
+    specific_supervision = any(item.get("replaces_generic_supervision") for item in followups)
+    specific_delivery = _delivery_is_represented(request, finding)
+    # Only replace a newly inferred generic action, never a stored control or a
+    # human resolution. A distinct supervision mandate remains independent.
+    generic = [item for item in fulfillment_actions(request)
+               if not (specific_supervision and item["reason_code"] == "supervision")
+               and not (specific_delivery and item["reason_code"] == "document_delivery")]
+    return [*generic, *followups]
+
+
+def pending_registry(request, finding):
+    """Una vista de los controles conciliados, incluidos los ya resueltos.
+
+    ``checks`` conserva identidad, alcance y resolución. Las vistas antiguas se
+    admiten para compatibilidad y para no perder controles nuevos todavía no
+    conciliados; nunca sustituyen un registro conocido por una copia parcial.
+    La vigencia de las fuentes y las aplicaciones se valida antes, en el contrato
+    de evidencias. Esta función no aprueba ni reinterpreta comprobaciones.
+    """
+    sources = [*finding.get("supports", []), *finding.get("candidate_documents", [])]
+    registry = {}
     for raw in [
+        *finding.get("checks", []),
         *finding.get("missing", []),
         *finding.get("actions", []),
-        *fulfillment_actions(request),
-        *proposed,
+        *_requested_actions(request, finding),
     ]:
         item = (
             deepcopy(raw)
@@ -469,11 +744,42 @@ def normalize_pending(request, finding, proposed):
                 finding.get("search_audit"),
             )
         )
-        if pending_identity(item) not in resolved:
-            items.append(item)
+        registry.setdefault(pending_identity(item), item)
+    items, _ = _consolidate_provenance(
+        request, list(registry.values()), sources, finding.get("gap_decisions", [])
+    )
+    return items
+
+
+def normalize_pending(request, finding, proposed):
+    """Deriva pendientes abiertos y reutiliza referencias sin cambiar su alcance."""
+    from .models import DomainError
+
+    sources = [*finding.get("supports", []), *finding.get("candidate_documents", [])]
+    registry = {pending_identity(item): item for item in pending_registry(request, finding)}
+    resolved = {key for key, item in registry.items()
+                if item.get("resolution", {}).get("status") == "resolved"}
+    items = [deepcopy(item) for key, item in registry.items() if key not in resolved]
+    for raw in proposed:
+        references = raw.get("existing_check_keys", [])
+        if any(key not in registry for key in references):
+            raise DomainError(
+                "El pendiente referencia una comprobación que no corresponde a la pregunta."
+            )
+        if references:
+            # El registro ya está incluido. Una paráfrasis no puede reabrirlo,
+            # convertirlo en entrega ni reemplazar su alcance por otro texto.
+            continue
+        item = (deepcopy(raw) if raw.get("check_key") else normalize_item(
+            request, _information_gap(request, raw, finding), sources,
+            finding.get("search_audit"),
+        ))
+        key = pending_identity(item)
+        if key not in resolved:
+            items.append(deepcopy(registry.get(key, item)))
     items, _ = _consolidate_provenance(
         request, items, sources, finding.get("gap_decisions", []),
-        resolved_checks=finding.get("checks", []),
+        resolved_checks=list(registry.values()),
     )
     result = {}
     for item in items:
@@ -513,11 +819,9 @@ def apply_evidence_contract(request, finding, candidates=None, *, applications=(
     sources = list(unique.values())
     audit = request.get("search_audit", result.get("search_audit", {}))
     items = []
-    from .request_intent import fulfillment_actions
-
     raw_items = [
         *(result.get("checks") or [*result.get("missing", []), *result.get("actions", [])]),
-        *fulfillment_actions(request),
+        *_requested_actions(request, result),
     ]
     for raw in raw_items:
         raw = _information_gap(request, raw, result)

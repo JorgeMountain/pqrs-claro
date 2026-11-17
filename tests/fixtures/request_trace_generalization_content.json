@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "label": "Corpus nuevo de seguimiento de omisiones. Personas e instituciones enteramente ficticias.",
+  "sources": [
+    {
+      "key": "sonido_guia",
+      "title": "Guía 418 de 2026 - Archivo Sonoro de Bruma",
+      "category": "institutional_norm",
+      "review": true,
+      "validity": "unknown",
+      "pages": [[
+        "GUÍA 418 DE 2026. Archivo Sonoro Imaginario de Bruma. Documento ficticio para pruebas.",
+        "Artículo 2. Para consultar una grabación digitalizada se indica su código de catálogo y se elige audición presencial o acceso temporal por casillero. La audición presencial no requiere crear una cuenta. El acceso por casillero dura cinco días calendario desde su habilitación y requiere una cuenta activa.",
+        "Artículo 3. Si el archivo contiene silencios por deterioro, la ficha debe indicar qué tramos no pudieron recuperarse. Esos tramos no se reconstruyen ni se presentan como sonido original. Se conserva el audio disponible y se advierte su límite.",
+        "Artículo 4. El aviso de habilitación se publica en el casillero. El correo es una cortesía adicional: si no llega, se consulta el casillero y la carpeta de correo no deseado. La ausencia del correo no amplía el acceso temporal."
+      ]]
+    },
+    {
+      "key": "sonido_acta",
+      "title": "Acta 62 de 2026 - Archivo Sonoro de Bruma",
+      "category": "historical_attachment",
+      "review": false,
+      "validity": "unknown",
+      "pages": [[
+        "ACTA 62 DE 2026. Archivo Sonoro Imaginario de Bruma. Reproducción ficticia, página 1 de 2.",
+        "Se incorporan al catálogo las grabaciones AB-117 y AB-118. La Secretaría del Archivo custodia el original. La reproducción disponible permite leer íntegramente el contenido de esta página."
+      ], [
+        "Acta 62 de 2026. Página 2 de 2. Copia disponible para consulta.",
+        "Consta el espacio de firma de la secretaria, pero el trazo es ilegible en la reproducción. No hay una constancia de cotejo con el original. El archivo completo tiene dos páginas; su disponibilidad no demuestra que una copia certificada ya se haya expedido o entregado."
+      ]]
+    },
+    {
+      "key": "instrumentos_guia",
+      "title": "Manual 903 de 2026 - Banco de Instrumentos de Lirio",
+      "category": "institutional_norm",
+      "review": true,
+      "validity": "unknown",
+      "pages": [[
+        "MANUAL 903 DE 2026. Banco Imaginario de Instrumentos de Lirio. Texto ficticio de prueba.",
+        "Numeral 3. La solicitud de préstamo identifica el instrumento y el taller de destino. Puede acreditarse la inscripción al taller con constancia del coordinador o con comprobante de matrícula vigente; basta una alternativa. En ambos casos se incluye el código del participante.",
+        "Numeral 4. La reserva se conserva durante dos días hábiles desde el aviso en el casillero. Si vence sin recogida, el instrumento vuelve al inventario disponible. No se genera multa por no recogerlo.",
+        "Numeral 7. Al devolver un instrumento, Recepción comprueba el código y emite un acuse con fecha y estado observado. El hecho de tener una reserva o una guía de envío no acredita recepción física. Para informar si un instrumento particular fue devuelto se requiere consultar su acuse individual."
+      ]]
+    },
+    {
+      "key": "huerta_regla",
+      "title": "Instructivo 551 de 2026 - Huerta Comunitaria de Nacar",
+      "category": "institutional_norm",
+      "review": true,
+      "validity": "unknown",
+      "pages": [[
+        "INSTRUCTIVO 551 DE 2026. Huerta Comunitaria Imaginaria de Nacar. Documento ficticio de prueba.",
+        "Sección 1. Las visitas de grupos se reservan en bloques de cuarenta minutos, de martes a jueves. La reserva informa número de participantes y persona acompañante. Las personas menores deben estar acompañadas durante toda la visita.",
+        "Sección 2. La cancelación se comunica en el casillero al menos doce horas antes del inicio. Se permite escoger otro bloque disponible o dejar un saldo para una visita posterior. Son alternativas; el saldo no es un reembolso en dinero.",
+        "Sección 3. Si hay cierre por tormenta, la coordinación publica el aviso en el casillero. No basta una previsión meteorológica externa para afirmar que la visita está cancelada."
+      ]]
+    },
+    {
+      "key": "huerta_cierre",
+      "title": "Aviso 18 de 2026 - Cierre de la Huerta de Nacar",
+      "category": "historical_attachment",
+      "review": true,
+      "validity": "unknown",
+      "pages": [[
+        "AVISO 18 DE 2026. Huerta Comunitaria Imaginaria de Nacar. Documento ficticio.",
+        "La coordinación informa que se evalúa un cierre por tormenta para el miércoles 25 de noviembre. Este documento es un aviso preventivo: la decisión final se publicará en el casillero el día anterior. No cancela las reservas por sí mismo."
+      ]]
+    }
+  ],
+  "cases": [
+    {
+      "id": "TRACE-SON",
+      "title": "Consulta y copia del archivo sonoro",
+      "introduction": [
+        "PQRS ficticia nueva para evaluación, sin personas reales.",
+        "Quiero consultar AB-117. Tengo cuenta activa. Pido información y preparación de una copia; no afirmo que se haya realizado una entrega."
+      ],
+      "questions": [
+        "Según la Guía 418, expliquen las dos formas de consulta, sus requisitos y cuánto dura el acceso temporal. Indiquen también cómo se presentan los tramos deteriorados y qué debo revisar si no recibo el correo de habilitación, sin asumir que el correo amplía el plazo.",
+        "Solicito copia certificada del Acta 62 de 2026. Indiquen si está el archivo completo y su número de páginas, quién custodia el original y qué comprobación hace falta para certificar su firma y preparar la entrega. No solicito un dictamen de vigencia ni que se afirme una entrega ya realizada."
+      ]
+    },
+    {
+      "id": "TRACE-INS",
+      "title": "Préstamo y devolución de instrumentos",
+      "introduction": [
+        "PQRS ficticia nueva para evaluación. El instrumento es IN-48, el taller es Taller del Viento y mi código de participante es TV-086.",
+        "Esta consulta pide explicar las reglas e informar un hecho; no pide ejecutar un préstamo."
+      ],
+      "questions": [
+        "Según el Manual 903, detallen las alternativas para acreditar mi inscripción y los datos comunes. ¿Debo presentar ambas? Expliquen desde cuándo y por cuánto se guarda la reserva, qué ocurre si no recojo el instrumento y si eso genera una multa. Los datos de instrumento, taller y participante ya constan arriba.",
+        "Confirmen si Recepción recibió físicamente el instrumento IN-48 el 9 de noviembre de 2026, en qué estado y quién dejó constancia. Si el respaldo disponible no permite confirmarlo, indiquen exactamente qué registro individual debe consultarse; una reserva no prueba la devolución."
+      ]
+    },
+    {
+      "id": "TRACE-HUE",
+      "title": "Reservas y aviso preventivo de la huerta",
+      "introduction": [
+        "PQRS ficticia nueva para evaluación. Mi reserva del miércoles 25 de noviembre de 2026 tiene código HN-205. Es un grupo de ocho menores con una persona acompañante identificada en la reserva.",
+        "Pido información; no estoy solicitando que se ejecute una cancelación ni un reembolso."
+      ],
+      "questions": [
+        "Según el Instructivo 551, indiquen días y duración de los bloques, qué datos debe tener la reserva y durante cuánto tiempo debe estar la persona acompañante. Expliquen canal y anticipación para cancelar y las dos opciones posteriores, aclarando si el saldo equivale a devolución de dinero.",
+        "A partir del Aviso 18, ¿puede darse por cancelada mi reserva HN-205 del 25 de noviembre? Expliquen qué se sabe, qué decisión queda por comprobar, dónde se publicará y cuándo. No den por definitivo el aviso preventivo ni pidan otra vez los datos de la reserva."
+      ]
+    }
+  ]
+}

@@ -23,8 +23,8 @@ from .source_documents import document_matches, requested_document
 from .source_library import digest
 from .storage import Conflict, now
 
-REVIEW_VERSION = 19
-PROCEDURE_SCOPE_REVIEW_VERSION = 20
+REVIEW_VERSION = 25
+PROCEDURE_SCOPE_REVIEW_VERSION = 26
 
 
 def pending_id(item):
