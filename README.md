@@ -126,6 +126,20 @@ revisión humana. Consulta [recuperación](docs/RECUPERACION.md) y
 
 ## Comprobar los cambios
 
+GitHub Actions verifica cada PR dirigido a `master` desde una copia limpia de Windows.
+Arranca FIAGA con una bandeja temporal, comprueba la portada y la API, ejecuta Ruff
+y pytest con el modelo semántico público e incluye las pruebas de JavaScript,
+aprobación del oficio y recorridos en Chrome. Los resultados aparecen en la pestaña
+`Checks` del PR.
+
+Para repetir el arranque y los recorridos de navegador con Chrome instalado:
+
+```powershell
+uv sync --locked --python 3.12 --group browser
+uv run --no-sync python scripts/check-fiaga-startup.py
+uv run --no-sync python -m pytest -q -o 'python_files=check_*_browser.py' tests
+```
+
 ```powershell
 .\scripts\test.ps1
 .\scripts\dev-python.ps1 -m ruff check src tests scripts

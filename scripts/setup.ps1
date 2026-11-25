@@ -8,7 +8,7 @@ $SitePackages = Join-Path $ProjectRoot '.runtime\Lib\site-packages'
 New-Item -ItemType Directory -Path $SitePackages -Force | Out-Null
 Push-Location $ProjectRoot
 try {
-    uv export --frozen --all-groups --no-hashes --no-emit-project --output-file '.runtime\requirements.txt' | Out-Null
+    uv export --frozen --group dev --no-hashes --no-emit-project --output-file '.runtime\requirements.txt' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'No fue posible exportar dependencias.' }
     uv pip install --python $BasePython --target $SitePackages --requirements '.runtime\requirements.txt'
     if ($LASTEXITCODE -ne 0) { throw 'No fue posible instalar dependencias.' }
