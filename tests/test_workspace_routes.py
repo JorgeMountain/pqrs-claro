@@ -12,7 +12,16 @@ def test_home_and_previous_interface_are_both_available(source_app, request):
     assert "/static/app.js" in old.text
     assert "step-upload" in old.text
     if request.node.callspec.params['source_app'] == 'recorrido':
-        assert 'src="app.js' in new.text and 'data-step="3"' in new.text
+        assert 'src="./fiaga.js"' in new.text
+        header = client.get("/fiaga-header.js")
+        assert header.status_code == 200 and "Pool de trámites" in header.text
+        assert 'data-page="recepcion"' in header.text and 'data-page="trabajo"' in header.text
+        for module in ("/fiaga.js", "/fiaga-admin-review.js"):
+            assert "./fiaga-header.js" in client.get(module).text
+        mail = client.get("/?view=recepcion-correo", follow_redirects=False)
+        assert mail.is_redirect and mail.headers["location"] == "/#correo"
+        previous = client.get("/?view=legacy")
+        assert 'src="app.js' in previous.text and 'data-step="3"' in previous.text
         assert client.get('/app.js').status_code == 200
         assert client.get('/recorrido-status').json()['mode'] == 'unified'
     else:

@@ -1,6 +1,7 @@
 """Rutas estáticas del recorrido, compartidas por ambos modos de arranque."""
 
-from fastapi.responses import FileResponse
+from fastapi import Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import ROOT
@@ -15,6 +16,17 @@ def mount_recorrido_ui(app, *, backend_port=None):
     demo = static / "demo"
     if (legacy_demo / "data.json").is_file() and (legacy_demo / "files").is_dir():
         demo = legacy_demo
+
+    @app.get("/")
+    def home(request: Request):
+        if (
+            request.query_params.get("view") == "recepcion-correo"
+            and "case" not in request.query_params
+        ):
+            return RedirectResponse("/#correo")
+        previous = any(key in request.query_params for key in ("case", "view", "section"))
+        page = "index.html" if previous else "fiaga.html"
+        return FileResponse(static / "recorrido" / page)
 
     @app.get("/recorrido-status")
     def status():

@@ -1,0 +1,94 @@
+.breadcrumb svg {vertical-align: -.16em; margin-right: .15rem;}
+.exp-origin, .exp-stage, .reader-name, .reader-original, .reader-tools nav {
+  display: inline-flex; align-items: center; gap: .4rem;
+}
+.exp-origin, .exp-stage {color: var(--color-secondary);}
+body:has(#workspace .fiaga-route-layout) main {
+  max-width: 115rem; padding-inline: clamp(1rem, 2.5vw, 3rem);
+}
+body:has(#workspace .fiaga-route-layout) main {padding-top: 1.25rem;}
+.fiaga-route-main .breadcrumb {margin-bottom: .7rem;}
+.fiaga-case-metadata {margin-bottom: 1rem; gap: .4rem .85rem;}
+.fiaga-case-metadata .subheading {margin-top: 0;}
+.fiaga-resume-review {display: flex; flex-wrap: wrap; align-items: center; gap: .75rem 1.5rem; margin-bottom: 1rem;}
+.fiaga-resume-review > div {flex: 1 1 28rem;}
+.exp-content {margin-bottom: 1rem;}
+.exp-split {display: grid; grid-template-columns: minmax(0,1.48fr) minmax(0,1fr); align-items: start; gap: 1rem;}
+.exp-count, .exp-muted, .exp-note {color: var(--color-secondary); font-size: .89rem;}
+.exp-note {padding: 1rem 1.4rem;}
+.exp-row-head, .reader-tools {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap;
+}
+.exp-row-head h3 {font-size: .95rem;}
+.reader-tools {padding: .55rem .85rem; background: var(--color-surface-soft); border-bottom: 1px solid var(--color-line);}
+.reader-tools nav {gap: .45rem;}
+.reader-tools nav button {min-height: 2rem; min-width: 2rem; padding: .25rem;}
+.reader-zoom {min-height: 2rem; padding: .25rem .55rem; font-size: .82rem;}
+.reader-zoom[aria-pressed=true] {border-color: var(--color-green); color: var(--color-green); background: var(--color-green-soft);}
+.reader-name, .reader-tools nav span, .reader-original {color: var(--color-secondary); font-size: .82rem;}
+.reader-name {min-width: 0; overflow-wrap: anywhere;}
+.reader-original {color: var(--color-green); font-weight: 500;}
+.reader-paper {
+  padding: clamp(.7rem,2vw,1.5rem); max-height: 72vh; overflow: auto;
+  background: var(--color-canvas); scrollbar-gutter: stable;
+}
+.reader-paper img {display: block; width: 100%; background: white; border: 1px solid var(--color-line); box-shadow: 0 .25rem .8rem rgb(31 60 46 / 9%);}
+.reader-paper:has(+ details[hidden]) {border-radius: 0 0 var(--fiaga-panel-radius) var(--fiaga-panel-radius);}
+.reader-enlarged img {width: 165%; max-width: none;}
+.reader-paper:focus-visible, .exp-content .draft-text:focus-visible {outline: 3px solid var(--color-focus); outline-offset: -3px;}
+.document-reader > details, .exp-old-round {padding: .8rem 1.25rem; border-top: 1px solid var(--color-line);}
+.document-reader > details p, .petition-answer {white-space: pre-wrap;}
+.doc-meta {margin-bottom: 0; display: grid; gap: .1rem; line-height: 1.4;}
+.doc-meta dt {font-size: .77rem; color: var(--color-secondary); font-weight: 500;}
+.doc-meta dd {margin: 0 0 .5rem; font-size: .91rem; overflow-wrap: anywhere;}
+.exp-checks ul, .doc-references ul {list-style: none; margin: 0; padding: 0;}
+.exp-checks > ul > li, .exp-requests .petition-list > li {padding: 1rem 1.35rem;}
+.exp-checks li + li, .exp-requests .petition-list li + li {border-top: 1px solid var(--color-divider);}
+.exp-checks li > p, .exp-checks li > details {margin-top: .45rem;}
+.exp-checks li > p {font-size: .91rem;}
+.check-pass, .progress-done {color: var(--color-green); background: var(--color-green-soft);}
+.check-attention {color: var(--color-purple-ink); background: var(--color-purple-soft);}
+.doc-requester {font-weight: 500;}
+.petition-record > summary {width: 100%; font-size: .96rem; font-weight: 700;}
+.petition-record > summary .chip {margin-left: .4rem; vertical-align: middle;}
+.petition-record > :not(summary) {margin-top: .6rem;}
+.doc-references li {padding: .45rem .7rem; border-left: 2px solid var(--color-line); font-size: .85rem;}
+.doc-references li + li {margin-top: .35rem;}
+.doc-references blockquote {color: var(--color-secondary); margin: 0 0 .35rem;}
+.exp-requests .petition-list h4 {font-weight: 700; font-size: .89rem; margin: 1.05rem 0 .3rem;}
+.exp-requests .petition-list .petition-answer {margin-top: 0;}
+.exp-content .draft-panel > .draft-text {max-height: 72vh; overflow: auto;}
+.exp-gap-panel .panel-body a {display: inline-block;}
+.exp-content .panel-body > a {display: block; width: fit-content; font-size: .88rem;}
+.processing-panel {margin-bottom: 1rem;}
+.progress-history {margin-bottom: 1rem;}
+.progress-history > summary {padding: .65rem 1rem;}
+.processing-panel .section-head h2 {font-size: 1rem;}
+.progress-steps {
+  display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; list-style: none; padding: .85rem 1.2rem;
+}
+.progress-steps li {display: flex; gap: .35rem; align-items: center; font-size: .84rem;}
+.progress-state {display: inline-block; border-radius: .85rem; padding: .15rem .48rem; font-size: .75rem; font-weight: 500;}
+.progress-pending {color: var(--color-neutral-ink); background: var(--color-neutral);}
+.progress-running {color: var(--color-blue-ink); background: var(--color-blue-soft);}
+.progress-error, .processing-error {color: var(--color-danger); background: var(--color-danger-soft);}
+.processing-error {padding: .8rem 1.2rem;}
+.processing-error button {margin-top: .45rem;}
+.progress-requests {overflow: auto; max-height: 17rem; border-top: 1px solid var(--color-divider);}
+.progress-requests table {width: 100%; border-collapse: collapse; text-align: left; font-size: .85rem;}
+.progress-requests th, .progress-requests td {padding: .45rem .85rem; overflow-wrap: anywhere;}
+.progress-requests tbody tr + tr {border-top: 1px solid var(--color-divider);}
+.progress-requests thead {background: var(--color-surface-soft); color: var(--color-secondary);}
+.progress-requests th[scope=row] {font-weight: 500;}
+@media (max-width: 56rem) {
+  .exp-split {grid-template-columns: minmax(0,1.2fr) minmax(0,1fr);}
+}
+@media (max-width: 43rem) {
+  .exp-split {grid-template-columns: minmax(0,1fr);}
+  .exp-split:has(.document-reader) > .column {grid-row: 1;}
+  .reader-paper {max-height: 60vh;}
+  .exp-content .draft-panel > .draft-text {max-height: 55vh;}
+  .progress-steps {display: grid; grid-template-columns: repeat(2,minmax(0,1fr));}
+  .progress-steps li {align-items: start; flex-direction: column;}
+  .progress-requests th, .progress-requests td {padding-inline: .45rem;}
+}

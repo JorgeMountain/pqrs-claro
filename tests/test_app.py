@@ -8,6 +8,7 @@ from copy import deepcopy
 import pymupdf
 import pytest
 from fastapi.testclient import TestClient
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
@@ -218,6 +219,10 @@ def test_restart_recovers_human_edit_without_calling_identifier(tmp_path, pdf_by
             json={"version": case["version"], "identification": identification},
         )
         assert response.status_code == 200
+        pre = first_app.state.preanalysis
+        other_pages = [dict(case["pages"][0], method="ocr", needs_review=True)]
+        pre.save(case["id"], pre.saved(case["id"]), status="ready",
+                 approval={"actor_id": "admin"}, pages=other_pages)
         # Representa un cierre después de solicitar confirmar y antes de reanudar el grafo.
         first_app.state.store.update(case["id"], status="confirming")
     second_identifier = FakeIdentifier(fail_if_called=True)
@@ -226,6 +231,7 @@ def test_restart_recovers_human_edit_without_calling_identifier(tmp_path, pdf_by
         current = client.get(f"/api/cases/{case['id']}").json()
         assert current["status"] == "error"
         recovered = analyze(client, current)
+        assert recovered["pages"] == case["pages"]
         assert recovered["identification"]["requests"][0]["title"] == "Corrección humana conservada"
         response = client.post(
             f"/api/cases/{case['id']}/confirm", json={"version": recovered["version"]}
@@ -234,6 +240,40 @@ def test_restart_recovers_human_edit_without_calling_identifier(tmp_path, pdf_by
         assert response.json()["status"] == "confirmed"
     assert first_identifier.calls == 1
     assert second_identifier.calls == 0
+
+
+@pytest.mark.parametrize("same_pages", [False, True])
+def test_restored_checkpoint_uses_approved_pages_before_first_identification(
+    app_client, pdf_bytes, same_pages
+):
+    app, client, identifier, settings = app_client
+    case = upload(client, pdf_bytes)
+    case_id = case["id"]
+    original = app.state.store.original(case_id)
+    native_pages = [p.model_dump() for p in PDFExtractor().extract(str(original))]
+    old_pages = deepcopy(native_pages)
+    if not same_pages:
+        old_pages[0].update(method="ocr", needs_review=True, text="Marca de agua\nCita OCR antigua")
+    config = {"configurable": {"thread_id": case_id}}
+    checkpoint_file = str(settings.data_dir / "checkpoints.sqlite")
+    with SqliteSaver.from_conn_string(checkpoint_file) as saver:
+        graph = app.state.service.graph(saver)
+        graph.invoke({"case_id": case_id, "pdf_path": str(original), "pages": old_pages}, config)
+        previous = graph.get_state(config)
+        assert previous.next == ("review_identification",)
+
+    pre = app.state.preanalysis
+    pre.save(case_id, pre.saved(case_id), status="ready", approval={"actor_id": "admin"},
+             pages=native_pages)
+    result = analyze(client, case)
+    assert result["pages"] == native_pages
+    ref = result["identification"]["requests"][0]["source_refs"][0]
+    assert ref["quote"] == native_pages[0]["text"].splitlines()[1]
+    assert identifier.calls == (1 if same_pages else 2)
+    with SqliteSaver.from_conn_string(checkpoint_file) as saver:
+        graph = app.state.service.graph(saver)
+        assert graph.get_state(previous.config).values["pages"] == old_pages
+        assert graph.get_state(config).next == ("review_identification",)
 
 
 @pytest.mark.parametrize(

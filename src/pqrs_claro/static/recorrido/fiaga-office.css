@@ -1,0 +1,18 @@
+fiaga-office.document-stage { display: block; border: 0; border-radius: 0 0 var(--fiaga-panel-radius) var(--fiaga-panel-radius); }
+fiaga-office .office-preview-tools {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: .5rem; padding: .6rem .75rem; background: var(--color-surface-soft);
+  color: var(--color-secondary); font-size: .875rem; border-bottom: 1px solid var(--color-divider);
+}
+fiaga-office .office-preview-tools button { min-height: 2rem; min-width: 2rem; padding: .2rem .4rem; }
+fiaga-office .office-preview-tools select { width: auto; padding: .25rem .45rem; }
+fiaga-office.document-stage .document-canvas { height: clamp(20rem, 68dvh, 55rem); padding: .9rem; scrollbar-gutter: auto; background: #e7edf0; }
+fiaga-office .oficio-sheet .kind-subject::before { content: none; }
+fiaga-office .oficio-pages { margin-inline: auto; }
+@media print {
+  fiaga-office .office-preview-tools { display: none; }
+  fiaga-office.document-stage .document-canvas { overflow: visible; height: auto; max-height: none; padding: 0; }
+  fiaga-office .oficio-pages { zoom: 1 !important; }
+  fiaga-office .oficio-page-frame[hidden] { display: block !important; }
+  fiaga-office .oficio-page-frame { break-after: page; }
+}

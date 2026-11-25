@@ -32,10 +32,12 @@ def unified(tmp_path, monkeypatch):
         yield app, client, identifier, settings
 
 
-def test_same_app_serves_unchanged_ui_and_direct_api(unified):
+def test_same_app_serves_fiaga_and_previous_case_links(unified):
     app, client, _, _ = unified
     original = ROOT / "src/pqrs_claro/static/recorrido/index.html"
-    assert client.get("/").content == original.read_bytes()
+    assert client.get("/").content == original.with_name("fiaga.html").read_bytes()
+    assert client.get("/?view=legacy").content == original.read_bytes()
+    assert client.get("/?case=anterior").content == original.read_bytes()
     status = client.get("/recorrido-status").json()
     assert status == {"interface": "recorrido", "library": "connected", "mode": "unified"}
     assert not hasattr(app.state, "backend")
