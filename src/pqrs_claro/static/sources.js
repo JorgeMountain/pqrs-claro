@@ -992,6 +992,11 @@ export function createSources({
           "Revisa los documentos relacionados con esta solicitud.",
       ),
     );
+    if (result.secondary_source_checks?.length)
+      body.append(el("details", {}, el("summary", {}, "Cotejo de fuentes complementarias"),
+        el("ul", {}, result.secondary_source_checks.map(item =>
+          el("li", {}, (item.resolution?.status === "resolved" ? "Resuelto · " : "Abierto · ")
+            + item.description)))));
     const warnings = (result.warnings || []).map(textOf).filter(Boolean);
     if (warnings.length)
       body.append(

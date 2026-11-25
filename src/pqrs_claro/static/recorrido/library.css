@@ -7,3 +7,9 @@
 .live-pending-item{padding:16px;margin:12px 0;background:var(--tint);border:1px solid var(--line);border-radius:8px}.live-pending-item p{margin:8px 0}.live-pending-list .scope-actions{flex-wrap:wrap;gap:8px}.live-pending-list small{display:block}#pending-decision-form,#pending-fact-form{overflow-wrap:anywhere}#pending-decision-form input,#pending-fact-form input{width:100%;padding:12px;font:inherit;border:1px solid var(--line)}#pending-decision-form select{width:100%;min-width:0}#pending-decision-form blockquote{margin:12px 0;white-space:pre-wrap}#pending-decision-form .scope-actions,#pending-fact-form .scope-actions{flex-wrap:wrap;gap:8px}
 
 .proposal-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:20px 0}.proposal-comparison section{padding:12px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.proposal-comparison h3{font-size:16px}.proposal-comparison p{white-space:pre-wrap}#proposal-panel{overflow-wrap:anywhere}#proposal-apply input{width:100%;padding:12px;border:1px solid var(--line);font:inherit}#proposal-dismiss{margin-top:12px}@media(max-width:600px){.proposal-comparison{grid-template-columns:minmax(0,1fr)}}
+.library-label-values{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;margin:.5rem 0 .75rem;font-size:.85rem}
+.library-label-values dt{font-weight:600}
+.library-label-values dd{margin:0;overflow-wrap:anywhere}
+[data-library-label-editor]{display:grid;gap:.5rem;margin-top:.75rem}
+[data-library-label-editor] button{justify-self:start}
+[data-label-error]:empty{display:none}

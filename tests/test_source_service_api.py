@@ -350,6 +350,25 @@ def test_legacy_saved_read_requires_new_context_and_coverage_policy(source_app, 
     assert second["status"] == "ready" and assessor.calls == {"P1": 2, "P2": 2}
 
 
+def test_saved_single_read_stays_visible_without_reusing_it_for_new_work(source_app, pdf_bytes):
+    app, client, assessor, _ = source_app
+    case = make_case(client, pdf_bytes)
+    upload_source(client)
+    start_search(client, case)
+    first = wait_search(app, client, case["id"])
+    original = app.state.library.latest_run(case["id"])
+    original["reader_policy"].pop("independent_ocr_read")
+    original["reader_policy"]["reader_version"] = 10
+    app.state.library.save_run(original)
+    saved = app.state.sources.get(case["id"])
+    assert not saved["stale"] and saved["results"] == first["results"]
+    assert saved["id"] == first["id"] and saved["reader_policy"]["reader_version"] == 10
+    assert assessor.calls == {"P1": 1, "P2": 1}
+    start_search(client, case)
+    renewed = wait_search(app, client, case["id"])
+    assert renewed["id"] != saved["id"] and renewed["reader_policy"]["independent_ocr_read"]
+
+
 @pytest.mark.parametrize("budget_mb", [0, 1])
 def test_source_search_honors_matrix_cache_budget(source_app, pdf_bytes, monkeypatch, budget_mb):
     from test_source_semantic import CountingModel
@@ -461,6 +480,48 @@ def test_search_requires_confirmation_current_version_and_available_sources(sour
     assert client.get(f"/api/cases/{case['id']}").json()["version"] == case["version"]
 
 
+def test_shared_catalog_edits_and_combines_labels_without_changing_existing_views(source_app):
+    _, client, _, _ = source_app
+    source = upload_source(client).json()
+    detail = f"/api/sources/{source['id']}"
+    before = client.get(detail).json()
+    assert client.get(detail, params={"with_labels": True}).json()["sector"]["revision"] == 0
+    edit = {"topics": ["Calendario", "Examen"], "issuer": "Admisiones", "period": "2027-1",
+            "expected_revision": 0}
+    assert client.put(detail + "/sector", json=edit).json()["revision"] == 1
+    assert client.put(detail + "/sector", json=edit).json()["revision"] == 1
+    assert client.put(detail + "/sector", json={**edit, "period": "2027-2"}).status_code == 409
+    assert client.get(detail).json() == before
+    assert "sector" not in client.get("/api/sources").json()["sources"][0]
+    for topic in edit["topics"]:
+        params = {"topic": topic, "issuer": "Admisiones", "period": "2027-1"}
+        result = client.get("/api/sources", params=params).json()["sources"]
+        assert [s["id"] for s in result] == [source["id"]]
+    assert not client.get("/api/sources", params={"period": ""}).json()["sources"]
+
+
+def test_pdf_citation_geometry_uses_rotated_page_coordinates(source_app, pdf_bytes):
+    _, client, _, _ = source_app
+    case = client.post("/api/cases", files={"file": ("peticion.pdf", pdf_bytes)}).json()
+    with pymupdf.open() as doc:
+        pdf_page = doc.new_page(width=300, height=400)
+        pdf_page.insert_text((40, 80), "Respaldo literal")
+        pdf_page.set_rotation(90)
+        content = doc.tobytes()
+    uploaded = client.post(
+        "/api/sources", data={"title": "Rotada", "category": "case_evidence",
+                              "case_id": case["id"], "origin": "Prueba local"},
+        files={"file": ("rotada.pdf", content, "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    base = f"/api/cases/{case['id']}/source-versions/{uploaded.json()['id']}/pages"
+    page = client.get(f"{base}/1/view").json()
+    assert (page["width"], page["height"], page["version"]) == (400, 300, 1)
+    token, left, top, right, bottom = page["words"][0]
+    assert token == "Respaldo" and 310 < left < right <= 350 and 39 <= top < bottom < 100
+    assert client.get(f"{base}/2/view").status_code == 404
+
+
 def test_source_uploads_and_all_read_routes_respect_case_scope(source_app, pdf_bytes):
     _, client, _, _ = source_app
     first = make_case(client, pdf_bytes)
@@ -473,12 +534,21 @@ def test_source_uploads_and_all_read_routes_respect_case_scope(source_app, pdf_b
     local_response = upload_source(client, case_id=first["id"], category="case_evidence")
     assert local_response.status_code == 201, local_response.text
     local_source = local_response.json()
+    assert client.put(
+        f"/api/sources/{local_source['id']}/sector", params={"case_id": first["id"]},
+        json={"topics": ["Privado"], "issuer": None, "period": None, "expected_revision": 0},
+    ).status_code == 404
     global_ids = {source["id"] for source in client.get("/api/sources").json()["sources"]}
     second_ids = {
         source["id"]
         for source in client.get("/api/sources", params={"case_id": second["id"]}).json()["sources"]
     }
     assert global_ids == second_ids == {global_source["id"]}
+    cite = f"/source-versions/{local_source['id']}/pages/1/view"
+    assert client.get(f"/api/cases/{second['id']}{cite}").status_code == 404
+    section = client.get(f"/api/cases/{first['id']}{cite}")
+    assert section.status_code == 200 and section.json()["words"] == []
+    assert "requisitos" in section.json()["text"]
     for suffix in ("", "/original", "/versions", "/pages/1.png"):
         path = f"/api/sources/{local_source['id']}{suffix}"
         assert client.get(path).status_code == 404

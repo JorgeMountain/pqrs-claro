@@ -29,7 +29,7 @@ def test_recorrido_keeps_demo_and_supports_real_shared_versions(source_app):
         assert "library.js" in client.get("/app.js").text
         assert client.get("/app.js").headers["cache-control"] == "no-cache"
         assert client.get("/").headers["cache-control"] == "no-cache"
-        assert "workspace-rail" in client.get("/").text
+        assert "workspace-rail" in client.get("/?view=library").text
         assert (
             client.get("/data.json").content
             == (ROOT / "output/ux-peticiones-20260910/data.json").read_bytes()

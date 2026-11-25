@@ -10,13 +10,15 @@ from collections import Counter
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 import pymupdf
 
+from .catalog_labels import ADMISSIONS_COLLECTION, admissions_labels, normalized_labels
 from .image_ocr import IMAGE_FORMATS, normalized_image_png
 from .models import DomainError
-from .storage import now, write_original
+from .storage import Conflict, now, write_original
 
 CATEGORIES = {"national_norm", "institutional_norm", "case_evidence", "previous_response"}
 MAX_SOURCE_BYTES = 20 * 1024 * 1024
@@ -86,11 +88,25 @@ def read_source(path, pdf_extractor):
     else:
         if suffix == ".docx":
             from docx import Document
+            from docx.opc.exceptions import OpcError
+            from lxml import etree
 
             try:
                 with zipfile.ZipFile(path) as archive:
-                    if sum(item.file_size for item in archive.infolist()) > 80 * 1024 * 1024:
-                        raise DomainError("El DOCX descomprimido supera el límite de 80 MB.")
+                    total_bytes = 0
+                    limit = 80 * 1024 * 1024
+                    for item in archive.infolist():
+                        if item.file_size > limit:
+                            raise DomainError(
+                                "El DOCX descomprimido supera el límite de 80 MB."
+                            )
+                        with archive.open(item) as member:
+                            while chunk := member.read(65536):
+                                total_bytes += len(chunk)
+                                if total_bytes > limit:
+                                    raise DomainError(
+                                        "El DOCX descomprimido supera el límite de 80 MB."
+                                    )
                 document = Document(BytesIO(path.read_bytes()))
                 blocks = []
                 # iter_inner_content preserva el orden de párrafos y tablas.
@@ -107,7 +123,13 @@ def read_source(path, pdf_extractor):
                         "El DOCX contiene cuadros de texto. Conviértelo a PDF para conservarlos."
                     )
                 text = "\n".join(blocks)
-            except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+            except (
+                zipfile.BadZipFile,
+                KeyError,
+                ValueError,
+                etree.XMLSyntaxError,
+                OpcError,
+            ) as exc:
                 if isinstance(exc, DomainError):
                     raise
                 raise DomainError("El archivo DOCX está dañado o no puede leerse.") from None
@@ -202,6 +224,15 @@ class SourceLibrary:
                         DELETE FROM source_run_progress WHERE run_id=OLD.id;
                     END;
                 CREATE TABLE IF NOT EXISTS source_collections(id TEXT PRIMARY KEY, body TEXT);
+                CREATE TABLE IF NOT EXISTS source_sector_labels(
+                    source_id TEXT PRIMARY KEY, topics TEXT NOT NULL, issuer TEXT, period TEXT,
+                    revision INTEGER NOT NULL, basis TEXT NOT NULL);
+                CREATE TRIGGER IF NOT EXISTS sector_labels_removed AFTER DELETE ON sources BEGIN
+                    DELETE FROM source_sector_labels WHERE source_id=OLD.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS sector_labels_reimported AFTER INSERT ON sources BEGIN
+                    DELETE FROM source_sector_labels WHERE source_id=NEW.id;
+                END;
                 CREATE TABLE IF NOT EXISTS case_source_collections(
                     case_id TEXT, collection_id TEXT, PRIMARY KEY(case_id,collection_id));
                 CREATE INDEX IF NOT EXISTS collection_link_owners
@@ -211,6 +242,9 @@ class SourceLibrary:
                     PRIMARY KEY(source_id,target_id,kind));
                 CREATE INDEX IF NOT EXISTS sources_collection_scope
                     ON sources(COALESCE(json_extract(body,'$.collection_id'),''));
+                CREATE INDEX IF NOT EXISTS sources_case_scope
+                    ON sources(json_extract(body,'$.case_id'));
+                CREATE INDEX IF NOT EXISTS source_reviews_id ON source_reviews(id);
                 CREATE INDEX IF NOT EXISTS source_runs_case ON source_runs(case_id);
                 CREATE TABLE IF NOT EXISTS source_catalog_revision(
                     id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL);
@@ -285,6 +319,101 @@ class SourceLibrary:
             ).fetchall()
         return [{**json.loads(body), "is_latest": bool(latest)} for body, latest in rows]
 
+    def sector_labels(self, case_id):
+        """Only version IDs and labels the case can currently read; no pages or chunks."""
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT t.source_id,t.topics,t.issuer,t.period FROM source_sector_labels t "
+                "CROSS JOIN sources s ON s.id=t.source_id "
+                f"WHERE {_VISIBLE_SOURCE}", {"case_id": case_id},
+            ).fetchall()
+        return {sid: {"topics": json.loads(topics), "issuer": issuer, "period": period}
+                for sid, topics, issuer, period in rows}
+
+    def catalog_sources(self, case_id=None, *, topic=None, issuer=None, period=None):
+        """An empty filter value selects documents whose corresponding field is unknown."""
+        filters = []
+        params = {"case_id": case_id, "topic": topic, "issuer": issuer, "period": period}
+        if topic is not None:
+            filters.append("EXISTS(SELECT 1 FROM json_each(t.topics) WHERE value=:topic)"
+                           if topic else "COALESCE(json_array_length(t.topics),0)=0")
+        if issuer is not None:
+            filters.append("COALESCE(t.issuer,'')=:issuer")
+        if period is not None:
+            filters.append("COALESCE(t.period,'')=:period")
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT s.body,s.version=(SELECT max(v.version) FROM sources v "
+                "WHERE v.document_id=s.document_id),t.topics,t.issuer,t.period FROM sources s "
+                "LEFT JOIN source_sector_labels t ON t.source_id=s.id "
+                f"WHERE {_VISIBLE_SOURCE}" + "".join(f" AND ({expr})" for expr in filters)
+                + " ORDER BY s.rowid DESC", params,
+            ).fetchall()
+        return [{**json.loads(body), "is_latest": bool(latest),
+                 "sector": {"topics": json.loads(topics or "[]"), "issuer": unit, "period": term}}
+                for body, latest, topics, unit, term in rows]
+
+    @staticmethod
+    def _sector_record(conn, source_id, case_id):
+        row = conn.execute(
+            "SELECT t.topics,t.issuer,t.period,t.revision,t.basis FROM sources s "
+            "LEFT JOIN source_sector_labels t ON t.source_id=s.id "
+            f"WHERE s.id=:sid AND {_VISIBLE_SOURCE}", {"sid": source_id, "case_id": case_id},
+        ).fetchone()
+        if row is None:
+            raise KeyError("Fuente no encontrada en este expediente.")
+        return {"topics": json.loads(row[0] or "[]"), "issuer": row[1], "period": row[2],
+                "revision": row[3] or 0, "basis": row[4] or ""}
+
+    def sector_record(self, source_id, case_id=None):
+        with self.connect() as conn:
+            return self._sector_record(conn, source_id, case_id)
+
+    def update_sector_labels(self, source_id, *, topics, issuer, period, expected_revision,
+                             case_id=None):
+        labels = normalized_labels(topics, issuer, period)
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = self._sector_record(conn, source_id, case_id)
+            if all(current[k] == v for k, v in labels.items()) and current["revision"]:
+                return current
+            if expected_revision != current["revision"]:
+                raise Conflict("Las etiquetas se editaron en otra sesión. Vuelve a abrir la ficha.")
+            revision = current["revision"] + 1
+            basis = "Etiquetas registradas desde la Biblioteca."
+            conn.execute(
+                "INSERT INTO source_sector_labels(source_id,topics,issuer,period,revision,basis) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET "
+                "topics=excluded.topics,issuer=excluded.issuer,period=excluded.period,"
+                "revision=excluded.revision,basis=excluded.basis",
+                (source_id, json.dumps(labels["topics"], ensure_ascii=False), labels["issuer"],
+                 labels["period"], revision, basis),
+            )
+        return {**labels, "revision": revision, "basis": basis}
+
+    def seed_admissions_2027_1(self):
+        """An explicit, repeatable catalog migration; do not overwrite a reviewed label."""
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT s.id,s.body,json_extract(s.pages,'$[0].text'),"
+                "json_extract(s.pages,'$[1].text') FROM sources s "
+                "LEFT JOIN source_sector_labels t ON t.source_id=s.id WHERE t.source_id IS NULL "
+                "AND COALESCE(json_extract(s.body,'$.collection_id'),'')=? "
+                "AND json_extract(s.body,'$.case_id') IS NULL", (ADMISSIONS_COLLECTION,),
+            ).fetchall()
+            for source_id, body, first_page, second_page in rows:
+                labels, basis = admissions_labels(
+                    json.loads(body), first_page or "", second_page or "",
+                )
+                conn.execute(
+                    "INSERT INTO source_sector_labels"
+                    "(source_id,topics,issuer,period,revision,basis) VALUES (?,?,?,?,1,?)",
+                    (source_id, json.dumps(labels["topics"], ensure_ascii=False),
+                     labels["issuer"], labels["period"], basis),
+                )
+        return len(rows)
+
     def get(self, source_id, case_id=None):
         with self.connect() as conn:
             row = conn.execute(
@@ -334,13 +463,23 @@ class SourceLibrary:
         return [{**json.loads(row[0]), "is_latest": True} for row in rows]
 
     def original(self, source_id, case_id=None):
-        source = self.get(source_id, case_id)["source"]
-        path = self.root / source_id / ("original" + Path(source["filename"]).suffix.lower())
+        # Verifying the original only needs its authorized filename and digest.
+        # Source pages can be large and are read separately by the document viewer.
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT json_extract(s.body,'$.filename'),json_extract(s.body,'$.sha256') "
+                f"FROM sources s WHERE s.id=:source_id AND {_VISIBLE_SOURCE}",
+                {"source_id": source_id, "case_id": case_id},
+            ).fetchone()
+        if not row:
+            raise KeyError("Fuente no encontrada en este expediente.")
+        filename, expected_hash = row
+        path = self.root / source_id / ("original" + Path(filename).suffix.lower())
         if not path.is_file():
             raise DomainError(
                 "Falta el original de esta fuente. Restaura su copia antes de buscar."
             )
-        if hashlib.sha256(path.read_bytes()).hexdigest() != source["sha256"]:
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
             raise DomainError("El original cambió fuera de la biblioteca. Carga una nueva versión.")
         return path
 
@@ -375,10 +514,15 @@ class SourceLibrary:
         if category == "case_evidence" and not case_id:
             raise DomainError("Un soporte del caso debe asociarse a un expediente.")
         sha = hashlib.sha256(data).hexdigest()
-        with self.lock:
+
+        def _validate_target():
             if collection_id and collection_id not in {c["id"] for c in self.collections()}:
                 raise KeyError("Colección no encontrada.")
-            previous = [s for s in self.list(case_id) if s["document_id"] == document_id]
+            previous = (
+                [s for s in self.list(case_id) if s["document_id"] == document_id]
+                if document_id
+                else []
+            )
             if document_id and not previous:
                 raise KeyError("Documento no encontrado.")
             if previous:
@@ -392,21 +536,39 @@ class SourceLibrary:
                         "La nueva versión debe conservar el tipo y expediente del documento."
                     )
                 if last["sha256"] == sha:
-                    return last
+                    return previous, last, last
+                return previous, last, None
+            return previous, None, None
+
+        with self.lock:
+            _, _, existing = _validate_target()
+            if existing is not None:
+                return existing
+
+        # Run potentially slow PDF/image OCR outside self.lock so reads and
+        # unrelated library mutations are never blocked during extraction.
+        extraction_error = None
+        with TemporaryDirectory() as staging:
+            staged = Path(staging) / ("original" + extension)
+            write_original(staged, data)
+            try:
+                pages, kind = read_source(staged, self.pdf_extractor)
+            except DomainError as exc:
+                if not retain_unreadable:
+                    raise
+                pages, kind = [], "page" if extension == ".pdf" else "section"
+                extraction_error = str(exc)
+
+        with self.lock:
+            previous, last, existing = _validate_target()
+            if existing is not None:
+                return existing
             source_id = uuid4().hex
             folder = self.root / source_id
             folder.mkdir()
             path = folder / ("original" + extension)
             write_original(path, data)
             try:
-                extraction_error = None
-                try:
-                    pages, kind = read_source(path, self.pdf_extractor)
-                except DomainError as exc:
-                    if not retain_unreadable:
-                        raise
-                    pages, kind = [], "page" if extension == ".pdf" else "section"
-                    extraction_error = str(exc)
                 source = dict(
                     id=source_id,
                     document_id=document_id or uuid4().hex,
@@ -576,6 +738,15 @@ class SourceLibrary:
                     (case_id,),
                 ).fetchall()
             ]
+
+    def link_all_collections(self, case_id):
+        """Capture the current collection scope when receiving a new case."""
+        with self.lock, self.connect() as conn:
+            conn.execute("DELETE FROM case_source_collections WHERE case_id=?", (case_id,))
+            conn.execute(
+                "INSERT INTO case_source_collections(case_id,collection_id) "
+                "SELECT ?,id FROM source_collections", (case_id,),
+            )
 
     def link_collections(self, case_id, collection_ids):
         if len(collection_ids) != len(set(collection_ids)):
