@@ -66,7 +66,13 @@ def main():
                 raise RuntimeError("La bandeja temporal debe estar vacía")
             print("FIAGA respondió con la portada, el recorrido unificado y la bandeja temporal.")
         finally:
-            server.terminate()
+            if os.name == "nt" and server.poll() is None:
+                # A Windows venv launches a child interpreter that holds the database locks.
+                subprocess.run(
+                    ["taskkill", "/PID", str(server.pid), "/T", "/F"], check=True, timeout=10
+                )
+            else:
+                server.terminate()
             try:
                 server.wait(timeout=5)
             except subprocess.TimeoutExpired:
