@@ -1,237 +1,167 @@
-# PQRS Claro: arquitectura, proceso y estructura del código
+# PQRS Claro: arquitectura, framework, mapa de IAs y flujo FIAGA
 
-Para el flujo de cuatro etapas y la instalación actual, consulta la
-[guía de entrega](ENTREGA.md). Los diagramas siguientes documentan la inspección
-fechada del 12 de octubre, con sus alternativas de piloto.
+Guía visual de incorporación actualizada al **25 de noviembre de 2026** sobre el estado real de `pqrs-claro`. Complementa la [guía de instalación y entrega](ENTREGA.md), el [manual para colaborar](../CONTRIBUTING.md) y el [recorrido de código](GUIA_PARA_ENTENDER_Y_COLABORAR.md).
 
-Material de explicación técnica y académica. Inspección del código: 12 de octubre de 2026. Los diagramas son esquemas de responsabilidades y flujos; no representan infraestructura institucional desplegada. El flujo de decisiones representa la vía habitual; la excepción explícita del piloto se señala aparte.
+> Los diagramas de esta página describen la arquitectura local del prototipo (`http://127.0.0.1:8772`) y su recorrido actual de **4 etapas + Pool FIAGA**. No representan un despliegue institucional multiusuario.
 
-## 1. Objeto del sistema
+---
 
-La aplicación conserva expedientes, identifica solicitudes, recupera soportes documentales y prepara respuestas sujetas a revisión humana. El oficio reúne las respuestas aprobadas. Un expediente puede contener varias solicitudes, cada una con sus propias fuentes, pendientes y respuesta.
+## 1. Framework y arquitectura híbrida (Local vs. Nube)
+
+El sistema corre como una **aplicación local modular en un solo proceso** (Python 3.12 gestionado con `uv` en `.runtime/`): interfaz y API comparten el puerto `8772`, mientras las llamadas de IA se limitan al contenido necesario y los embeddings y el OCR de la biblioteca corren **100% en el equipo local**.
+
+![Framework y Arquitectura Híbrida de PQRS Claro](diagramas/arquitectura_framework.png)
+
+| Capa | Tecnología concreta | Responsabilidad principal |
+| --- | --- | --- |
+| **Interfaz** | HTML + CSS + JavaScript modular (`77` archivos ES Modules) | Recorrido de 4 etapas, visor del PDF original con citas, Pool FIAGA y editor de oficio. Sin React ni paso de compilación `npm`. |
+| **API y contratos** | `FastAPI` + `Uvicorn` + `Pydantic v2` | Sirve UI y rutas `/api/...` en el puerto `8772`, valida contratos estrictos e inyecta dependencias en `app.create_app()`. |
+| **Servicios Python** | Módulos `*_service.py`, `preparation.py`, `pool_service.py` | Reglas de negocio, control de versiones, invalidación `stale`, concurrencia (`5` fuentes / `3` borradores) y turnos del Pool. |
+| **Orquestación** | `LangGraph` (`6` `StateGraph`) + `SqliteSaver` | Secuencias reanudables, checkpoints persistentes y pausas humanas explícitas con `interrupt()` / `Command(resume=...)`. |
+| **RAG y OCR locales** | `BM25` + `FastEmbed` (`multilingual-e5-small` ONNX) + `Windows.Media.Ocr` | Búsqueda híbrida y lectura OCR de anexos/imágenes en CPU local, sin enviar documentos de la biblioteca a la nube. |
+| **Persistencia** | SQLite (negocio separado de checkpoints y vectores) + disco | Conserva originales con SHA-256, expedientes, biblioteca, borradores, revisiones, comprobaciones y oficios bajo `data/`. |
+| **Salida documental** | `PyMuPDF` + `python-docx` + `pywin32` (Word de escritorio) | Ensambla el oficio únicamente con respuestas aprobadas y verifica la conversión `.docx` → `.pdf`. **No invoca IA.** |
+
+Cadena de arranque habitual:
+
+`scripts/start.ps1` → `scripts/start-unificado.ps1` → `unified_app.main()` → `create_unified_app()` → `app.create_app()`.
+
+---
+
+## 2. Flujo completo de un expediente PQRS (4 Etapas + Pool FIAGA)
+
+La unidad principal es el **expediente**. Un mismo expediente puede contener **varias solicitudes**, cada una con sus propias fuentes, pendientes, turnos en el Pool FIAGA y respuesta.
+
+![Flujo Completo de un Expediente PQRS en FIAGA](diagramas/flujo_expediente_fiaga.png)
+
+Distinciones clave al trabajar en el código:
+
+- **Recibir no dispara IA:** cargar un PDF o importar un correo guarda el original (SHA-256) y abre el expediente sin consumir API.
+- **Confirmar, aprobar y finalizar son hitos distintos:** confirmar identificación, aprobar una respuesta, generar el Word/PDF y cerrar la gestión son acciones separadas.
+- **Un turno activo por expediente en el Pool:** el primer trámite queda disponible y los posteriores esperan en orden; devolver un punto en revisión final conserva las demás respuestas ya aprobadas.
+
+---
+
+## 3. Mapa de IAs: qué hace cada modelo y qué NO hace la IA
+
+El proyecto separa explícitamente la inferencia de modelos (nube y local) de las reglas deterministas en Python y las decisiones humanas obligatorias.
+
+![Mapa Híbrido de IAs, Reglas Deterministas y Control Humano](diagramas/mapa_ias_y_control.png)
+
+| Motor / Componente | Ejecución | Tarea concreta | Módulos principales |
+| --- | --- | --- | --- |
+| **OpenAI `gpt-6-luna`** (`store=False`) | Nube (`Responses API`) | Preanálisis, OCR de respaldo en PQRS, identificación, clasificación por defecto, lector RAG (`fast`, 5 en paralelo), redacción (3 en paralelo), revisión, ruteo e integración del Pool. | `preanalysis_engine.py`, `identification.py`, `source_assessment.py`, `draft_engine.py`, `review_engine.py`, `pool_integration.py` |
+| **TypeSafe `jev-1.14.0`** (opcional) | Nube (`api.typesafe.ai`) | Clasificador alternativo de tipos (11 categorías) activado con `PQRS_CLARO_CLASSIFICATION_PROVIDER=jev`. Sin fallback silencioso a OpenAI. | `jev_classification.py`, `jev_intake.py` |
+| **`intfloat/multilingual-e5-small`** | **100% Local (CPU)** | Embeddings semánticos (384d, ONNX vía `FastEmbed`, SHA-256 verificado) para búsqueda híbrida; si falta el modelo, continúa con búsqueda léxica y aviso. | `source_semantic.py`, `semantic_preparation.py` |
+| **Windows OCR (`OcrEngine`)** | **100% Local (WinRT)** | Reconocimiento de texto en PDFs escaneados e imágenes PNG/JPG cargados a la biblioteca. | `windows_ocr.py`, `windows_ocr_worker.py`, `image_ocr.py` |
+| **Python determinista** | **100% Local (sin IA)** | Citas literales por página/línea, filtro de ámbito (`source_in_scope`), contrato de evidencia, invalidación `stale`, turnos del Pool y generación Word/PDF. | `source_passages.py`, `evidence_contract.py`, `pool_service.py`, `office_renderer.py`, `office_word.py` |
+
+---
+
+## 4. Cómo funciona LangGraph + RAG híbrido por dentro
+
+En lugar de un único agente autónomo monolítico, el backend usa **6 grafos LangGraph pequeños y desacoplados**, cada uno con checkpoints en SQLite:
 
 ```mermaid
 flowchart LR
-    E[Expediente] --> O[Documento original]
-    E --> S1[Solicitud 1]
-    E --> S2[Solicitud 2]
-    S1 --> R1[Respuesta 1]
-    S2 --> R2[Respuesta 2]
-    F[Fuentes y comprobaciones] --> R1
-    F --> R2
-    R1 --> H[Revisión y aprobación]
-    R2 --> H
-    H --> OF[Oficio Word / PDF]
-```
-
-Los documentos que respaldan una solicitud no necesariamente respaldan otra. Una fuente normativa puede explicar un procedimiento sin acreditar que un hecho particular ocurrió.
-
-## 2. Arquitectura general
-
-La arquitectura actual es una aplicación local modular, servida en un proceso, con trabajadores en segundo plano. La interfaz y la API comparten el puerto 8772. OpenAI se consume como proveedor externo; la biblioteca y la persistencia son locales.
-
-```mermaid
-flowchart TB
-    U[Persona usuaria] --> UI
-    subgraph LOCAL[Equipo local]
-        UI[Interfaz HTML / CSS / JavaScript]
-        API[FastAPI: app.py y rutas]
-        S[Servicios: reglas y coordinación]
-        G[LangGraph: secuencias y pausas]
-        M[Motores: análisis y redacción]
-        R[Recuperación documental local]
-        DB[(SQLite: datos de negocio)]
-        CP[(SQLite: checkpoints)]
-        FS[Archivos: originales y resultados]
-        DOC[Generación DOCX y conversión con Word]
-        UI <-->|HTTP /api/...| API
-        API --> S
-        S --> G
-        S --> M
-        G --> M
-        G --> R
-        R --> DB
-        R --> FS
-        S --> DB
-        S --> FS
-        G --> CP
-        S --> DOC
-        DOC --> FS
+    subgraph GRAFOS["6 Grafos LangGraph Desacoplados (SqliteSaver)"]
+        direction TB
+        G1["workflow.py\nread_pdf → identify_requests → review_identification (interrupt)"]
+        G2["source_graph.py\nretrieve_sources → assess_sources"]
+        G3["draft_graph.py\nplanificar → redactar → comprobar → ajustar_citas → recomprobar"]
+        G4["review_graph.py\ncomprobar_revision → esperar_aprobacion (interrupt) → registrar_aprobacion"]
+        G5["response_proposals.py\nproponer → comprobar"]
+        G6["pool_drafts.py\nCheckpoint por paso para reanudar trabajos del Pool"]
     end
-    M <-->|Contenido necesario y resultados| AI[OpenAI: proveedor externo]
+
+    subgraph RAG["Pipeline RAG Híbrido (Por cada petición)"]
+        direction TB
+        Q["Petición + contexto literal\ndel escrito original"] --> SCOPE["Filtro estricto de ámbito\n(solo fuentes autorizadas del caso)"]
+        SCOPE --> C1["Canal Léxico (BM25)\n+ identificadores y números"]
+        SCOPE --> C2["Canal Semántico Local\nmultilingual-e5-small (ONNX)"]
+        C1 --> TOP["Selección combinada\n(Hasta 24 pasajes candidatos)"]
+        C2 --> TOP
+        TOP --> ASSESS["Lector IA (OpenAI tier fast)\nEvalúa respaldo, cobertura y faltantes"]
+        ASSESS --> VERIFY["Validación Python\nCitas por ubicación real +\ncontrato de evidencia y pendientes"]
+    end
+
+    G1 --> G2
+    G2 -.->|"Ejecuta"| RAG
+    VERIFY --> G3
+    G3 --> G4
 ```
 
-Las flechas resumen dependencias funcionales. No todos los servicios pasan por un grafo: la gestión de expedientes y la revisión inicial contienen coordinación propia.
+---
 
-| Componente | Responsabilidad |
-| --- | --- |
-| Interfaz | Recoger acciones, presentar resultados y consultar progreso. |
-| API | Recibir solicitudes HTTP y dirigirlas a los servicios. |
-| Servicios | Verificar condiciones, versiones y decisiones; coordinar procesamiento y guardado. |
-| Grafos | Definir secuencias, bifurcaciones y puntos de continuación. |
-| Motores | Ejecutar identificación, evaluación o redacción con validaciones. |
-| Recuperación | Buscar fragmentos en fuentes habilitadas y preparar candidatos. |
-| Persistencia | Conservar información, originales, historial y avance. |
+## 5. Estructura física y cómo navegar el código
 
-## 3. Flujo de un expediente
-
-```mermaid
-flowchart TB
-    A[Recibir PDF o importar Gmail] --> B[Conservar original y expediente]
-    B --> C[Asignar gestor e iniciar análisis]
-    C --> D[Extraer texto e identificar solicitudes]
-    D --> E[Revisión inicial automática]
-    E --> F{Decisión humana permite continuar?}
-    F -->|No| X[Registrar ruta u observaciones]
-    F -->|Sí| G[Recuperar y evaluar fuentes]
-    G --> H{Solicitud lista para redactar?}
-    H -->|No| I[Resolver pendientes o errores]
-    I --> H
-    H -->|Sí| J[Planificar, redactar y comprobar]
-    J --> K[Edición y revisión humana]
-    K --> L{Versión lista y aprobada?}
-    L -->|No| K
-    L -->|Sí| N[Generar oficio Word / PDF]
-```
-
-El ciclo de resolución puede requerir aportar documentos y actualizar el análisis. La condición de redacción se comprueba por solicitud. La generación del oficio exige las condiciones de las respuestas incluidas.
-
-Distinciones necesarias:
-
-- Recibir no inicia por sí solo IA en la bandeja actual.
-- Confirmar identificación, decidir una ruta, aprobar una respuesta y finalizar gestión son operaciones distintas.
-- La excepción «Continuar sin revisión inicial» permite omitir ese bloqueo de forma explícita y registrada; no aprueba el análisis inicial ni elimina controles posteriores.
-- Generar documentos no equivale a enviarlos ni a finalizar la gestión.
-
-## 4. Estructura física del código
-
-Árbol seleccionado, no inventario exhaustivo. Los módulos Python principales se encuentran directamente bajo `src/pqrs_claro/`; las agrupaciones por función de la sección siguiente son conceptuales.
+El código Python vive en `src/pqrs_claro/` (`113` módulos) y la interfaz en `src/pqrs_claro/static/recorrido/` (`77` archivos JS).
 
 ```text
 pqrs-claro/
-├── pyproject.toml                 Dependencias y herramientas
-├── uv.lock                        Versiones resueltas
+├── pyproject.toml + uv.lock       Dependencias Python y versiones fijadas
+├── .env.example                   Plantilla de configuración (sin claves)
 ├── scripts/
-│   ├── setup.ps1                  Instalación del runtime
-│   ├── start.ps1                  Entrada habitual
-│   ├── start-recorrido.ps1        Entrada al recorrido
-│   ├── start-unificado.ps1        Arranque de interfaz y API
-│   ├── dev-python.ps1             Ejecución con el runtime del proyecto
-│   └── test.ps1                   Ejecución de pruebas Python
+│   ├── setup.ps1                  Instala dependencias en .runtime/
+│   ├── start.ps1                  Arranque unificado en 127.0.0.1:8772
+│   ├── dev-python.ps1             Ejecuta Python usando .runtime/
+│   └── test.ps1                   Ejecuta pytest con datos temporales y dobles IA
 ├── src/pqrs_claro/
-│   ├── unified_app.py             Configuración del arranque unificado
-│   ├── app.py                     Construcción de aplicación y servicios
-│   ├── config.py                  Configuración
-│   ├── models.py                  Contratos de datos
-│   ├── storage.py                 Persistencia de expedientes
-│   ├── management.py              Asignación y estado de gestión
-│   ├── service.py                 Coordinación de identificación
-│   ├── workflow.py                Grafo de identificación
-│   ├── extraction.py              Extracción del PDF
-│   ├── identification.py          Identificación con IA
-│   ├── intake_service.py          Revisión inicial y decisiones
-│   ├── intake_engine.py           Evaluación inicial con IA
-│   ├── preparation.py             Fuentes, pendientes y borradores
-│   ├── source_library.py          Biblioteca documental
-│   ├── source_retrieval.py        Recuperación de fragmentos
-│   ├── source_assessment.py       Evaluación del respaldo
-│   ├── draft_service.py           Coordinación de redacción
-│   ├── draft_graph.py             Pasos de redacción y comprobación
-│   ├── draft_engine.py            Motor de redacción
-│   ├── review_service.py          Revisión, decisiones y aprobación
-│   ├── office_service.py          Coordinación del oficio
-│   ├── office_renderer.py         Construcción del documento
-│   ├── office_word.py             Conversión local mediante Word
-│   └── static/recorrido/
-│       ├── index.html             Estructura de la interfaz
-│       ├── app.js                 Coordinación general de la interfaz
-│       ├── live.js                Interacción con expedientes reales
-│       ├── initial-review.js      Presentación de revisión inicial
-│       ├── initial-confirmation.js Confirmación y preparación
-│       ├── live-pending.js        Acciones sobre pendientes
-│       ├── live-edit.js           Edición de respuestas
-│       └── live-document.js       Editor y generación del oficio
-├── tests/                         Pruebas de reglas e integración
-├── examples/                      Casos y fuentes ficticias
-├── docs/                          Documentación
-├── data/                          Bases y documentos locales
-└── output/                        Recursos y evidencia auxiliar local
+│   ├── unified_app.py / app.py    Arranque unificado e inyección de dependencias
+│   ├── config.py / models.py      Configuración y contratos Pydantic
+│   ├── preanalysis*.py            Etapa 1: preanálisis y cotejo inicial
+│   ├── workflow.py / extraction.py / identification.py   Etapa 2: lectura e identificación
+│   ├── petition_classification.py / jev_classification.py / intake_*.py  Tipos y revisión inicial
+│   ├── source_*.py / semantic_preparation.py / windows_ocr*.py   Biblioteca, OCR local y RAG híbrido
+│   ├── preparation.py / draft_*.py / response_proposals.py       Etapa 3: redacción y comprobación
+│   ├── review_*.py / evidence_contract.py                        Revisión humana y aprobación
+│   ├── pool_*.py                  Flujo FIAGA: revisión inicial, turnos, ruteo e integración IA
+│   ├── office_*.py                Etapa final: editor, Word (.docx) y conversión PDF
+│   └── static/recorrido/          Interfaz HTML/CSS/JS modular (fiaga*.js, live*.js, preanalysis.js)
+├── tests/                         166 archivos Python + 30 archivos JavaScript (.mjs)
+├── examples/                      Peticiones y fuentes ficticias para practicar
+└── docs/                          Guías, diagramas (docs/diagramas/) e informes fechados
 ```
 
-## 5. Organización funcional
+Convención práctica para seguir cualquier funcionalidad de principio a fin:
 
-| Función | Módulos principales |
-| --- | --- |
-| Recepción e identificación | `app.py`, `gmail_service.py`, `storage.py`, `service.py`, `workflow.py`, `extraction.py`, `identification.py` |
-| Revisión inicial | `intake_models.py`, `intake_service.py`, `intake_engine.py`, `intake_cache.py` |
-| Biblioteca y fuentes | `source_library.py`, `source_service.py`, `source_graph.py`, `source_retrieval.py`, `source_semantic.py`, `source_assessment.py`, `source_passages.py` |
-| Preparación y redacción | `preparation.py`, `draft_service.py`, `draft_graph.py`, `draft_engine.py`, `draft_store.py` |
-| Revisión y aprobación | `review_api.py`, `review_service.py`, `review_graph.py`, `review_engine.py`, `review_store.py`, `evidence_contract.py` |
-| Oficio | `office_api.py`, `office_workspace.py`, `office_service.py`, `office_renderer.py`, `office_templates.py`, `office_word.py`, `office_store.py` |
+`static/recorrido/*.js` (pantalla) → `*_api.py` (ruta HTTP) → `*_service.py` (reglas) → `*_graph.py` (pasos/pausas) → `*_engine.py` (IA/algoritmo) → `*_store.py` (SQLite).
 
-Convención orientativa: `api` recibe, `service` coordina, `graph` ordena, `engine` procesa, `models` define estructuras y `store` conserva. Hay excepciones: por ejemplo, `intake_service.py` también define rutas HTTP.
+---
 
-## 6. Secuencia de una acción concreta
-
-La confirmación inicial guarda primero la decisión; la preparación se solicita después si el servidor permite continuar.
-
-```mermaid
-sequenceDiagram
-    actor P as Persona
-    participant UI as initial-confirmation.js / live.js
-    participant IN as intake_service.py
-    participant DB as SQLite
-    participant PR as preparation.py
-    participant SO as source_service.py
-    participant RE as review_service.py
-    participant DR as draft_service.py
-    P->>UI: Confirmar y preparar
-    UI->>IN: PUT initial-review/decision
-    IN->>DB: Guardar decisión e historial
-    IN-->>UI: Estado y can_prepare
-    alt Preparación permitida
-        UI->>PR: POST preparation con versión actual
-        PR-->>UI: Trabajo aceptado
-        PR->>SO: Iniciar y esperar análisis de fuentes
-        SO-->>PR: Resultados o errores
-        PR->>RE: Crear revisión previa al borrador
-        PR->>DR: Redactar solicitudes elegibles
-        DR-->>PR: Resultados
-        PR->>RE: Actualizar revisión
-        UI->>PR: Consultar avance
-        PR-->>UI: Estado actual
-    else Requiere otra acción
-        UI-->>P: Mostrar decisión guardada y pendientes
-    end
-```
-
-Los caminos HTTP se muestran sin el prefijo `/api/cases/{case_id}` para facilitar la lectura. La secuencia omite reintentos y comprobaciones intermedias; no significa que la preparación sea una única llamada síncrona.
-
-## 7. Método de trabajo para colaborar
-
-El proyecto dispone de documentación, ejemplos ficticios y pruebas con motores sustituibles. El ciclo de trabajo para un aporte es:
+## 6. Flujo de trabajo y colaboración del equipo
 
 ```mermaid
 flowchart LR
-    A[Definir comportamiento esperado] --> B[Seguir pantalla, API y servicio]
-    B --> C[Implementar cambio acotado]
-    C --> D[Comprobar con datos ficticios]
-    D --> E[Revisar resultado y documentar]
-    E --> F[Validar integración real cuando corresponda]
-    D -->|Falla o regresión| B
+    A["1. Entorno propio\nClone + scripts/setup.ps1\n.env.local con clave propia"] --> B["2. Aislamiento de datos\nPQRS_CLARO_DATA_DIR propio\n+ puerto libre (-Port 8782)"]
+    B --> C["3. Rama por cambio\ngit checkout -b feat/...\nTrazar UI → API → Service → Store"]
+    C --> D["4. Pruebas sin gastar IA\npytest (dobles IA)\nnode --test · ruff · git diff --check"]
+    D -->|"Fallo o regresión"| C
+    D -->|"Todo verde"| E["5. QA y PR\nEvidencia local en output/qa/\nCódigo en Git · Datos fuera de Git"]
 ```
 
-Este diagrama describe un método de colaboración; no implica que una prueba local demuestre operación real de Gmail, OpenAI o Word. Durante la revisión anterior de esta conversación pasaron 16 pruebas seleccionadas con datos temporales y dobles de IA/conversión. No se repitieron para esta entrega documental.
+### Puesta en marcha rápida para nuevos integrantes
 
-Separar el directorio de datos para desarrollar. Usar otro puerto no aísla expedientes. Los gestores locales no equivalen a usuarios autenticados. Las aprobaciones corresponden a versiones y pueden invalidarse al cambiar contenido o soportes.
+```powershell
+# 1. Instalar runtime local (.runtime/) y crear .env.local propio
+.\scripts\setup.ps1
+Copy-Item .env.example .env.local
 
-## 8. Orden sugerido para exponerlo
+# 2. (Opcional) Descargar el modelo semántico local (~118 MB ONNX, sin API key)
+.\scripts\dev-python.ps1 -m pqrs_claro.source_semantic --download
 
-1. Explicar expediente, solicitudes y oficio con el primer diagrama.
-2. Presentar arquitectura: interfaz, servidor, proveedor externo y persistencia.
-3. Recorrer el flujo habitual y señalar decisiones humanas y pendientes.
-4. Mostrar el árbol físico y las familias de módulos.
-5. Seguir la confirmación inicial con el diagrama de secuencia.
-6. Abrir `tests/test_fiaga_flow.py` y elegir un primer aporte acotado.
+# 3. Verificar entorno sin gastar créditos de IA (usa datos temporales y dobles)
+.\scripts\test.ps1 tests/test_unified_app.py tests/test_fiaga_flow.py tests/test_management.py tests/test_pilot_review.py
 
-Para instalación, datos persistentes y límites adicionales, consultar [GUIA_PARA_ENTENDER_Y_COLABORAR.md](GUIA_PARA_ENTENDER_Y_COLABORAR.md).
+# 4. Iniciar con directorio de datos aislado y puerto libre
+$env:PQRS_CLARO_DATA_DIR = Join-Path $PWD 'output/qa/mi-entorno'
+.\scripts\start.ps1 -Port 8782
+```
+
+Reglas esenciales:
+
+- **Código y datos se mantienen separados:** nunca subir a Git `data/`, `.env.local`, `.env.jev.local`, `output/`, `tmp/`, `.runtime/` ni tokens de Gmail.
+- **Cambiar el puerto no aísla los datos:** define siempre `PQRS_CLARO_DATA_DIR` en PowerShell cuando ejecutes una segunda instancia local.
+- **Primero pruebas automatizadas, luego pruebas en vivo:** las suites `scripts/test.ps1` y `node --test` corren sin API key ni Word; usa `examples/` o `check_*live.py` solo cuando necesites validar una integración real.
+
+Para la instalación detallada y la transferencia de datos, consulta [ENTREGA.md](ENTREGA.md) y [CONTRIBUTING.md](../CONTRIBUTING.md).
