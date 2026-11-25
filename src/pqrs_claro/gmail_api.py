@@ -15,13 +15,14 @@ from .models import StrictModel
 class ImportMail(StrictModel):
     account: str = Field(min_length=3, max_length=320)
     mode: Literal["pdf", "body", "link"]
+    workflow: Literal["legacy", "fiaga"] = "legacy"
     attachment_id: str | None = Field(default=None, max_length=20)
     case_number: str = Field(default="", max_length=100)
     body_confirmed: bool = False
     target_case_id: str | None = Field(default=None, max_length=100)
 
 
-def gmail_router(service):
+def gmail_router(service, *, on_fiaga_receipt=None):
     router = APIRouter(prefix="/api/gmail")
 
     @router.get("/status")
@@ -80,7 +81,12 @@ def gmail_router(service):
 
     @router.post("/messages/{mid}/import")
     def import_mail(mid: str, body: ImportMail):
-        return service.import_message(mid, body)
+        result = service.import_message(mid, body)
+        if body.workflow == "fiaga" and on_fiaga_receipt:
+            case_id = result["case_id"]
+            if service.cases.uses_fiaga(case_id):
+                on_fiaga_receipt(case_id)
+        return result
 
     @router.get("/originals/{key}")
     def original(key: str):

@@ -42,7 +42,13 @@ from .source_library import digest
 from .source_retrieval import source_in_scope
 
 OFFICE_VERSION = 5
-__all__ = ["OFFICE_VERSION", "build_document", "render_office", "pdf_capabilities"]
+__all__ = [
+    "OFFICE_VERSION",
+    "build_document",
+    "render_office",
+    "pdf_capabilities",
+    "write_office_word",
+]
 _MONTHS = (
     "enero",
     "febrero",
@@ -593,6 +599,9 @@ def _make_docx(blocks: list[dict], path: Path) -> None:
             paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         if kind == "closing":
             paragraph.paragraph_format.space_before = Pt(14)
+        if kind == "separator":
+            paragraph.paragraph_format.line_spacing = Pt(1)
+            paragraph.paragraph_format.space_after = Pt(0)
         # Una sola palabra larga puede partirse, sin introducir guiones automáticos.
         suppress = OxmlElement("w:suppressAutoHyphens")
         paragraph._p.get_or_add_pPr().append(suppress)
@@ -659,6 +668,9 @@ def _make_template_docx(blocks: list[dict], path: Path, template_path: Path, pro
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
         if kind == "closing":
             paragraph.paragraph_format.space_before = Pt(12)
+        if kind == "separator":
+            paragraph.paragraph_format.line_spacing = Pt(1)
+            paragraph.paragraph_format.space_after = Pt(0)
         _add_bookmarks(paragraph, block, index)
         paragraph._p.get_or_add_pPr().append(OxmlElement("w:suppressAutoHyphens"))
     properties = document.core_properties
@@ -839,6 +851,16 @@ def _verify_pdf(blocks: list[dict], path: Path, *, profile=None) -> int:
         raise DomainError("No fue posible comprobar el PDF producido por Word.") from None
 
 
+def write_office_word(blocks, path, template_path=None):
+    profile = template_profile(template_path) if template_path else None
+    if profile:
+        _make_template_docx(blocks, path, template_path, profile)
+    else:
+        _make_docx(blocks, path)
+    _verify_docx(blocks, path)
+    return profile
+
+
 def render_office(document, output_dir, *, converter=None, template_path=None) -> dict:
     """Escribe una vez; solo declara éxito después de cotejar Word y PDF completos."""
     output_dir = Path(output_dir)
@@ -847,21 +869,15 @@ def render_office(document, output_dir, *, converter=None, template_path=None) -
     if docx.exists() or pdf.exists():
         raise DomainError("La generación no sobrescribe archivos de una versión anterior.")
     letterhead = document.get("letterhead")
-    profile = None
     if bool(letterhead) != (template_path is not None):
         raise DomainError("La plantilla no corresponde al membrete revisado en la vista previa.")
     if letterhead:
         letterhead = validate_letterhead(letterhead)
         template_path = validate_template_file(template_path, letterhead["sha256"])
-        profile = template_profile(template_path)
     blocks = _blocks(document)
     if "blocks" in document and document["blocks"] != blocks:
         raise DomainError("El contenido del oficio cambió respecto de la vista previa.")
-    if profile:
-        _make_template_docx(blocks, docx, template_path, profile)
-    else:
-        _make_docx(blocks, docx)
-    _verify_docx(blocks, docx)
+    profile = write_office_word(blocks, docx, template_path)
     if profile:
         validate_template_file(template_path, letterhead["sha256"])
         verify_preserved_template(template_path, docx)

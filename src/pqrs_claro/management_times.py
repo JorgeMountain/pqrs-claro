@@ -46,6 +46,7 @@ def case_metadata(db):
             COALESCE(json_extract(c.body,'$.request_count'),0) AS request_count
         FROM cases c LEFT JOIN case_management m ON m.case_id=c.id
         LEFT JOIN case_lifecycle l ON l.case_id=c.id WHERE l.deleted_at IS NULL
+            AND json_extract(c.body,'$.receipt.workflow') IS NOT 'fiaga'
         ORDER BY c.rowid DESC
     """)
     columns = [column[0] for column in query.description]

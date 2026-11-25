@@ -204,6 +204,11 @@ class OpenAIIntakeEngine:
         self.output_schema = IntakeContextAssessment if context_only else IntakeAssessment
         self.context_only = context_only
 
+    def close(self):
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
     def assess(self, payload):
         request_count = len(payload.get("identification", {}).get("requests", []))
         output_limit = min(22000, max(4000, 2500 + 1500 * request_count))

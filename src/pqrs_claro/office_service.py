@@ -518,7 +518,7 @@ class OfficeService:
             if not 1 <= number <= len(pdf):
                 raise KeyError("No existe esa página del oficio.")
             page = pdf[number - 1]
-            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height))
+            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height, 1.0))
             return page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).tobytes("png")
 
     def recover(self):

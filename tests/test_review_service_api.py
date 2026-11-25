@@ -240,6 +240,40 @@ def test_start_requires_current_complete_drafts_and_preserves_case(review_app):
     assert app.state.store.get(case["id"]) == before and engine.calls == 0
 
 
+def test_empty_review_and_draft_skip_catalog_validation(review_app, monkeypatch):
+    app, client, _, _ = review_app
+    case, _ = prepared_case(app)
+    def unexpected(*args, **kwargs):
+        pytest.fail("A case without saved responses must not scan the source catalog")
+
+    monkeypatch.setattr(app.state.drafts, "_current", unexpected)
+    result = client.get(url(case)).json()
+    assert result["requests"] == [] and result["total_count"] == 2
+    assert not result["reading_confirmation"]["eligible"]
+    assert client.get(f"/api/cases/{case['id']}/drafts").json()["status"] == "idle"
+    assert client.get("/api/cases/no-such-case/review").status_code == 404
+
+
+def test_one_integrity_check_per_original_per_review_read(review_app, monkeypatch):
+    app, client, _, _ = review_app
+    case, _, _ = prepare(app, client, count=2)
+    checks = []
+    original = app.state.library.original
+
+    def traced(source_id, case_id=None):
+        checks.append(source_id)
+        return original(source_id, case_id)
+
+    monkeypatch.setattr(app.state.library, "original", traced)
+    first = client.get(url(case)).json()
+    all_refs = [s["source_id"] for row in first["requests"] for s in row["available_supports"]]
+    assert len(set(all_refs)) < len(all_refs)
+    assert sorted(checks) == sorted(set(all_refs))
+    checks.clear()
+    assert client.get(url(case)).json() == first
+    assert sorted(checks) == sorted(set(all_refs))
+
+
 def test_edit_invalidate_check_and_approval_noop_preserves_and_history_immutable(review_app):
     app, client, engine, _ = review_app
     case, _, row = prepare(app, client)

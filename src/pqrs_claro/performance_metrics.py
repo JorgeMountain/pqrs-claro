@@ -13,6 +13,7 @@ import logging
 import math
 import re
 import sqlite3
+import threading
 from contextlib import closing, contextmanager
 from contextvars import ContextVar, copy_context
 from datetime import datetime, timezone
@@ -36,6 +37,9 @@ def metrics_path(root, case_id):
     return folder / "performance.sqlite"
 
 
+_METRICS_LOCK = threading.Lock()
+
+
 def _save(scope, event):
     if scope is None:
         return
@@ -44,16 +48,19 @@ def _save(scope, event):
         # A deleted case must not be recreated by telemetry.
         if not path.parent.is_dir():
             return
-        with closing(sqlite3.connect(path, timeout=2)) as connection, connection:
-            connection.execute(
-                "CREATE TABLE IF NOT EXISTS events "
-                "(id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
-            )
-            connection.execute("INSERT INTO events(body) VALUES (?)", (json.dumps({
-                "at": datetime.now(timezone.utc).isoformat(),
-                "run_id": scope["run_id"], "stage": scope["stage"],
-                "request_id": scope.get("request_id"), **event,
-            }),))
+        with _METRICS_LOCK:
+            with closing(sqlite3.connect(path, timeout=10)) as connection, connection:
+                connection.execute("PRAGMA busy_timeout=10000")
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS events "
+                    "(id INTEGER PRIMARY KEY, body TEXT NOT NULL)"
+                )
+                connection.execute("INSERT INTO events(body) VALUES (?)", (json.dumps({
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "run_id": scope["run_id"], "stage": scope["stage"],
+                    "request_id": scope.get("request_id"), **event,
+                }),))
     except Exception:
         # Deliberately omit exception text: provider messages can contain input.
         logger.warning("No se pudo guardar una medición de rendimiento (%s).", event["kind"])

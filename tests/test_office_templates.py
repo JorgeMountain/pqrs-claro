@@ -23,6 +23,8 @@ from pqrs_claro.office_templates import (
     validate_letterhead,
     verify_preserved_template,
 )
+from pqrs_claro.pool_document import approved_document, office_layouts
+from pqrs_claro.pool_text import reply_text
 
 
 def rewrite_member(path, name, change):
@@ -76,6 +78,38 @@ def canonical(template):
     return build_document(
         approved(), metadata(), [], "Preparador", letterhead=load_letterhead(template[2]).public()
     )
+
+
+def test_pool_document_preserves_reviewed_version_after_correction_and_template_rotation(template):
+    path, _, folder = template
+    blocks = [
+        {"kind": "subject", "text": "Asunto: Resultado"},
+        {"kind": "response_label", "text": "Respuesta", "request_ids": ["P1"]},
+        {"kind": "response", "text": "Respuesta anterior", "request_ids": ["P1"]},
+    ]
+    letter = {"blocks": blocks, "letterhead": load_letterhead(folder).public()}
+    request = {
+        "id": "P1",
+        "text": "¿Cuál fue el resultado?",
+        "answer": "Corrección.\n\nSegundo párrafo.",
+    }
+    initial = "\n\n".join(block["text"] for block in blocks)
+    corrected = reply_text([request], letter)
+    snapshot = {"text": corrected, "letter": letter, "requests": [request]}
+    state = {"stage": "approved", "draft": corrected, "initial_draft": initial,
+             "previous_draft": "Otra versión histórica.", "case_id": "prueba"}
+    # A later change to the active selection must not substitute the archived letterhead.
+    (folder / "templates" / "active.json").unlink()
+    layouts = state["office_layouts"] = office_layouts(snapshot, state, folder)
+    assert layouts["draft"] == {"letterhead": letter["letterhead"],
+                                "kinds": ["subject", "response_label", "response", "response"]}
+    assert layouts["initial_draft"]["kinds"] == ["subject", "response_label", "response"]
+    assert "previous_draft" not in layouts
+    output = approved_document(state, folder)
+    assert "\n".join(p.text for p in Document(BytesIO(output.body)).paragraphs) == corrected
+    with ZipFile(path) as original, ZipFile(BytesIO(output.body)) as download:
+        for name in ("word/header1.xml", "word/footer1.xml", "word/media/image1.png"):
+            assert download.read(name) == original.read(name)
 
 
 def template_pdf(template_path, *, mode="correct"):

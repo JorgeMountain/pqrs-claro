@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import httpx
 import pymupdf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -112,6 +112,15 @@ def create_laya_lab_app(
 
     @app.middleware("http")
     async def private_no_store(request, call_next):
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            origin = request.headers.get("origin")
+            expected = f"{request.url.scheme}://{request.headers.get('host')}"
+            if (origin and origin != expected) or request.headers.get(
+                "sec-fetch-site"
+            ) == "cross-site":
+                return JSONResponse(
+                    {"detail": "Abra la aplicación local para realizar esta acción."}, 403
+                )
         response = await call_next(request)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"

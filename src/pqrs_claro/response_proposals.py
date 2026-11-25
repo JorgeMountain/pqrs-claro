@@ -43,6 +43,10 @@ class ResponseProposalService:
             conn.execute("""CREATE TABLE IF NOT EXISTS response_proposals (
                 id TEXT PRIMARY KEY, case_id TEXT, request_id TEXT, created_at TEXT, body TEXT
             )""")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS response_proposals_lookup "
+                "ON response_proposals(case_id, request_id, created_at)"
+            )
 
     def save(self, job, **updates):
         job.update(updates, updated_at=now())
@@ -114,7 +118,11 @@ class ResponseProposalService:
             )
             self.save(job)
             self.active[key] = job["id"]
-            self.pool.submit(self.run, job, deepcopy(row))
+            try:
+                self.pool.submit(self.run, job, deepcopy(row))
+            except Exception:
+                self.active.pop(key, None)
+                raise
             return deepcopy(job)
 
     def ensure_current(self, job):
@@ -125,10 +133,13 @@ class ResponseProposalService:
 
     @track_case("proposal", "job")
     def run(self, job, row):
+        owned_engine = None
         try:
-            engine = self.engine or OpenAIResponseProposalEngine(
-                self.settings.api_key, self.settings.model
-            )
+            engine = self.engine
+            if engine is None:
+                owned_engine = engine = OpenAIResponseProposalEngine(
+                    self.settings.api_key, self.settings.model
+                )
 
             def write(state):
                 with self.reviews.lock:
@@ -141,7 +152,12 @@ class ResponseProposalService:
                     self.ensure_current(job)
                 self.save(job, stage="checking")
                 _, candidate = validate_proposal(row, state["proposal"])
-                result = self.reviews._engine().assess(row["request_snapshot"], candidate)
+                review_engine, owned_review = self.reviews._acquire_engine()
+                try:
+                    result = review_engine.assess(row["request_snapshot"], candidate)
+                finally:
+                    if owned_review is not None and hasattr(owned_review, "close"):
+                        owned_review.close()
                 return {"checks": result}
 
             graph = StateGraph(ProposalState)
@@ -157,8 +173,12 @@ class ResponseProposalService:
         except Exception as error:
             self.save(job, status="error", error=user_error(error))
         finally:
-            with self.lock:
-                self.active.pop((job["case_id"], job["request_id"]), None)
+            try:
+                if owned_engine is not None:
+                    owned_engine.close()
+            finally:
+                with self.lock:
+                    self.active.pop((job["case_id"], job["request_id"]), None)
 
     def apply(self, case_id, request_id, proposal_id, revision, actor):
         with self.lock, self.reviews.lock:
@@ -191,16 +211,19 @@ class ResponseProposalService:
     def recover(self):
         with self.reviews.store.connect() as conn:
             jobs = [
-                json.loads(row[0]) for row in conn.execute("SELECT body FROM response_proposals")
+                json.loads(row[0])
+                for row in conn.execute(
+                    "SELECT body FROM response_proposals "
+                    "WHERE json_extract(body,'$.status')='running'"
+                )
             ]
         for job in jobs:
-            if job["status"] == "running":
-                self.save(
-                    job, status="interrupted", error="El servicio se reinició. Puedes reintentar."
-                )
+            self.save(
+                job, status="interrupted", error="El servicio se reinició. Puedes reintentar."
+            )
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)
 
 
 def response_proposal_router(service):

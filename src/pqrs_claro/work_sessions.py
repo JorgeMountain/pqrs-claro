@@ -60,7 +60,9 @@ def _window(db, sid):
 
 def _require_owner(db, case_id, actor):
     row = db.execute(
-        "SELECT l.deleted_at,json_extract(m.body,'$.owner_id'),json_extract(m.body,'$.state') "
+        "SELECT l.deleted_at,COALESCE(json_extract(m.body,'$.owner_id'), "
+        "CASE WHEN json_extract(c.body,'$.receipt.workflow')='fiaga' THEN 'admin' END), "
+        "json_extract(m.body,'$.state') "
         "FROM cases c LEFT JOIN case_lifecycle l ON l.case_id=c.id "
         "LEFT JOIN case_management m ON m.case_id=c.id WHERE c.id=?", (case_id,),
     ).fetchone()
