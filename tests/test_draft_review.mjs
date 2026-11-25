@@ -88,9 +88,10 @@ test('separa faltantes, fuentes cambiadas, comprobación en curso y errores sin 
   ],blocks:[]});
   assert.equal(review.unprepared,2);
   assert.equal(review.checking,1);
+  assert.equal(review.awaitingCheck,1);
   assert.equal(review.ready,0);
   assert.equal(review.canGenerate,false);
-  assert.deepEqual(review.items.map(i=>i.kind),['unprepared','unprepared','stale','error','unchecked']);
+  assert.deepEqual(review.items.map(i=>i.kind),['unprepared','unprepared','stale','error']);
   assert.equal(review.items[2].description,'La fuente cambió.');
   assert.equal(review.items[3].description,'La conexión se interrumpió.');
   assert.ok(review.items.every(i=>i.paragraphIndex===null&&i.blockIndices.length===0));
@@ -104,15 +105,15 @@ test('los estados que requieren cambios o evidencia siguen bloqueados aunque fal
   const review=deriveDraftReview({requests:[row('A'),row('B',{status:'needs_evidence'})]});
   assert.equal(review.items.length,2);
   assert.equal(review.canGenerate,false);
-  assert.equal(review.items[0].title,'Esta respuesta necesita un ajuste');
-  assert.equal(review.items[1].title,'Respaldo pendiente de revisar');
+  assert.equal(review.items[0].title,'Respaldo pendiente de revisar');
+  assert.equal(review.items[1].title,'Esta respuesta necesita un ajuste');
   assert.ok(review.items.every(i=>i.paragraphIndex===null));
 });
 
 test('solo permite generar con todas las respuestas listas, vigentes y sin hallazgos',()=>{
   const work={requests:[row('A',{status:'ready',assessment:{status:'passed',issues:[]}}),
     row('B',{status:'approved',assessment:{status:'passed',issues:[]}})]};
-  assert.deepEqual(deriveDraftReview(work),{items:[],checking:0,unprepared:0,ready:2,canGenerate:true});
+  assert.deepEqual(deriveDraftReview(work),{items:[],checking:0,awaitingCheck:0,unprepared:0,ready:2,written:2,total:2,canGenerate:true});
   assert.equal(deriveDraftReview({requests:[]}).canGenerate,false);
   assert.equal(deriveDraftReview(null).canGenerate,false);
   work.requests[0].assessment.issues=[issue('Hallazgo todavía presente',null)];
@@ -123,6 +124,9 @@ test('guardar cambios no cuenta ajustes como resueltos ni promete una versión c
   const review=deriveDraftReview({requests:[row('A',{status:'ready',assessment:{issues:[]}})]});
   const clean=draftReviewMarkup(review),dirty=draftReviewMarkup(review,{dirty:true});
   assert.match(clean,/pasó las comprobaciones/);
+  assert.match(clean,/Documento listo para revisión final/);
+  assert.match(draftReviewMarkup(review,{generated:true}),/Oficio generado/);
+  assert.match(draftReviewMarkup(review,{total:2}),/Documento por completar/);
   assert.match(dirty,/Hay cambios sin guardar/);
   assert.doesNotMatch(dirty,/pasó las comprobaciones|Puedes generar|resueltos de/);
   assert.match(draftReviewMarkup(deriveDraftReview({})),/Todavía no hay respuestas preparadas/);
@@ -191,4 +195,101 @@ test('el fragmento visible es breve sin cambiar el original ni las coordenadas p
   assert.equal(review.items[0].excerpt,excerpt);
   assert.deepEqual(review.items[0].blockIndices,[0]);
   assert.match(html,/data-view-fragment=/);
+});
+
+test('prioriza peticiones sin respuesta y muestra los respaldos concretos que siguen abiertos',()=>{
+  const support='Adjuntar el calendario oficial de la convocatoria 2027-1.';
+  const pending=[
+    {description:support},
+    {description:support},
+    {description:'Ya fue aportado.',resolution:{action:'resolved'}},
+    {description:'No corresponde a la petición.',resolution:{action:'not_applicable'}},
+    {description:'Nota opcional.',blocks_approval:false},
+  ];
+  const review=deriveDraftReview({requests:[
+    row('P1',{label:'01',status:'editing'}),
+    row('P2',{label:'02',title:'Fechas para presentar el examen',status:'editing',paragraphs:[],pending}),
+    row('P3',{label:'03',status:'needs_evidence',pending:[{description:'Verificar las fechas en la versión vigente.'}]}),
+    row('P4',{label:'04',status:'ready',assessment:{status:'passed',issues:[]}}),
+  ]});
+  assert.deepEqual(review.items.map(item=>[item.requestId,item.kind]),[['P2','unprepared'],['P3','evidence']]);
+  assert.equal(review.awaitingCheck,1);
+  assert.equal(review.written,3);
+  assert.equal(review.ready,1);
+  assert.deepEqual(review.items[0].needs,[support]);
+  const html=draftReviewMarkup(review);
+  assert.match(html,/Documento por completar/);
+  assert.match(html,/3 de 4 con respuesta redactada · 1 comprobada · 1 sin respuesta/);
+  assert.match(html,/Fechas para presentar el examen/);
+  assert.match(html,/Qué hace falta/);
+  assert.equal(html.split(support).length-1,1);
+  assert.doesNotMatch(html,/Ya fue aportado|No corresponde a la petición|Nota opcional/);
+});
+
+test('recupera el título de una petición identificada que todavía no tiene fila de redacción',()=>{
+  const review=deriveDraftReview({requests:[
+    row('P1',{status:'editing',paragraphs:[{...paragraph('Texto introductorio.'),office_section:'context'}]}),
+  ]},[{id:'P1',label:'01'},{id:'P2',label:'02',title:'Descarga de la credencial'}]);
+  assert.equal(review.written,0);
+  assert.equal(review.total,2);
+  assert.deepEqual(review.items.map(item=>item.title),['Sin respuesta','Sin respuesta']);
+  assert.match(draftReviewMarkup(review,{selectedId:review.items[1].id}),/Descarga de la credencial/);
+});
+
+test('de diez peticiones solo aparece la que falta por responder; al redactarla desaparece de los ajustes',()=>{
+  const requests=Array.from({length:10},(_,i)=>row(`P${i+1}`,{status:'editing',assessment:null}));
+  const dates=requests[1];
+  dates.paragraphs=[];
+  dates.pending=[{description:'Contrastar la fecha con la resolución.'}];
+
+  const partial=deriveDraftReview({requests});
+  assert.equal(partial.written,9);
+  assert.equal(partial.awaitingCheck,9);
+  assert.equal(partial.ready,0);
+  assert.equal(partial.canGenerate,false);
+  assert.deepEqual(partial.items.map(item=>[item.requestId,item.kind,item.needs]),[
+    ['P2','unprepared',['Contrastar la fecha con la resolución.']],
+  ]);
+  const partialHtml=draftReviewMarkup(partial);
+  assert.equal((partialHtml.match(/data-select-adjustment=/g)||[]).length,1);
+  assert.match(partialHtml,/aria-label="1 ajuste pendiente"/);
+  assert.match(partialHtml,/1 sin respuesta/);
+  assert.doesNotMatch(partialHtml,/data-adjustment-prev|data-adjustment-next/);
+
+  dates.paragraphs=[paragraph('Las fechas constan en la resolución adjunta.')];
+  dates.pending[0].resolution={action:'resolved'};
+  const complete=deriveDraftReview({requests});
+  assert.deepEqual(complete.items,[]);
+  assert.equal(complete.awaitingCheck,10);
+  assert.equal(complete.written,10);
+  assert.equal(complete.ready,0);
+  assert.equal(complete.canGenerate,false);
+  const completeHtml=draftReviewMarkup(complete);
+  assert.match(completeHtml,/10 de 10 con respuesta redactada/);
+  assert.match(completeHtml,/Sin ajustes pendientes/);
+  assert.match(completeHtml,/Quedan por comprobar 10 respuestas redactadas/);
+  assert.doesNotMatch(completeHtml,/data-select-adjustment|data-adjustment-next|Documento listo para revisión final/);
+
+  const legacy=deriveDraftReview({requests:[{request_id:'P1',paragraphs:[{text:'Respuesta guardada.'}]}]});
+  assert.deepEqual(legacy.items,[]);
+  assert.equal(legacy.awaitingCheck,1);
+  assert.equal(legacy.canGenerate,false);
+  assert.match(draftReviewMarkup(legacy),/Queda por comprobar 1 respuesta redactada/);
+});
+
+test('una respuesta redactada con un hallazgo o un faltante abierto sigue visible durante la comprobación',()=>{
+  const evidence='Solicitar una copia firmada.';
+  const review=deriveDraftReview({requests:[
+    row('hallazgo',{status:'editing',assessment:{issues:[issue('Corregir la atribución de la norma.',0)]}}),
+    row('evidencia',{status:'checking',assessment:null,pending:[
+      {description:evidence},
+      {description:'Copia ya recibida.',resolution:{action:'resolved'}},
+      {description:'Entrega posterior.',blocks_approval:false},
+    ]}),
+  ]});
+  assert.equal(review.written,2);
+  assert.equal(review.checking,1);
+  assert.equal(review.canGenerate,false);
+  assert.deepEqual(review.items.map(item=>[item.requestId,item.kind]),[['evidencia','evidence'],['hallazgo','issue']]);
+  assert.deepEqual(review.items[0].needs,[evidence]);
 });

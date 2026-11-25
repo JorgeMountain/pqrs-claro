@@ -24,6 +24,9 @@ def evidence_router(library, sources, cases):
             "CREATE TABLE IF NOT EXISTS evidence_receipts "
             "(id TEXT PRIMARY KEY, case_id TEXT, body TEXT)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS evidence_receipts_case ON evidence_receipts(case_id)"
+        )
 
     def save(receipt):
         with library.connect() as conn:

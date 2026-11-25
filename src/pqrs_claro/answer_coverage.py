@@ -74,6 +74,25 @@ class DetailedPlanUnitProposal(PlanUnitProposal):
     no_details_reason: str = Field(max_length=700)
 
 
+class PlannerUnitProposal(StrictModel):
+    """Generation schema. The persisted coverage contract keeps kind and required."""
+
+    requirement_id: str = Field(min_length=1, max_length=40)
+    role: Literal[
+        "required_answer", "optional_answer",
+        "required_condition", "optional_condition",
+        "required_exception", "optional_exception",
+        "required_basis", "optional_basis",
+        "required_sequence", "optional_sequence",
+        "optional_context",
+    ]
+    claim: str = Field(min_length=1, max_length=4000)
+    citations: list[PassageRange] = Field(min_length=1, max_length=MAX_UNIT_CITATIONS)
+    reason: str = Field(min_length=1, max_length=2000)
+    details: list[DetailProposal] = Field(max_length=MAX_DETAILS_PER_UNIT)
+    no_details_reason: str = Field(max_length=700)
+
+
 class DetailEvidence(DetailMemberRange):
     member_index: StrictInt = Field(ge=1)
     paragraph_index: StrictInt = Field(ge=0)
@@ -551,6 +570,14 @@ def _detail_evidence_quote(text, span, detail, member_index):
         return quote  # Punctuation after the article is not contiguous identity.
     expanded, _, _ = _word_quote(text, span["word_start"] - 1, span["word_end"])
     return expanded if _identity_tokens(expanded) == identity else quote
+
+
+def materialize_planner_units(proposals, request, index, aliases):
+    rows = _list(proposals, PlannerUnitProposal)
+    for row in rows:
+        priority, kind = row.pop("role").split("_", 1)
+        row.update(kind=kind, required=priority == "required")
+    return materialize_detailed_units(rows, request, index, aliases)
 
 
 def materialize_detailed_units(proposals, request, index, aliases):

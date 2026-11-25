@@ -319,6 +319,12 @@ La existencia de un oficio o anexo nunca demuestra su notificación o entrega.
 Nunca selecciones fuentes superseded. Una norma current y reviewed puede usarse como
 regla preliminar; vigencia desconocida de una norma y transcripción insegura requieren contraste.
 No concluyas vigencia porque una norma se haya cargado recientemente.
+Para una consulta informativa, si un pasaje nativo de un documento independiente acredita
+íntegramente la misma afirmación con igual autoridad, período, destinatarios y condiciones,
+prefiere sus líneas como respaldo. Un escaneo coincidente no necesita seleccionarse solo
+para repetir ese dato. Si es la fuente expresamente pedida, una autoridad requerida, aporta
+otro elemento necesario o contradice a la fuente nativa en el mismo ámbito, conserva esas
+diferencias y el cotejo pertinente. El método de extracción nunca prueba la aplicabilidad.
 
 Si piden copia del acta, necesitas el archivo de esa acta del caso. Una norma que ordena
 elaborar actas, un oficio que la menciona o una explicación no reemplazan el archivo.
@@ -556,6 +562,11 @@ class OpenAISourceAssessor:
         self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
                              http_client=metrics_http_client())
 
+    def close(self) -> None:
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
     def assess(self, request: dict[str, Any], candidates: list[dict[str, Any]]) -> dict:
         # Defensa previa a la llamada: una falla del filtro de recuperación no debe
         # enviar al proveedor texto de una colección que este caso no puede consultar.
@@ -601,13 +612,41 @@ class OpenAISourceAssessor:
             candidate["allowed_coverage_uses"] = {
                 role: coverage_uses(candidate, role) for role in candidate["allowed_roles"]
             }
+        reader_request = dict(request_for_assessment(request))
+        hypotheses = reader_request.pop("_claims_to_verify", None)
         payload = {
-            "request": request_for_assessment(request),
+            "request": reader_request,
             "requested_document_target": delivery_document_target(request),
             "document_states": document_delivery_states(request, candidates),
             **_reader_candidates(api_candidates),
             "coverage_uses_by_role": COVERAGE_USES_BY_ROLE,
         }
+        instructions = INSTRUCTIONS
+        if hypotheses:
+            payload["hypotheses_to_verify"] = hypotheses
+            instructions += (
+                "\nEsta es una comprobación independiente. hypotheses_to_verify contiene "
+                "enunciados propuestos por requisito. No son evidencia. Revisa los pasajes "
+                "disponibles para confirmar o refutar cada enunciado y todas sus condiciones "
+                "(evento, dependencia emisora y su competencia, destinatarios, negación, "
+                "convocatoria o período, cantidades y excepciones). Contrasta TODOS los "
+                "candidatos pertinentes: si dos pasajes del mismo ámbito se contradicen, "
+                "registra ambas afirmaciones con sus líneas y la diferencia sin resolver. "
+                "Una fuente de otro período o dependencia solo es aplicable si el texto "
+                "establece esa relación. Si un enunciado se puede sostener íntegramente para "
+                "el uso indicado con estos candidatos, usa su misma redacción y uso en coverage "
+                "y cita las líneas exactas de estos candidatos. Si la hipótesis usa una fórmula "
+                "genérica como «el calendario» o «la guía» sin nombrar un acto o archivo concreto "
+                "ausente, y un candidato institucional del mismo período acredita íntegramente "
+                "el mismo dato, evento, destinatarios y condiciones, confirma la afirmación sin "
+                "atribuirla a un documento no leído ni crear un faltante por esa fórmula genérica; "
+                "conserva el período y los demás términos exactos. Si el uso no corresponde, la "
+                "hipótesis exige o atribuye el dato a un acto, autoridad o archivo concreto que "
+                "no has leído, el contenido difiere o falta respaldo para cualquier parte, "
+                "declara el faltante o la contradicción. Nunca cites una hipótesis ni atribuyas "
+                "un dato a un documento que no has leído. Conserva las demás obligaciones de la "
+                "solicitud aunque no aparezcan en las hipótesis."
+            )
         repair_errors = []
         history = []
         tier_options = {} if self.service_tier == "default" else {"service_tier": self.service_tier}
@@ -616,7 +655,7 @@ class OpenAISourceAssessor:
                 response = provider_call("sources.assess", self.client.responses.parse,
                     model=self.model,
                     **tier_options,
-                    instructions=INSTRUCTIONS,
+                    instructions=instructions,
                     input=_compact_json(payload),
                     text_format=_LocatedSourceSelection,
                     store=False,

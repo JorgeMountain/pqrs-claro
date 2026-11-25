@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 from test_review_service_api import current, prepare, review_app, save, url  # noqa: F401
 
-from pqrs_claro.response_reading import reading_state
+from pqrs_claro.response_reading import open_gaps, reading_state
 from pqrs_claro.review_store import ReviewStore
 from pqrs_claro.storage import Conflict
 
@@ -104,3 +104,32 @@ def test_storage_rejects_concurrent_edit(review_app):
             {"case_id": case["id"], "content_hash": state["content_hash"]},
             {row["request_id"]: row["revision"] - 1},
         )
+
+
+def test_open_gaps_allows_unanswered_fulfillment_actions_in_fiaga_only():
+    case = {
+        "id": "c",
+        "version": 2,
+        "status": "confirmed",
+        "identification": {"requests": [{"id": "P1"}]},
+    }
+    action = {
+        "description": "Tramitar la firma del responsable solicitado.",
+        "stage": "fulfillment",
+        "blocks_approval": False,
+        "resolution": None,
+    }
+    unanswered = {
+        "request_id": "P1",
+        "status": "editing",
+        "paragraphs": [],
+        "available_supports": [],
+        "pending": [action],
+    }
+    assert open_gaps(unanswered) == [action["description"]]
+    assert reading_state(case, [unanswered], fiaga_prepared=True)["eligible"]
+    answered = {
+        **unanswered,
+        "paragraphs": [{"text": "Respuesta.", "cited_chunk_ids": [], "cited_fact_ids": []}],
+    }
+    assert open_gaps(answered) == []

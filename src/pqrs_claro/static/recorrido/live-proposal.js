@@ -1,17 +1,13 @@
+import {apiJson} from './http.js';
 import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
 
 export function createProposalPanel({open,close,notice,getCase,onSaved}) {
   let actor='';
-  async function api(url,body) {
-    const response=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const value=await response.json();
-    if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'No se pudo completar la operación. Tu respuesta se conserva.');
-    return value;
-  }
+  const api=(url,body)=>apiJson(url,{body,fallbackError:'No se pudo completar la operación. Tu respuesta se conserva.'});
   async function show(requestId) {
     const caseId=getCase()?.id;if(!caseId)return;
-    const reviewUrl=`/api/cases/${caseId}/review`;
+    const reviewUrl=`/api/cases/${encodeURIComponent(caseId)}/review`;
     const url=reviewUrl+`/requests/${encodeURIComponent(requestId)}/proposals`;
     open('Actualizar respuesta con IA','<div id="proposal-panel"><p role="status">Consultando la propuesta guardada…</p></div>');
     const panel=document.querySelector('#proposal-panel');let job,working=false;

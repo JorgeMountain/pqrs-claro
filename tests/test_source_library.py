@@ -10,6 +10,7 @@ import pymupdf
 import pytest
 from docx import Document
 
+from pqrs_claro.catalog_labels import ADMISSIONS_COLLECTION
 from pqrs_claro.extraction import PDFExtractor
 from pqrs_claro.models import DomainError
 from pqrs_claro.source_library import SourceLibrary, digest
@@ -39,6 +40,60 @@ def pdf_bytes(page_count):
                 f"FUENTE FICTICIA. Requisitos y procedimiento de prueba. Pagina {number}.",
             )
         return document.tobytes()
+
+
+def test_seed_labels_uses_evidence_preserves_sources_and_respects_collection_access(library):
+    library.save_collection({"id": ADMISSIONS_COLLECTION, "name": "Admisiones UdeA 2027-1"})
+    guide = add_text(
+        library,
+        "Vicerrectoría de Docencia\nDepartamento de Admisiones y Registro\nCalendario del examen.",
+        title="Guía de aspirantes 2027-1", collection_id=ADMISSIONS_COLLECTION,
+    )
+    agreement = add_text(
+        library, "Enviar una copia al Departamento de Admisiones y Registro.",
+        title="Acuerdo permanente", collection_id=ADMISSIONS_COLLECTION,
+    )
+    other = add_text(library, "Texto de otra fuente.", title="Otra fuente 2027-1")
+    library.link_collections("case", [ADMISSIONS_COLLECTION])
+    before = library.snapshot("case")
+    revision = library.catalog_revision()
+    digest_before = library.original(guide["id"]).read_bytes()
+    assert library.seed_admissions_2027_1() == 2
+    assert library.seed_admissions_2027_1() == 0
+    assert library.catalog_revision() == revision
+    assert library.snapshot("case") == before
+    assert library.original(guide["id"]).read_bytes() == digest_before
+    assert library.sector_labels("unlinked") == {}
+    labels = library.sector_labels("case")
+    assert labels == {
+        guide["id"]: {"topics": ["Admisiones", "Calendario académico", "Examen de admisión"],
+                      "issuer": "Departamento de Admisiones y Registro", "period": "2027-1"},
+        agreement["id"]: {"topics": ["Admisiones"], "issuer": None, "period": None},
+    }
+    assert library.sector_record(other["id"])["revision"] == 0
+    filtered = library.catalog_sources("case", topic="Admisiones", issuer="", period="")
+    assert [s["id"] for s in filtered] == [agreement["id"]]
+    library.update_sector_labels(guide["id"], topics=[], issuer=None, period=None,
+                                 expected_revision=1)
+    assert library.seed_admissions_2027_1() == 0
+    assert library.sector_labels("case")[guide["id"]]["topics"] == []
+    library.link_collections("case", [])
+    assert not library.sector_labels("case")
+    with pytest.raises(KeyError):
+        library.sector_record(guide["id"], case_id="case")
+
+
+def test_new_version_keeps_reviewed_labels_on_original_version(library):
+    first = add_text(library)
+    update = dict(topics=[" Actas", "actas "], issuer="Decanatura", period="2026-2",
+                  expected_revision=0)
+    first_record = library.update_sector_labels(first["id"], **update)
+    assert first_record["topics"] == ["Actas"]
+    assert library.update_sector_labels(first["id"], **update) == first_record
+    second = add_text(library, "Otra versión para otro período.", document_id=first["document_id"])
+    assert library.sector_record(second["id"])["revision"] == 0
+    assert library.sector_record(first["id"]) == first_record
+    assert not library.catalog_sources(topic="Actas")[0]["is_latest"]
 
 
 def test_selected_snapshot_preserves_scope_and_checks_selected_originals(library):

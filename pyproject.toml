@@ -34,6 +34,9 @@ dependencies = [
 ]
 
 [dependency-groups]
+browser = [
+    "playwright==1.58.0",
+]
 dev = ["pytest==8.4.2", "ruff>=0.12,<1", "reportlab>=4,<5"]
 
 [tool.hatch.build.targets.wheel]

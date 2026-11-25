@@ -46,6 +46,11 @@ class OpenAIResponseProposalEngine:
         self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
                              http_client=metrics_http_client())
 
+    def close(self):
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
     def propose(self, row):
         value = validate_review_input(row["request_snapshot"], row)
         context, _ = _context(row["request_snapshot"], value)

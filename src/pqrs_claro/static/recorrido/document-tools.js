@@ -1,13 +1,17 @@
 // Herramientas de texto: el contenido sigue usando el contrato del oficio.
 const copy=v=>structuredClone(v);
-import {focusPoint} from './document-pages.js';
+import {focusPoint,revealPage} from './document-pages.js';
 const button=(action,label,icon)=>`<button type="button" data-tool="${action}" title="${label}" aria-label="${label}">${icon?`<span aria-hidden="true">${icon}</span>`:''}<span>${label}</span></button>`;
 const fullToolsMarkup=()=>`<div class="document-tools" role="region" aria-label="Herramientas del documento">
   <div class="tool-group">${button('undo','Deshacer','↶')}${button('redo','Rehacer','↷')}${button('save','Guardar','✓')}</div>
   <div class="tool-group">${button('find','Buscar y reemplazar','⌕')}${button('add','Añadir párrafo','+')}${button('remove','Quitar párrafo','−')}</div>
-  <div class="tool-group tool-view"><button type="button" data-tool="out" aria-label="Reducir zoom" title="Reducir zoom">−</button><label class="zoom-control"><span class="tool-sr">Zoom del documento</span><select data-zoom><option value="fit">Ajustar al ancho</option>${[50,75,90,100,110,125,150,175,200].map(n=>`<option value="${n}">${n}%</option>`).join('')}</select></label><button type="button" data-tool="in" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>${button('full','Pantalla completa','⛶')}</div>
+  <div class="tool-group tool-view"><button type="button" data-tool="out" aria-label="Reducir zoom" title="Reducir zoom">−</button><label class="zoom-control"><span class="tool-sr">Zoom del documento</span><select data-zoom><option value="page">Página completa</option><option value="fit">Ajustar al ancho</option>${[50,75,90,100,110,125,150,175,200].map(n=>`<option value="${n}">${n}%</option>`).join('')}</select></label><button type="button" data-tool="in" aria-label="Aumentar zoom" title="Aumentar zoom">+</button>${button('full','Pantalla completa','⛶')}</div>
   <div class="document-find" hidden><label>Buscar en el texto editable<input type="search" data-find autocomplete="off"></label><label>Reemplazar por<input data-replacement autocomplete="off"></label><div class="find-actions">${button('previous','Anterior','↑')}${button('next','Siguiente','↓')}${button('replace','Reemplazar')}${button('all','Reemplazar todos')}${button('close-find','Cerrar búsqueda','×')}</div><span data-find-count role="status"></span></div>
-  </div><div class="document-tool-status"><span data-page-count></span><span data-word-count></span><span data-selection-label>Selecciona un párrafo para editarlo</span><details><summary>Atajos</summary><p>Ctrl + Z: deshacer · Ctrl + Y: rehacer · Ctrl + F: buscar · Ctrl + S: guardar. En Mac, usa ⌘. El zoom cambia solo la vista. La paginación es orientativa; consulta el PDF generado para ver la distribución final.</p></details></div>`;
+  </div><div class="document-tool-status"><span class="document-page-nav">
+    <button type="button" data-tool="page-back" aria-label="Página anterior del borrador" title="Página anterior" hidden>←</button>
+    <span data-page-count role="status"></span>
+    <button type="button" data-tool="page-forward" aria-label="Página siguiente del borrador" title="Página siguiente" hidden>→</button>
+  </span><span data-word-count></span><span data-selection-label>Selecciona un párrafo para editarlo</span><details><summary>Atajos</summary><p>Ctrl + Z: deshacer · Ctrl + Y: rehacer · Ctrl + F: buscar · Ctrl + S: guardar. En Mac, usa ⌘. El zoom cambia solo la vista. La paginación es orientativa; consulta el PDF generado para ver la distribución final.</p></details></div>`;
 
 export function toolsMarkup({compact=false}={}){
   let markup=fullToolsMarkup();
@@ -21,6 +25,8 @@ export function toolsMarkup({compact=false}={}){
 export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,save,isReadOnly=()=>false}){
   const locked=()=>s.busy||isReadOnly();
   const root=s.node,stage=root.querySelector('.document-stage'),canvas=root.querySelector('.document-canvas');
+  const pages=canvas.querySelector('.oficio-pages'),picker=root.querySelector('[data-zoom]');
+  const counter=root.querySelector('[data-page-count]'),back=root.querySelector('[data-tool="page-back"]'),forward=root.querySelector('[data-tool="page-forward"]');
   const history=s.editHistory??={past:[],future:[]};
   let selected=null,lastInput=0,lastTarget=null,matchIndex=-1,matches=[];
   let previousOverflow='';
@@ -76,15 +82,62 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     });
     applyZoom();refresh();
   }
-  function applyZoom(){
-    const picker=root.querySelector('[data-zoom]');
-    if(s.zoomMode&&![...picker.options].some(o=>o.value===s.zoomMode))picker.add(new Option(`${s.zoomMode}%`,s.zoomMode));
-    picker.value=s.zoomMode||'fit';
-    const width=Math.max(150,canvas.clientWidth-36);
-    const zoom=s.zoomMode&&s.zoomMode!=='fit'?Number(s.zoomMode)/100:Math.min(1.25,width/816);
-    root.querySelector('.oficio-pages').style.zoom=zoom;
+  function updatePage(number){
+    const total=pages.childElementCount;
+    s.page=Math.max(1,Math.min(number,total));
+    const label=total===1?'1 página':`Página ${s.page} de ${total}`;
+    if(counter.textContent!==label)counter.textContent=label;
+    back.hidden=forward.hidden=total<=1;
+    back.disabled=s.page===1;
+    forward.disabled=s.page>=total;
+  }
+  function goToPage(number){
+    updatePage(number);
+    revealPage(canvas,pages.children[s.page-1]);
+  }
+  function trackPage(){
+    if(pages.childElementCount<2)return;
+    const first=pages.children[0].getBoundingClientRect();
+    const step=pages.children[1].getBoundingClientRect().top-first.top;
+    const middle=canvas.getBoundingClientRect().top+canvas.clientTop+canvas.clientHeight/2;
+    if(step>0)updatePage(1+Math.round((middle-first.top-first.height/2)/step));
+  }
+  canvas.addEventListener('scroll',trackPage,{passive:true});
+  function applyZoom(reposition=false){
+    const mode=s.zoomMode||'page',wholePage=mode==='page';
+    if(![...picker.options].some(o=>o.value===mode))picker.add(new Option(`${mode}%`,mode));
+    picker.value=mode;
+    const sheet=pages.querySelector('.oficio-sheet');
+    if(!sheet?.offsetHeight||!canvas.clientHeight||!canvas.clientWidth)return;
+    updatePage(s.page||1);
+    canvas.classList.toggle('fit-page',wholePage);
+    const style=getComputedStyle(canvas);
+    const verticalPadding=parseFloat(style.paddingTop)+parseFloat(style.paddingBottom);
+    const height=Math.max(1,canvas.clientHeight-verticalPadding);
+    const width=Math.max(1,canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight));
+    const fitWidth=width/sheet.offsetWidth;
+    const sheetHeight=sheet.offsetHeight+parseFloat(getComputedStyle(sheet).marginBottom);
+    let zoom=Number(mode)/100;
+    if(wholePage){
+      zoom=Math.min(fitWidth,height/sheetHeight);
+      pages.style.setProperty('--fit-frame-height',`${height/zoom}px`);
+      pages.style.setProperty('--fit-frame-gap',`${verticalPadding/zoom}px`);
+    }else if(mode==='fit')zoom=Math.min(1.25,fitWidth);
+    pages.style.zoom=zoom;
     picker.title=`Zoom actual: ${Math.round(zoom*100)}%`;
     s.zoom=zoom;
+    root.querySelector('[data-tool="out"]').disabled=zoom<=0.5;
+    root.querySelector('[data-tool="in"]').disabled=zoom>=2;
+    if(wholePage||reposition)revealPage(canvas,pages.children[s.page-1]);
+  }
+  function showEditorOnEntry(){
+    if(s.draftPositioned||!canvas.clientHeight)return;
+    const bounds=stage.getBoundingClientRect();
+    const actions=root.querySelector('.document-toolbar').getBoundingClientRect();
+    const visibleBottom=Math.min(window.innerHeight,actions.top)-8;
+    const offset=bounds.top<0?bounds.top:Math.min(bounds.top,Math.max(0,bounds.bottom-visibleBottom));
+    if(offset)window.scrollBy({top:offset,behavior:'instant'});
+    s.draftPositioned=true;
   }
   function scan(){
     const needle=root.querySelector('[data-find]').value.toLocaleLowerCase('es');matches=[];
@@ -100,7 +153,8 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     matchIndex=(matchIndex+direction+matches.length)%matches.length;
     const match=matches[matchIndex],el=[...root.querySelectorAll(`[data-block="${match.block}"]`)].find(el=>match.at<Number(el.dataset.offset)+el.textContent.length);
     editables().forEach(e=>e.classList.toggle('search-current',e===el));
-    selected=match.block;el.scrollIntoView({block:'center',inline:'nearest'});
+    selected=match.block;
+    if(!canvas.classList.contains('fit-page'))el.scrollIntoView({block:'center',inline:'nearest'});
     // Texto plano renderizado: seleccionar la coincidencia sin insertar HTML.
     focusPoint(root,{block:match.block,start:match.at,end:match.at+match.length});
     root.querySelector('[data-find-count]').textContent=`${matchIndex+1} de ${matches.length} coincidencias`;refresh();
@@ -118,12 +172,13 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   }
   root.querySelector('[data-find]').oninput=()=>{matchIndex=-1;scan();};
   root.querySelector('[data-find]').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();showMatch(e.shiftKey?-1:1);}};
-  root.querySelector('[data-zoom]').onchange=e=>{s.zoomMode=e.target.value;applyZoom();};
+  picker.onchange=()=>{s.zoomMode=picker.value;applyZoom(true);};
   root.querySelectorAll('[data-tool]').forEach(button=>button.onclick=async()=>{
     const action=button.dataset.tool;
     if(['undo','redo','save','add','remove','replace','all'].includes(action)&&locked())return;
     if(button.closest('.doc-tools-more'))button.closest('.doc-tools-more').open=false;
     if(action==='undo'||action==='redo')travel(action==='redo');
+    else if(action==='page-back'||action==='page-forward')goToPage(s.page+(action==='page-back'?-1:1));
     else if(action==='save')save();
     else if(action==='find'){root.querySelector('.document-find').hidden=false;root.querySelector('[data-find]').focus();}
     else if(action==='close-find'){root.querySelector('.document-find').hidden=true;editables().forEach(e=>e.classList.remove('search-current'));root.querySelector('[data-tool="find"]').focus();}
@@ -131,8 +186,7 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
     else if(action==='replace'||action==='all')replace(action==='all');
     else if(action==='in'||action==='out'){
       const zoom=Math.min(200,Math.max(50,Math.round(s.zoom*100/10)*10+(action==='in'?10:-10)));
-      const select=root.querySelector('[data-zoom]');if(![...select.options].some(o=>o.value===String(zoom)))select.add(new Option(`${zoom}%`,zoom));
-      s.zoomMode=String(zoom);applyZoom();
+      s.zoomMode=String(zoom);applyZoom(true);
     }else if(action==='full'){
       expand(!stage.classList.contains('document-expanded'));
     }else if((action==='add'||action==='remove')&&!locked()){record();selected=paragraph(selected,action);renderSheet();changed();refresh();root.querySelector(`[data-block="${selected}"]`)?.focus();}
@@ -140,7 +194,8 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   root.onkeydown=e=>{
     if(e.key==='Escape'&&stage.classList.contains('document-expanded')){expand(false);root.querySelector('[data-tool="full"]').focus();}
     if(e.key==='Tab'&&stage.classList.contains('document-expanded')){
-      const items=[...stage.querySelectorAll('button:not(:disabled),input:not(:disabled),select,[tabindex="0"],[contenteditable="plaintext-only"]')].filter(el=>el.getClientRects().length);
+      const items=[...stage.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],summary,[tabindex="0"],[contenteditable="plaintext-only"]')].filter(el=>el.getClientRects().length);
+      if(!items.length)return;
       const first=items[0],last=items.at(-1);
       if(e.shiftKey&&e.target===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&e.target===last){e.preventDefault();first.focus();}
     }
@@ -153,9 +208,10 @@ export function createDocumentTools(s,{renderSheet,changed,updateText,paragraph,
   const observer=new ResizeObserver(()=>{
     if(canvas.clientWidth&&root.querySelector('.oficio-pages')?.dataset.needsPagination)renderSheet();
     applyZoom();
+    showEditorOnEntry();
   });observer.observe(canvas);
   const fullChange=()=>{const full=document.fullscreenElement===stage;root.querySelector('[data-tool="full"]').setAttribute('aria-pressed',String(full));applyZoom();};
   document.addEventListener('fullscreenchange',fullChange);
   bindSheet();
-  return {record,refresh,bindSheet,destroy(){if(stage.classList.contains('document-expanded'))expand(false);observer.disconnect();document.removeEventListener('fullscreenchange',fullChange);}};
+  return {record,refresh,bindSheet,destroy(){if(stage.classList.contains('document-expanded'))expand(false);observer.disconnect();canvas.removeEventListener('scroll',trackPage);document.removeEventListener('fullscreenchange',fullChange);}};
 }

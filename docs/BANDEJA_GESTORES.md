@@ -1,6 +1,8 @@
 # Bandeja de expedientes y gestores del piloto
 
-La entrada principal abre **Mi trabajo**. Desde el menú se puede consultar el **Pool del equipo**, los pendientes, los borradores y los expedientes finalizados. Cada fila corresponde a un expediente completo. Las peticiones internas conservan su identificación, fuentes, revisión y respuesta dentro de ese expediente.
+Esta guía describe **Expedientes anteriores**, donde la bandeja abre **Mi trabajo**.
+El flujo FIAGA para nuevas solicitudes se describe en el [README principal](../README.md#flujo-de-trabajo).
+Desde el menú histórico se puede consultar el **Pool del equipo**, los pendientes, los borradores y los expedientes finalizados. Cada fila corresponde a un expediente completo. Las peticiones internas conservan su identificación, fuentes, revisión y respuesta dentro de ese expediente.
 
 ## Recepción e inicio
 
@@ -32,7 +34,7 @@ Abre **Tiempos de gestión** en el menú lateral. **Por expediente** muestra la 
 | Tiempo total | Tiempo calendario desde el alta en el sistema hasta el último cierre. En un expediente abierto, incluida una reapertura, llega hasta la hora de consulta. El alta corresponde a la creación del expediente en el sistema. |
 | Espera en el pool | Intervalos documentados en estado recibido sin gestor asignado. El tiempo pendiente se calcula por separado a partir de los cambios de estado. |
 | Activo estimado | Se activa automáticamente cuando el gestor seleccionado abre un expediente propio y trabaja en él en primer plano. Al salir a la bandeja, cambiar de pestaña o perder el foco, se detiene. El servidor cuenta una sola sesión por gestor entre todas sus pestañas. |
-| Sin confirmar | Después de dos minutos sin interacción, aparece una pregunta. Los intervalos posteriores con la vista abierta quedan sin confirmar hasta que el gestor confirme que sigue trabajando. La confirmación reanuda la estimación desde ese momento. |
+| Sin confirmar | Después de dos minutos sin interacción, la barra muestra «Lectura sin confirmar». El gestor puede seguir leyendo y usar «Confirmar que sigo trabajando» para reanudar la estimación desde ese momento. |
 | Trabajo externo declarado | En el expediente, **Registrar trabajo externo** permite anotar por separado los minutos y el motivo de una llamada, consulta u otra actividad fuera de la pantalla. |
 
 Por ejemplo, si una PQRS permanece cuatro horas abierta y dos gestores le dedican 15 y 20 minutos en pantalla, el informe muestra cuatro horas de duración y 35 minutos activos estimados. Reasignar conserva lo registrado a nombre de cada persona. El lector de IA y la generación de documentos pueden trabajar en paralelo a una sesión. Sus duraciones técnicas se consultan por separado.

@@ -8,6 +8,48 @@ const mapping={status:'ready',results:[{request_id:'P1',supports:[{source_id:'so
 const drafts={status:'running',completed_count:2,request_states:{P1:'completed',P2:'redactar',P3:'queued'},results:[{request_id:'P1',draft:{paragraphs:[{text:'Respuesta de prueba.'}]}},{request_id:'error-outside-current',error:'Error de prueba'}]};
 const review={requests:[{request_id:'P1',paragraphs:[{text:'Texto editado y guardado.'}],pending:[{id:'pending-1',state:'confirmation_pending',kind:'fact',description:'Confirmar el canal de atención.'}]}]};
 
+test('en FIAGA distingue el pasaje citado, el documento consultado y una referencia sin acceso',()=>{
+  const base=mapping.results[0].supports[0];
+  const cited={...base,chunk_id:'cited'};
+  const consulted={...base,source_id:'source-2',chunk_id:'consulted',title:'Otro documento',quote:'Pasaje consultado.'};
+  const discarded={...base,source_id:'source-3',chunk_id:'discarded',title:'Candidato descartado'};
+  const finding={results:[{request_id:'P1',supports:[consulted,cited]}]};
+  const saved={requests:[{...review.requests[0],available_supports:[discarded],
+    paragraphs:[{text:'Respuesta revisada.',cited_chunk_ids:['cited','unavailable']}]}]};
+  const render=selectedChunk=>redactionWorkspace(current,{status:'ready'},finding,{},saved,
+    {fiaga:true,selectedRequest:'P1',selectedChunk});
+  const initial=render();
+  assert.match(initial,/Citado en el párrafo 1/);
+  assert.match(initial,/data-source="source-1"/);
+  assert.match(initial,/Otro documento · Consultado/);
+  assert.match(initial,/referencia guardada ya no está disponible/);
+  assert.doesNotMatch(initial,/Candidato descartado|Agregar evidencia|Seleccionar fuentes|data-action="live-pending"/);
+  const selected=render('consulted');
+  assert.match(selected,/data-source="source-2"/);
+  assert.match(selected,/Consultado durante la búsqueda/);
+  assert.doesNotMatch(selected,/Citado en el párrafo 1/);
+});
+
+test('FIAGA presenta el cotejo secundario separado de los faltantes y las citas',()=>{
+  const text='Cotejar la página 3 del oficio <anexo>.';
+  const primary={...mapping.results[0].supports[0],chunk_id:'guia:2:1:1'};
+  const finding={request_id:'P1',status:'references_found',supports:[primary],missing:[],
+    secondary_source_checks:[{description:text,resolution:{status:'open'}}]};
+  const saved={requests:[{request_id:'P1',pending:[],paragraphs:[{text:'Respuesta guardada.',
+    cited_chunk_ids:[primary.chunk_id]}]}]};
+  const render=updates=>redactionWorkspace(current,{status:'ready'},
+    {status:'ready',results:[finding],...updates},{},saved,{fiaga:true,selectedRequest:'P1'});
+  const html=render({});
+  assert.match(html,/Ver fuentes \(1\)/);
+  assert.match(html,/Citado en el párrafo 1/);
+  assert.match(html,/Cotejo de fuentes complementarias/);
+  assert.match(html,/Abierto<\/strong> · Cotejar la página 3 del oficio &lt;anexo&gt;/);
+  assert.doesNotMatch(html,/Faltantes para el pool|Revisar pendientes|<anexo>/);
+  finding.secondary_source_checks[0].resolution.status='resolved';
+  assert.match(render({}),/Resuelto<\/strong> · Cotejar/);
+  assert.doesNotMatch(render({scope_revoked:true}),/Cotejo de fuentes complementarias|&lt;anexo&gt;/);
+});
+
 test('el aviso de corrección oculta los resultados anteriores y explica cómo recalcular',()=>{
   const options={selectedRequest:'P1',hideOutdated:true,correctionNotice:'waiting'};
   const html=redactionWorkspace(current,{status:'waiting_review'},mapping,drafts,review,options);
@@ -49,6 +91,12 @@ test('recuperar respuestas anteriores no muestra un cero definitivo ni ofrece re
   assert.match(html,/Recuperando las respuestas guardadas/);
   assert.doesNotMatch(html,/0 de 3|La respuesta aún no está disponible|data-action="live-resume"/);
   assert.match(html,/Revisar identificación/);
+});
+
+test('una preparación registrada carga los estados reales aunque falte saved_stage',()=>{
+  const html=redactionWorkspace(current,{status:'waiting_review'},{},{status:'idle'},{},{fiaga:true});
+  assert.match(html,/Recuperando las respuestas guardadas/);
+  assert.doesNotMatch(html,/0 de 3|Por preparar|La respuesta está pendiente de preparación/);
 });
 
 test('las respuestas históricas se cuentan como guardadas aunque sus comprobaciones estén desactualizadas',()=>{
@@ -97,7 +145,11 @@ test('conserva texto anterior, marca resultados desactualizados y no los cuenta 
 });
 
 test('expone errores recuperables sin convertirlos en documentos faltantes',()=>{
-  const failed={status:'ready',results:[{request_id:'P1',status:'error',summary:'Falló la extracción.',evidence_states:['analysis_error']}]};
+  const failed={status:'ready',results:[
+    {request_id:'P1',status:'error',summary:'Falló la extracción.',evidence_states:['analysis_error']},
+    {request_id:'P2',status:'no_matches',supports:[]},
+    {request_id:'P3',status:'no_matches',supports:[]},
+  ]};
   const html=redactionWorkspace(current,{status:'error',error:'No se completó la preparación'},failed,{},{});
   assert.match(html,/Falló la extracción/);assert.match(html,/live-retry-failed/);
   assert.doesNotMatch(html,/Documento faltante/);
@@ -225,4 +277,69 @@ test('polling restaura lectura, selección expandida y foco sin saltar a otra pe
   const saved=captureRedactionView(view);details[1].open=true;scroll[0].scrollTop=0;
   restoreRedactionView(view,saved);assert.equal(details[1].open,false);assert.equal(scroll[0].scrollTop,238);assert.equal(scroll[1].scrollTop,126);
   delete globalThis.document;
+});
+
+test('en FIAGA un error de borrador con fuentes listas ofrece reintentar sin repetir fuentes',()=>{
+  const readySources={status:'ready',results:[
+    {request_id:'P1',status:'references_found',supports:[mapping.results[0].supports[0]]},
+    {request_id:'P2',status:'no_matches',supports:[]},
+    {request_id:'P3',status:'no_matches',supports:[]},
+  ]};
+  const failedDrafts={status:'partial',results:[
+    {request_id:'P1',status:'needs_review',draft:{paragraphs:[{text:'Respuesta.'}]}},
+    {request_id:'P2',status:'error',error:'El proceso no pudo terminar. El avance está guardado; vuelva a intentar.'},
+  ]};
+  const saved={status:'editing',requests:[
+    {request_id:'P1',paragraphs:[{text:'Respuesta.'}],pending:[]},
+    {request_id:'P2',pre_draft:true,paragraphs:[],pending:[]},
+    {request_id:'P3',pre_draft:true,paragraphs:[],pending:[]},
+  ]};
+  const html=redactionWorkspace(current,{status:'waiting_review'},readySources,failedDrafts,saved,{fiaga:true,selectedRequest:'P2'});
+  assert.match(html,/1 solicitud no pudo prepararse/);
+  assert.match(html,/data-action="live-resume">Reintentar la solicitud con error/);
+  assert.doesNotMatch(html,/data-action="live-collections"/);
+  assert.match(html,/class="redaction-retry-button" data-action="live-resume" aria-label="Reintentar preparación de la petición 2"/);
+  assert.match(html,/class="fiaga-error-retry"><button type="button" class="redaction-retry-button" data-action="live-resume"/);
+});
+
+test('error de fuente por petición usa reintento selectivo y en FIAGA omite Fuentes de consulta',()=>{
+  const fullMapping={status:'error',results:[
+    {request_id:'P1',status:'references_found',supports:[mapping.results[0].supports[0]]},
+    {request_id:'P2',status:'error',summary:'Fallo transitorio en la lectura.',evidence_states:['analysis_error']},
+    {request_id:'P3',status:'no_matches',supports:[]},
+  ]};
+  const html=redactionWorkspace(current,{status:'waiting_review'},fullMapping,{status:'partial',results:[]},{status:'editing',requests:[]},{fiaga:true,selectedRequest:'P2'});
+  assert.match(html,/1 solicitud no pudo analizarse/);
+  assert.match(html,/data-action="live-retry-failed">Reintentar la solicitud con error/);
+  assert.doesNotMatch(html,/data-action="live-collections"/);
+  assert.match(html,/class="redaction-retry-button" data-action="live-retry-failed" aria-label="Reintentar preparación de la petición 2"/);
+});
+
+test('petición sin respaldos y solo actuación posterior muestra estado específico y Ver pendientes en FIAGA',()=>{
+  const single={...current,identification:{requests:[current.identification.requests[0]]}};
+  const readySources={status:'ready',results:[{request_id:'P1',status:'no_matches',supports:[],missing:[]}]};
+  const saved={status:'editing',requests:[{request_id:'P1',pre_draft:true,paragraphs:[],pending:[
+    {id:'p-1',stage:'fulfillment',blocks_approval:false,description:'Tramitar la firma del docente.'},
+  ]}]};
+  const html=redactionWorkspace(single,{status:'waiting_review'},readySources,{status:'partial',results:[]},saved,{fiaga:true,selectedRequest:'P1'});
+  assert.match(html,/Actuación posterior/);
+  assert.match(html,/se tramitará en el pool/);
+  assert.match(html,/Ver pendientes/);
+  assert.doesNotMatch(html,/Por preparar|La respuesta aún no está disponible/);
+});
+
+test('errores en borradores ajenos a las peticiones actuales no activan el aviso de reintento',()=>{
+  const html=redactionWorkspace(current,{status:'ready'},mapping,drafts,review,{fiaga:true,selectedRequest:'P1'});
+  assert.doesNotMatch(html,/source-retry|redaction-retry-button|no pudo prepararse/);
+});
+
+test('búsqueda de fuentes interrumpida a medias usa live-resume en el banner y en la tarjeta',()=>{
+  const partialMapping={status:'error',results:[
+    {request_id:'P1',status:'error',summary:'Corte de conexión durante la lectura.',evidence_states:['analysis_error']},
+  ]};
+  const html=redactionWorkspace(current,{status:'interrupted'},partialMapping,{status:'idle',results:[]},{status:'idle',requests:[]},{selectedRequest:'P1'});
+  assert.match(html,/1 solicitud no pudo analizarse/);
+  assert.match(html,/data-action="live-resume">Continuar análisis y reintentar/);
+  assert.doesNotMatch(html,/data-action="live-retry-failed"/);
+  assert.match(html,/class="redaction-retry-button" data-action="live-resume" aria-label="Reintentar preparación de la petición 1"/);
 });

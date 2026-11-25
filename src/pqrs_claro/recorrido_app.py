@@ -23,7 +23,7 @@ def create_recorrido(backend_port=8770, transport=None):
             app.state.backend = client
             yield
 
-    app = FastAPI(lifespan=lifespan)
+    app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"]
     )
@@ -53,7 +53,20 @@ def create_recorrido(backend_port=8770, transport=None):
     async def api_proxy(path: str, request: Request):
         # El destino está fijado en loopback. No se abre otra conexión SQLite ni
         # se confunde la demostración guardada con un expediente real.
-        headers = {key: request.headers[key] for key in ("content-type",) if key in request.headers}
+        lower = path.lower()
+        if (
+            ".." in path.split("/")
+            or "\\" in path
+            or "%2e" in lower
+            or "%2f" in lower
+            or "%5c" in lower
+        ):
+            return JSONResponse({"detail": "Ruta de API inválida."}, 400)
+        headers = {
+            key: request.headers[key]
+            for key in ("content-type", "x-fiaga-actor")
+            if key in request.headers
+        }
         try:
             result = await app.state.backend.request(
                 request.method,

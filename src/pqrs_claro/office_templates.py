@@ -220,8 +220,16 @@ def template_profile(path: Path) -> dict:
     """Perfil comprobable de una sección con encabezado y pie estáticos."""
     try:
         with ZipFile(path) as package:
-            if sum(info.file_size for info in package.infolist()) > 30 * 1024 * 1024:
-                raise ValueError
+            total_bytes = 0
+            limit = 30 * 1024 * 1024
+            for info in package.infolist():
+                if info.file_size > limit:
+                    raise ValueError
+                with package.open(info) as member:
+                    while chunk := member.read(65536):
+                        total_bytes += len(chunk)
+                        if total_bytes > limit:
+                            raise ValueError
             names = package.namelist()
             if len(names) != len(set(names)) or any(
                 name.startswith("word/comments") or name.endswith("vbaProject.bin")

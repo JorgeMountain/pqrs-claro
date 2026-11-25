@@ -11,6 +11,7 @@ from langgraph.types import Command
 from .answer_coverage import DETAIL_POLICY_HASH, has_current_details, validate_units
 from .document_decisions import canonical_document_decision
 from .evidence_contract import normalize_pending, pending_identity
+from .independent_support import secondary_source_ids
 from .models import DomainError
 from .performance_metrics import track_case
 from .procedure_scope import PROCEDURE_SCOPE_POLICY_HASH
@@ -99,6 +100,16 @@ class ReviewService:
         self.pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reviews")
         self.active = set()
         self._approval_inputs_cache = {}
+        self._checkpoint_lock = threading.Lock()
+        self._checkpoint_ready = False
+
+    def _ensure_checkpoints(self):
+        path = self.settings.data_dir / "review_checkpoints.sqlite"
+        with self._checkpoint_lock:
+            if not self._checkpoint_ready or not path.exists():
+                with SqliteSaver.from_conn_string(str(path)) as warmup:
+                    warmup.get_tuple({"configurable": {"thread_id": "__schema_initialization__"}})
+                self._checkpoint_ready = True
 
     def _base(self, case_id):
         case, sources, fingerprint, current = self.drafts_service._current(case_id)
@@ -121,7 +132,7 @@ class ReviewService:
             current,
         )
 
-    def _current(self, row, base=None):
+    def _current(self, row, base=None, verified_originals=None):
         case, _, fingerprint, current = base or self._base(row["case_id"])
         if (
             row.get("stale")
@@ -133,16 +144,23 @@ class ReviewService:
             }
         ):
             return False
+        # Several answers can cite the same original. Recheck it on each GET,
+        # but only once within this case's locked permission projection.
+        verified = verified_originals if verified_originals is not None else set()
         try:
-            self.cases.original(row["case_id"])
+            if ("case", case["id"]) not in verified:
+                self.cases.original(case["id"])
+                verified.add(("case", case["id"]))
             for source_id in {s["source_id"] for s in row["available_supports"]}:
-                self.library.original(source_id, row["case_id"])
+                if ("source", source_id) not in verified:
+                    self.library.original(source_id, case["id"])
+                    verified.add(("source", source_id))
         except (ValueError, KeyError):
             return False
         return True
 
-    def _project(self, row, base=None):
-        if not self._current(row, base) and not row.get("stale"):
+    def _project(self, row, base=None, verified_originals=None):
+        if not self._current(row, base, verified_originals) and not row.get("stale"):
             row.update(
                 stale=True,
                 status="stale",
@@ -207,39 +225,74 @@ class ReviewService:
                    "error": "Cambió el permiso de consulta. Actualiza las fuentes del expediente."}
 
     def get(self, case_id):
-        with self.lock, self.library.lock:
-            base = self._base(case_id)
-            case = base[0]
-            ids = [r["id"] for r in (case.get("identification") or {}).get("requests", [])]
+        with self.lock:
             rows = {row["request_id"]: row for row in self.store.list(case_id)}
-            requests = list(self._visible_rows(
-                case_id, (self._project(rows[key], base) for key in ids if key in rows)))
-            stale = any(row["stale"] for row in requests)
-            count = sum(row["status"] == "approved" for row in requests)
-            status = (
-                "idle"
-                if not requests
-                else "stale"
-                if stale
-                else "checking"
-                if any(row["status"] == "checking" for row in requests)
-                else "approved"
-                if count == len(ids) and len(requests) == len(ids)
-                else "ready"
-                if len(requests) == len(ids)
-                and all(row["status"] in {"ready", "approved"} for row in requests)
-                else "editing"
-            )
-            return dict(
-                case_id=case_id,
-                status=status,
-                stale=stale,
-                requests=requests,
-                approved_count=count,
-                total_count=len(ids),
-                reading_confirmation=reading_state(case, requests, self.store.reading(case_id)),
-                error=None,
-            )
+            if rows:
+                with self.library.lock:
+                    base = self._base(case_id)
+                    case = base[0]
+                    verified_originals = set()
+                    requests = list(self._visible_rows(
+                        case_id, (self._project(rows[r["id"]], base, verified_originals)
+                                  for r in (case.get("identification") or {}).get("requests", [])
+                                  if r["id"] in rows)))
+                    return self._summary(case, requests)
+            # Still verify visibility of the case when there are no review rows.
+            return self._summary(self.cases.get(case_id), [])
+
+    def _summary(self, case, requests):
+        case_id = case["id"]
+        total = len((case.get("identification") or {}).get("requests", []))
+        stale = any(row["stale"] for row in requests)
+        count = sum(row["status"] == "approved" for row in requests)
+        fiaga_prepared = None
+        if (case.get("receipt") or {}).get("workflow") == "fiaga":
+            fiaga_prepared = False
+            if requests:
+                job = self.preparation.get(case_id)
+                has_draft_errors = bool(job.get("draft_error_ids"))
+                if not has_draft_errors and "draft_error_ids" not in job:
+                    draft_run = self.drafts_service.store.latest(case_id)
+                    latest_source = self.library.latest_run(case_id, compact=True)
+                    has_draft_errors = bool(
+                        draft_run
+                        and not draft_run.get("stale")
+                        and draft_run.get("case_version") == case["version"]
+                        and draft_run.get("source_run_id") == (latest_source or {}).get("id")
+                        and (
+                            draft_run.get("status") == "failed"
+                            or any(
+                                r.get("status") == "error" for r in draft_run.get("results", [])
+                            )
+                        )
+                    )
+                fiaga_prepared = (
+                    not job["stale"]
+                    and not job.get("analysis_error_ids")
+                    and not has_draft_errors
+                    and job["status"] in {"waiting_review", "ready"}
+                )
+        status = (
+            "idle"
+            if not requests
+            else "stale"
+            if stale
+            else "checking"
+            if any(row["status"] == "checking" for row in requests)
+            else "approved"
+            if count == total and len(requests) == total
+            else "ready"
+            if len(requests) == total
+            and all(row["status"] in {"ready", "approved"} for row in requests)
+            else "editing"
+        )
+        return dict(
+            case_id=case_id, status=status, stale=stale, requests=requests,
+            approved_count=count, total_count=total,
+            reading_confirmation=reading_state(case, requests, self.store.reading(case_id),
+                                                fiaga_prepared=fiaga_prepared),
+            error=None,
+        )
 
     def preview(self, case_id, request_id):
         """Load one petition under the same permission snapshot as its saved review."""
@@ -278,6 +331,7 @@ class ReviewService:
                     else:
                         self.cases.original(case_id)
                     ids = {s["source_id"] for s in finding.get("supports", [])}
+                    ids.update(secondary_source_ids(finding))
                     for source_id in ids - verified:
                         self.library.original(source_id, case_id)
                 except (ValueError, KeyError):
@@ -288,6 +342,7 @@ class ReviewService:
                 mapping["results"] = [{key: finding[key] for key in (
                     "request_id", "status", "summary", "supports", "missing", "warnings",
                     "analysis_diagnostic", "analysis_notices", "evidence_states",
+                    "secondary_source_checks",
                 ) if key in finding}]
 
             if row:
@@ -345,9 +400,14 @@ class ReviewService:
             for s in finding.get("supports", [])
         }
         kind = requested_document(request)
+        excluded = secondary_source_ids(finding)
         for document in finding.get("candidate_documents", []):
+            if document.get("source_id") in excluded:
+                continue
             for fragment in document["chunks"]:
                 chunk = chunks[fragment["chunk_id"]]
+                if chunk.get("source_id") in excluded:
+                    continue
                 roles = _allowed_roles(chunk["category"], kind, request=request, source=chunk)
                 role = (
                     "document"
@@ -733,7 +793,11 @@ class ReviewService:
             )
             row = self.store.save(row, expected=revision, event="assessment_started")
             self.active.add(key)
-            self.pool.submit(self.run, deepcopy(row))
+            try:
+                self.pool.submit(self.run, deepcopy(row))
+            except Exception:
+                self.active.discard(key)
+                raise
             return row
 
     def _engine(self):
@@ -744,15 +808,22 @@ class ReviewService:
             procedure_scope_pilot=self.settings.procedure_scope_pilot,
         )
 
+    def _acquire_engine(self):
+        if self.engine is not None:
+            return self.engine, None
+        engine = self._engine()
+        return engine, engine
+
     @track_case("review", "original")
     def run(self, original):
         from .review_graph import build_review_graph
 
         key = (original["case_id"], original["request_id"])
+        owned_engine = None
         try:
             if not self._current(original):
                 raise Conflict("Las fuentes cambiaron durante la comprobación.")
-            engine = self._engine()
+            engine, owned_engine = self._acquire_engine()
             if "coverage_units" in original and (
                 original["coverage_units"] is None
                 or not has_current_details(original["coverage_units"])
@@ -781,6 +852,7 @@ class ReviewService:
                     original = self.store.save(
                         row, expected=original["revision"], event="coverage_units_refreshed",
                     )
+            self._ensure_checkpoints()
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "review_checkpoints.sqlite")
             ) as saver:
@@ -836,8 +908,12 @@ class ReviewService:
                         row.update(status="error", error=error, assessment=None, approval=None)
                         self.store.save(row, expected=row["revision"], event="assessment_failed")
         finally:
-            with self.lock:
-                self.active.discard(key)
+            try:
+                if owned_engine is not None and hasattr(owned_engine, "close"):
+                    owned_engine.close()
+            finally:
+                with self.lock:
+                    self.active.discard(key)
 
     def _validate_approval_inputs(self, case_id):
         """Reuse the common map check, only while its committed inputs match.
@@ -903,43 +979,49 @@ class ReviewService:
             if issues:
                 raise Conflict("Corrige las citas y resoluciones de esta versión antes de aprobar.")
             case = self.cases.get(case_id)
+            self._ensure_checkpoints()
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "review_checkpoints.sqlite")
             ) as saver:
-                graph = build_review_graph(self._engine(), saver)
-                config = {"configurable": {"thread_id": row["check_thread_id"]}}
-                state = graph.get_state(config)
-                if (
-                    state.values.get("evaluated_input_hash") != fingerprint
-                    or input_hash(state.values.get("review", {})) != fingerprint
-                    or state.values.get("assessment")
-                    != {key: assessment[key] for key in (
-                        "status", "issues", "local_checks", "requirement_checks", "unit_checks",
-                        "detail_checks",
-                    )}
-                ):
-                    raise Conflict(
-                        "La pausa de aprobación no corresponde a esta evaluación. "
-                        "Comprueba de nuevo."
-                    )
-                decision = {key: body[key] for key in ("approved_by", "note", "confirmed")}
-                resume = {**decision, "input_hash": fingerprint}
-                if state.next == ("esperar_aprobacion",):
-                    state = graph.invoke(Command(resume=resume), config)
-                elif state.values.get("approval_decision") == resume:
-                    # Un apagado puede ocurrir entre confirmar el grafo y guardar la
-                    # proyección SQLite. La misma decisión explícita recupera ese corte.
-                    if state.next == ("registrar_aprobacion",):
-                        state = graph.invoke(None, config)
-                    elif not state.next and state.values.get("approval"):
-                        state = state.values
+                engine, owned_engine = self._acquire_engine()
+                try:
+                    graph = build_review_graph(engine, saver)
+                    config = {"configurable": {"thread_id": row["check_thread_id"]}}
+                    state = graph.get_state(config)
+                    if (
+                        state.values.get("evaluated_input_hash") != fingerprint
+                        or input_hash(state.values.get("review", {})) != fingerprint
+                        or state.values.get("assessment")
+                        != {key: assessment[key] for key in (
+                            "status", "issues", "local_checks", "requirement_checks", "unit_checks",
+                            "detail_checks",
+                        )}
+                    ):
+                        raise Conflict(
+                            "La pausa de aprobación no corresponde a esta evaluación. "
+                            "Comprueba de nuevo."
+                        )
+                    decision = {key: body[key] for key in ("approved_by", "note", "confirmed")}
+                    resume = {**decision, "input_hash": fingerprint}
+                    if state.next == ("esperar_aprobacion",):
+                        state = graph.invoke(Command(resume=resume), config)
+                    elif state.values.get("approval_decision") == resume:
+                        # Un apagado puede ocurrir entre confirmar el grafo y guardar la
+                        # proyección SQLite. La misma decisión explícita recupera ese corte.
+                        if state.next == ("registrar_aprobacion",):
+                            state = graph.invoke(None, config)
+                        elif not state.next and state.values.get("approval"):
+                            state = state.values
+                        else:
+                            raise Conflict("La pausa cambió. Vuelve a comprobar esta revisión.")
                     else:
-                        raise Conflict("La pausa cambió. Vuelve a comprobar esta revisión.")
-                else:
-                    raise Conflict(
-                        "La aprobación interrumpida tenía otra decisión. "
-                        "Vuelve a comprobar antes de aprobar con datos diferentes."
-                    )
+                        raise Conflict(
+                            "La aprobación interrumpida tenía otra decisión. "
+                            "Vuelve a comprobar antes de aprobar con datos diferentes."
+                        )
+                finally:
+                    if owned_engine is not None and hasattr(owned_engine, "close"):
+                        owned_engine.close()
             approved = state.get("approval")
             if not approved or approved["input_hash"] != fingerprint:
                 raise Conflict("El grafo no confirmó la aprobación de esta versión.")
@@ -1012,4 +1094,4 @@ class ReviewService:
         self.store.recover()
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)

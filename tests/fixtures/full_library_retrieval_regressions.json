@@ -1,0 +1,22 @@
+{
+  "description": "Regresiones diagnosticadas antes del piloto. Separadas de las 14 preguntas nuevas; nunca se envían al selector ni al lector.",
+  "cases": {
+    "REG": {
+      "P2": {
+        "required_alternatives": [{
+          "id": "exam_dates",
+          "alternatives": [
+            {"source_id": "9178f41db9604e0d9ec337d2424585ed", "page": 3, "quote": "26 y 27 de octubre de 2026"},
+            {"source_id": "9178f41db9604e0d9ec337d2424585ed", "page": 44, "quote": "El examen de admisión se efectuará el 26 y el 27 de octubre de 2026"}
+          ]
+        }]
+      },
+      "P4": {
+        "required_alternatives": [{
+          "id": "credential_fields",
+          "alternatives": [{"source_id": "9178f41db9604e0d9ec337d2424585ed", "page": 44, "quote": "En ella verifique sus apellidos y nombres, el número de la credencial, el año y semestre de la admisión, los programas a los cuales aspira, su documento de identidad, clase de documento, el día, la hora, el bloque, el aula, la sede o campus y dirección del campus, donde le corresponde presentar el examen."}]
+        }]
+      }
+    }
+  }
+}

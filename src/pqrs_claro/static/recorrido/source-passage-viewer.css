@@ -1,0 +1,35 @@
+source-passage-viewer { display: grid; gap: .6rem; min-width: 0; }
+source-passage-viewer [hidden] { display: none !important; }
+source-passage-viewer [data-passage-body] { display: grid; gap: .5rem; }
+.source-passage-canvas, .source-passage-text {
+  max-height: min(58vh, 38rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--color-line, #c8d0de);
+  border-radius: 5px;
+}
+.source-passage-canvas { background: var(--color-canvas, #e9edf2); }
+.source-passage-paper { position: relative; }
+.source-passage-paper img { display: block; width: 100%; height: auto; }
+.source-passage-mark {
+  position: absolute;
+  pointer-events: none;
+  background-color: rgba(255, 208, 70, .32);
+  border-bottom: 2px solid #936400;
+}
+.source-passage-text {
+  margin: 0;
+  padding: .85rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.55;
+  background: white;
+}
+.source-passage-text mark { background: #ffedb0; color: inherit; text-decoration: underline #936400; }
+.source-passage-transcript > p, .source-passage-note { color: var(--color-muted); font-size: .9em; }
+.source-passage-quote { font-size: .9em; }
+.source-passage-quote summary, .source-passage-original { color: var(--color-green); }
+.source-passage-quote summary { cursor: pointer; }
+.source-passage-quote blockquote { margin: .6rem 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.source-passage-original { justify-self: start; }

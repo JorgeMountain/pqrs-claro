@@ -585,6 +585,11 @@ class OpenAIReviewEngine:
         self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
                              http_client=metrics_http_client())
 
+    def close(self) -> None:
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
     def _procedure_scope(self, request: dict, paragraphs: list[dict]) -> dict:
         return assess_procedure_scope(
             self.client, self.model, request, paragraphs, operation="review.procedure_scope",

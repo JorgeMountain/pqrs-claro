@@ -1,10 +1,11 @@
+function safeOriginalUrl(value){const url=String(value??'').trim();if(!url)return '';if(/^(\/(?!\/)|\.\/|files\/)/i.test(url))return url;try{const p=new URL(url);return p.protocol==='https:'||p.protocol==='http:'?url:'';}catch{return '';}}
 export function originalViewer(data,state,esc){
   const pages=data.original_pages || [];
   const selected=Number.isInteger(state.originalSelection)?data.requests[state.originalSelection]:null;
   const page=pages.find(p=>p.number===(state.originalPage||1)) || pages[0];
   const marks=selected?.original_marks?.filter(m=>m.page===page?.number) || [];
   const label=selected?`Solicitud ${selected.label} · ${selected.title}`:'Selecciona «Ver de dónde salió» en una solicitud para resaltar su origen.';
-  return `<section id="original-pane" class="original-viewer" aria-labelledby="original-title"><div class="original-head"><h2 id="original-title" tabindex="-1">Documento original</h2><a href="${esc(data.original_url||'files/Peticion_academica_demo.pdf')}" target="_blank" rel="noopener">Abrir PDF ↗</a></div>
+  const originalHref=safeOriginalUrl(data.original_url||'files/Peticion_academica_demo.pdf');return `<section id="original-pane" class="original-viewer" aria-labelledby="original-title"><div class="original-head"><h2 id="original-title" tabindex="-1">Documento original</h2>${originalHref?`<a href="${esc(originalHref)}" target="_blank" rel="noopener">Abrir PDF ↗</a>`:''}</div>
     <div class="original-tools"><label>Página <select id="original-page" aria-label="Página del documento original">${pages.map(p=>`<option value="${p.number}" ${p.number===page?.number?'selected':''}>${p.number}</option>`).join('')}</select> de ${pages.length}</label>${selected?'<button class="text-button" data-action="clear-original">Quitar resaltado</button>':''}</div>
     <p id="original-selection" class="original-selection" role="status">${esc(label)}</p>
     <div class="original-scroll" tabindex="0" aria-label="Visor de la página original. Puedes desplazarte para leer el documento.">
@@ -31,7 +32,14 @@ export function focusOriginal(){
 }
 
 export function bindOriginal(state,onPage){
-  document.querySelector('#original-page')?.addEventListener('change',e=>onPage(+e.target.value));
+  const select=document.querySelector('#original-page');
+  select?.addEventListener('change',e=>onPage(Number(e.target.value)));
+  for(const button of select?.closest('.original-tools')?.querySelectorAll('[data-page-step]') || []){
+    button.addEventListener('click',()=>{
+      const option=select.options[select.selectedIndex+Number(button.dataset.pageStep)];
+      if(option && !select.disabled)onPage(Number(option.value));
+    });
+  }
   const img=document.querySelector('#original-image');
   const imageError=()=>{
     document.querySelector('.original-sheet').hidden=true;

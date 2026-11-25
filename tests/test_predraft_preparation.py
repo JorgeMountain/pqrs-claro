@@ -7,6 +7,7 @@ from copy import deepcopy
 from test_draft_service_api import (
     draft_app,  # noqa: F401
     prepared_case,
+    ready_map,
     wait_drafts,
 )
 from test_preparation import wait
@@ -349,3 +350,68 @@ def test_twenty_five_candidate_fragments_remain_non_citable():
     document["chunks"] = chunks
     with pytest.raises(DomainError, match="treinta y dos"):
         _candidate_inventory({"candidate_documents": [document]})
+
+
+def test_future_action_with_no_matches_and_none_resolution_drafts_cleanly(draft_app, monkeypatch):
+    import pytest
+
+    from pqrs_claro.draft_engine import OpenAIDraftEngine
+    from pqrs_claro.draft_service import DraftService
+
+    app, client, _, _ = draft_app
+    case, _ = prepared_case(app, count=1)
+    identification = deepcopy(case["identification"])
+    identification["requests"][0].update(
+        title="Firmar la respuesta",
+        description="Solicito al profesor que firme la respuesta a esta petición.",
+    )
+    case = app.state.store.update(case["id"], identification=identification)
+    ready_map(app, case)
+    action = {
+        "id": "check-" + "a" * 24,
+        "check_key": "check-" + "a" * 24,
+        "kind": "clarification",
+        "reason_code": "response_signature",
+        "stage": "fulfillment",
+        "blocks_approval": False,
+        "state": "confirmation_pending",
+        "description": "Tramitar la firma de la respuesta aprobada por el responsable.",
+        "resolution": {"status": "open"},
+    }
+    run = app.state.library.latest_run(case["id"])
+    run["reader_policy"] = app.state.sources.reader_policy()
+    run["results"][0].update(
+        status="no_matches",
+        evidence_states=["confirmation_pending"],
+        supports=[],
+        missing=[],
+        actions=[action],
+        checks=[deepcopy(action)],
+        request_intent={
+            "primary": "future_action",
+            "intents": ["future_action"],
+            "certification_requested": False,
+            "document_delivery_requested": False,
+            "future_action_requested": True,
+        },
+    )
+    app.state.library.save_run(run)
+    app.state.reviews.start(case["id"], case["version"], before_draft=True)
+    row = app.state.reviews.get(case["id"])["requests"][0]
+    assert row["pending"] and row["pending"][0]["resolution"] is None
+    reviewed = DraftService._reviewed_finding(run["results"][0], row)
+    assert all(item["resolution"] == {"status": "open"} for item in reviewed["missing"])
+
+    real_engine = OpenAIDraftEngine("test-never-sent", "test")
+    monkeypatch.setattr(real_engine, "_call", lambda *args: pytest.fail("Unexpected AI call"))
+    app.state.drafts.engine = real_engine
+    try:
+        app.state.drafts.start(case["id"], case["version"], ready_only=True)
+        result = wait_drafts(app, client, case)["results"][0]
+    finally:
+        real_engine.client.close()
+    assert result["status"] == "needs_evidence"
+    assert result["error"] is None
+    assert result["draft"]["paragraphs"] == []
+    assert result["checks"]["status"] == "passed"
+    assert result["draft"]["pending"]

@@ -43,7 +43,8 @@ def pdf_bytes(text="Solicitud de prueba. Entregar copia del acta."):
         return doc.tobytes()
 
 
-def email_bytes(subject="[PRUEBA PQRS] Caso 001", text="Solicito copia del acta.", pdf=True):
+def email_bytes(subject="[PRUEBA PQRS] Caso 001", text="Solicito copia del acta.", pdf=True,
+                attachment=None):
     msg = EmailMessage()
     msg["Subject"], msg["From"], msg["To"] = subject, "remitente@example.org", "prueba@example.org"
     msg["Message-ID"] = "<prueba-001@example.org>"
@@ -51,7 +52,8 @@ def email_bytes(subject="[PRUEBA PQRS] Caso 001", text="Solicito copia del acta.
     msg.set_content(text)
     if pdf:
         msg.add_attachment(
-            pdf_bytes(), maintype="application", subtype="pdf", filename="peticion.pdf"
+            attachment if attachment is not None else pdf_bytes(),
+            maintype="application", subtype="pdf", filename="peticion.pdf"
         )
     return msg.as_bytes()
 
@@ -305,6 +307,19 @@ def test_pdf_import_duplicate_and_manual_upload_preserved(mail_app):
     manual = client.post("/api/cases", files={"file": ("manual.pdf", pdf_bytes())})
     assert manual.status_code == 201 and "origin" not in manual.json()
     assert len(app.state.store.list()) == 2
+
+
+def test_fiaga_mail_receipt_enrolls_once_and_keeps_original(mail_app):
+    app, client, _, google, _ = mail_app
+    connect(client)
+    result = ingest(client, workflow="fiaga")
+    assert result.status_code == 200, result.text
+    cid = result.json()["case_id"]
+    assert app.state.store.uses_fiaga(cid)
+    assert ingest(client, workflow="fiaga").json()["duplicate"]
+    assert [case["case_id"] for case in client.get("/api/pool").json()["items"]] == [cid]
+    message = client.get("/api/gmail/cases/" + cid).json()["messages"][0]
+    assert client.get("/api/gmail/originals/" + message["key"]).content == google.messages["m1"]
 
 
 def test_reimport_cannot_resurrect_a_case_in_trash(mail_app):

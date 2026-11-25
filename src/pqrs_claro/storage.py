@@ -132,6 +132,13 @@ class CaseStore:
         """Validate access to this case without loading its text for a permission poll."""
         self._case_record(case_id)
 
+    def uses_fiaga(self, case_id):
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT json_extract(body,'$.receipt.workflow') FROM cases WHERE id=?", (case_id,)
+            ).fetchone()
+        return bool(row and row[0] == "fiaga")
+
     def get(self, case_id, *, include_deleted=False):
         body = self._case_record(case_id, include_deleted=include_deleted, with_body=True)
         return json.loads(body)
@@ -169,7 +176,9 @@ class CaseStore:
                 " FROM json_each(c.body, '$.events') e), "
                 "COALESCE(l.revision,0), l.deleted_at FROM cases c "
                 "LEFT JOIN case_lifecycle l ON l.case_id=c.id "
-                "WHERE (l.deleted_at IS NOT NULL)=? ORDER BY c.rowid DESC", (deleted,)
+                "WHERE (l.deleted_at IS NOT NULL)=? "
+                "AND json_extract(c.body,'$.receipt.workflow') IS NOT 'fiaga' "
+                "ORDER BY c.rowid DESC", (deleted,)
             ).fetchall()
         result = []
         for row in rows:

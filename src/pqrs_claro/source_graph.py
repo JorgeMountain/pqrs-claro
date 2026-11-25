@@ -8,6 +8,7 @@ from typing import Any, Protocol, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from .independent_support import assess_with_independent_support
 from .performance_metrics import operation
 from .source_library import digest
 from .source_retrieval import source_in_scope
@@ -30,6 +31,7 @@ class SourceState(TypedDict, total=False):
 def build_source_graph(
     retriever: Callable[..., list[dict]], assessor: SourceAssessor, checkpointer: Any,
     *, prior_config=None, check_scope: Callable[[], None] | None = None,
+    independent_ocr_read: bool = True,
 ):
     """El servicio fija un thread_id por solicitud y versión de sus entradas.
 
@@ -56,6 +58,9 @@ def build_source_graph(
                     == digest([request, candidates])):
                 with operation("sources.read_reused"):
                     return {"finding": finding}
+        if independent_ocr_read:
+            return {"finding": assess_with_independent_support(
+                request, candidates, assessor.assess, check_scope=check_scope)}
         return {"finding": assessor.assess(request, candidates)}
 
     graph = StateGraph(SourceState)

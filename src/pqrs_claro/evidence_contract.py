@@ -462,13 +462,17 @@ def _complete_versions(item):
     return sorted(versions, key=lambda version: version["source_id"])
 
 
+def _resolution_status(item):
+    return (item.get("resolution") or {}).get("status")
+
+
 def _document_authentication(item, request, sources, *, allow_resolved=False):
     """Conservative purpose check; neither a reason code nor a signature suffices."""
     if (
         item.get("basis") not in {"content_gap", "contradiction"}
         or item.get("stage") != "evidence"
         or item.get("state") != "confirmation_pending"
-        or item.get("resolution", {}).get("status") not in (
+        or _resolution_status(item) not in (
             {"open", "resolved"} if allow_resolved else {"open"}
         )
         or item.get("scope_key") != request_scope(request)
@@ -517,7 +521,7 @@ def _consolidate_provenance(request, items, sources, decisions=(), *, resolved_c
     )
     material = [item for item in items if _document_authentication(item, request, sources)]
     reviewed = [item for item in [*items, *resolved_checks]
-                if item.get("resolution", {}).get("status") == "resolved"
+                if _resolution_status(item) == "resolved"
                 and item["resolution"].get("application_id")
                 and item["resolution"].get("verification_id")
                 and _document_authentication(item, request, sources, allow_resolved=True)]
@@ -531,7 +535,7 @@ def _consolidate_provenance(request, items, sources, decisions=(), *, resolved_c
             and item.get("stage") == "evidence"
             and item.get("scope_key") == "document"
             and item.get("request_ids") == [request["id"]]
-            and item.get("resolution", {}).get("status") == "open"):
+            and _resolution_status(item) == "open"):
             covering = sorted({specific["check_key"] for specific in material
                                if _complete_versions(specific) == versions})
             # Solo una relación auditada ANTES de la revisión permite omitir su
@@ -559,6 +563,88 @@ def _consolidate_provenance(request, items, sources, decisions=(), *, resolved_c
                           "por el estado del catálogo ni se declara verificación realizada.",
             })
     return retained, decisions
+
+
+def _consolidate_transcription(request, items, sources, decisions=(), *, resolved_checks=()):
+    """Reuse a material OCR check only for the identical full passage obligation.
+
+    The verification policy requires a human passage covering every linked chunk
+    for transcription controls. A date-specific description therefore cannot be
+    closed by checking just that date when its linked chunk is the full passage.
+    Only the exact local fallback is redundant; two material issues stay distinct.
+    """
+    from .source_retrieval import source_in_scope
+
+    decisions = deepcopy(list(decisions))
+    current = {s["chunk_id"]: s for s in sources if s.get("chunk_id")
+               and source_in_scope(request, s) and s.get("is_latest") is not False
+               and s.get("validity") != "superseded"}
+
+    def target(item):
+        chunks = set(item.get("linked_chunk_ids", []))
+        versions = _complete_versions(item)
+        if (item.get("reason_code") != "transcription" or item.get("stage") != "evidence"
+                or item.get("scope_key") != "passage"
+                or item.get("state") != "confirmation_pending"
+                or item.get("request_ids") != [request["id"]]
+                or not item.get("blocks_approval") or not versions
+                or not chunks or not chunks <= current.keys()):
+            return None
+        actual = sorted({source_version(current[c])["source_id"]: source_version(current[c])
+                         for c in chunks}.values(), key=lambda s: s["source_id"])
+        if versions != actual:
+            return None
+        return sorted(chunks), versions
+
+    specific = [i for i in [*items, *resolved_checks]
+                if i.get("basis") in {"content_gap", "contradiction"}
+                and i.get("affected_claim") and i.get("why_unresolved") and target(i)]
+    retained = []
+    for item in items:
+        identity = target(item)
+        source = current.get(next(iter(item.get("linked_chunk_ids", [])), None))
+        if (not identity or len(identity[0]) != 1 or not source.get("needs_review")
+                or item.get("kind") != "clarification"
+                or item.get("basis") not in {None, "unspecified"}
+                or item.get("affected_claim") or item.get("why_unresolved")
+                or _resolution_status(item) != "open"):
+            retained.append(item)
+            continue
+        title = str(source.get("title") or source.get("filename") or source["source_id"])
+        location = "sección" if source.get("location_kind") == "section" else "página"
+        expected = f"Contrastar la transcripción de «{title}», {location} {source['page']}, " \
+                   "con su original."
+        prior = {key for row in decisions
+                 if row.get("decision") == "covered_transcription_fallback"
+                 and row.get("original", {}).get("check_key") == item["check_key"]
+                 for key in row.get("covering_check_keys", [])}
+        covering = sorted({i["check_key"] for i in specific if target(i) == identity
+                           and (_resolution_status(i) == "open"
+                                or (i["check_key"] in prior
+                                    and _resolution_status(i) == "resolved"
+                                    and i["resolution"].get("application_id")
+                                    and i["resolution"].get("verification_id")))})
+        if item.get("description") != expected or not covering:
+            retained.append(item)
+            continue
+        if not any(row.get("decision") == "covered_transcription_fallback"
+                   and row.get("original", {}).get("check_key") == item["check_key"]
+                   and row.get("covering_check_keys") == covering for row in decisions):
+            decisions.append({
+                "decision": "covered_transcription_fallback", "original": deepcopy(item),
+                "covering_check_keys": covering,
+                "reason": "El cotejo concreto conserva la obligación de contrastar todo el "
+                          "mismo pasaje y versión; no se duplica el aviso OCR local ni se "
+                          "declara revisada la transcripción.",
+            })
+    return retained, decisions
+
+
+def _consolidate_redundancies(request, items, sources, decisions=(), *, resolved_checks=()):
+    items, decisions = _consolidate_provenance(
+        request, items, sources, decisions, resolved_checks=resolved_checks)
+    return _consolidate_transcription(
+        request, items, sources, decisions, resolved_checks=resolved_checks)
 
 
 def _copy_delivery_signature(text):
@@ -682,7 +768,7 @@ def _delivery_is_represented(request, finding):
                 previous = sorted(item.get("source_versions", []),
                                   key=lambda row: row.get("source_id", ""))
                 if (previous and previous != versions) or (
-                        not previous and item.get("resolution", {}).get("status") == "resolved"):
+                        not previous and _resolution_status(item) == "resolved"):
                     continue
                 represented.append(gap)
                 break
@@ -745,7 +831,7 @@ def pending_registry(request, finding):
             )
         )
         registry.setdefault(pending_identity(item), item)
-    items, _ = _consolidate_provenance(
+    items, _ = _consolidate_redundancies(
         request, list(registry.values()), sources, finding.get("gap_decisions", [])
     )
     return items
@@ -758,7 +844,7 @@ def normalize_pending(request, finding, proposed):
     sources = [*finding.get("supports", []), *finding.get("candidate_documents", [])]
     registry = {pending_identity(item): item for item in pending_registry(request, finding)}
     resolved = {key for key, item in registry.items()
-                if item.get("resolution", {}).get("status") == "resolved"}
+                if _resolution_status(item) == "resolved"}
     items = [deepcopy(item) for key, item in registry.items() if key not in resolved]
     for raw in proposed:
         references = raw.get("existing_check_keys", [])
@@ -777,7 +863,7 @@ def normalize_pending(request, finding, proposed):
         key = pending_identity(item)
         if key not in resolved:
             items.append(deepcopy(registry.get(key, item)))
-    items, _ = _consolidate_provenance(
+    items, _ = _consolidate_redundancies(
         request, items, sources, finding.get("gap_decisions", []),
         resolved_checks=list(registry.values()),
     )
@@ -828,7 +914,7 @@ def apply_evidence_contract(request, finding, candidates=None, *, applications=(
         item = normalize_item(request, raw, sources, audit)
         items.append(item)
     for application in applications:
-        for item in items:
+        for item in [*items, *result.get("secondary_source_checks", [])]:
             if not application_matches_check(application, item, request["id"]):
                 continue
             item["resolution"] = {
@@ -838,8 +924,8 @@ def apply_evidence_contract(request, finding, candidates=None, *, applications=(
                 "basis": application.get("basis"),
                 "recorded_by": application.get("recorded_by"),
             }
-    retained, decisions = _consolidate_provenance(
-        request, items, sources, result.get("gap_decisions", [])
+    retained, decisions = _consolidate_redundancies(
+        request, items, [*result.get("supports", []), *sources], result.get("gap_decisions", [])
     )
     if decisions:
         result["gap_decisions"] = decisions

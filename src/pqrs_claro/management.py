@@ -96,10 +96,11 @@ class ManagementStore:
         origin = case.get("origin") or {}
         receipt = case.get("receipt") or {}
         started = bool(case.get("identification")) or case["status"] != "uploaded"
+        admin_review = receipt.get("workflow") == "fiaga"
         return dict(
             revision=0,
-            owner_id=None,
-            state="in_progress" if started else "received",
+            owner_id="admin" if admin_review else None,
+            state="in_progress" if started else ("assigned" if admin_review else "received"),
             subject=receipt.get("subject") or origin.get("subject") or "",
             reference=receipt.get("reference") or origin.get("reported_case_number") or "",
             received_date=receipt_date(case),
@@ -238,6 +239,10 @@ class ManagementStore:
             if record["revision"] != action.revision:
                 raise Conflict("Otro gestor modificó el expediente. Actualiza la bandeja.")
             names = dict(db.execute("SELECT id,name FROM managers"))
+            if (case.get("receipt") or {}).get("workflow") == "fiaga":
+                if action.actor_id != "admin" or action.action != "start":
+                    raise Conflict("El administrador inicia la revisión del documento desde FIAGA.")
+                names["admin"] = "Administrador"
             if action.actor_id not in names:
                 raise ValueError("Selecciona un gestor válido para el piloto.")
             before = dict(record)

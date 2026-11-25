@@ -12,7 +12,7 @@ from test_app import FakeIdentifier, upload, wait_ready
 from pqrs_claro.config import Settings
 from pqrs_claro.extraction import PDFExtractor
 from pqrs_claro.models import DomainError, Page
-from pqrs_claro.preanalysis_engine import materialize
+from pqrs_claro.preanalysis_engine import LanguageReview, materialize
 from pqrs_claro.unified_app import create_unified_app
 
 
@@ -269,14 +269,67 @@ def test_positive_fields_and_language_alerts_require_real_evidence():
     ]
     result = FakePreanalysis().assess(pages)
     result["respect"].update(state="attention", refs=[])
-    with pytest.raises(DomainError, match="referencia"):
-        materialize(result, pages)
+    checks = materialize(result, pages)
+    assert checks["respect"]["state"] == "unverified"
+    assert checks["respect"]["refs"] == []
+    assert checks["integrity"]["state"] == "pass"
     result["respect"]["state"] = "pass"
     result["requester"].update(
         name="Nombre inventado", refs=[dict(page=1, line_start=1, line_end=1)]
     )
-    with pytest.raises(DomainError, match="no coinciden"):
-        materialize(result, pages)
+    checks = materialize(result, pages)
+    assert checks["requester"]["state"] == "unverified"
+    assert checks["requester"]["name"] is None
+    assert checks["respect"]["state"] == checks["integrity"]["state"] == "pass"
+
+
+def test_own_attacks_against_people_mentioned_take_priority_and_keep_their_exact_lines():
+    pages = [
+        Page(
+            number=1, method="native", needs_review=False,
+            text="Al rector.\nInformo que me llamaron idiota.\nEse funcionario es un inútil.",
+        ),
+        Page(
+            number=2, method="native", needs_review=False,
+            text="MEDIOCRIDAD E INCOMPETENCIA DE ALGUNOS FUNCIONARIOS\nADMINISTRATIVOS",
+        ),
+    ]
+    assessed = FakePreanalysis().assess(pages)
+    assessed["respect"] = LanguageReview(
+        summary="El solicitante descalifica al funcionario y al grupo administrativo.",
+        readable=True,
+        passages=[
+            dict(page=1, line_start=2, line_end=2, attribution="reported"),
+            dict(page=1, line_start=3, line_end=3, attribution="sender"),
+            dict(page=2, line_start=1, line_end=2, attribution="sender"),
+        ],
+    ).finding()
+    respect = materialize(assessed, pages)["respect"]
+    assert respect["state"] == "attention"
+    assert [(r["page"], r["quote"]) for r in respect["refs"]] == [
+        (1, "Ese funcionario es un inútil."), (2, pages[1].text),
+    ]
+
+
+@pytest.mark.parametrize(
+    "attribution,readable,expected", [
+        (None, True, "pass"),               # A criticism of an act has no personal attack.
+        ("reported", True, "pass"),         # The author is reporting another person's words.
+        ("uncertain", True, "unverified"),
+        (None, False, "unverified"),
+    ],
+)
+def test_language_review_keeps_reported_and_uncertain_attribution_distinct(
+    attribution, readable, expected
+):
+    passages = (
+        [dict(page=1, line_start=1, line_end=1, attribution=attribution)] if attribution else []
+    )
+    result = LanguageReview(
+        summary="Evaluación contextual.", readable=readable, passages=passages
+    ).finding()
+    assert result.state == expected
+    assert len(result.refs) == (1 if attribution else 0)
 
 
 def test_save_notes_does_not_authorize_identification(managed):
@@ -300,6 +353,38 @@ def test_save_notes_does_not_authorize_identification(managed):
     assert app.state.management.get(cid)["started_at"] is None
 
 
+def test_failed_retry_preserves_verified_reading_and_draft(managed):
+    app, client, cid, _, identifier, engine, extractor = managed
+    claim(client, cid)
+    previous = check(client, cid)
+    path = f"/api/cases/{cid}/preanalysis"
+    draft = client.post(path + "/draft", json=dict(
+        actor_id="gestor-1", revision=previous["revision"],
+        notes={"integrity": "Observación escrita por el administrador."},
+        acknowledged=["integrity"],
+    )).json()["draft"]
+
+    class Offline:
+        def assess(self, pages):
+            raise RuntimeError("Provider unavailable")
+
+    pre = app.state.preanalysis
+    pre.engine = Offline()
+    retry = dict(actor_id="gestor-1", retry=True)
+    client.post(path + "/check", json=retry).raise_for_status()
+    failed = wait_checks(client, cid)
+    assert failed["status"] == "ready" and failed["error"] and failed["retained_checks"]
+    assert failed["checks"] == previous["checks"] and failed["draft"] == draft
+    assert failed["approval"] is None and identifier.calls == 0
+    assert check(client, cid)["revision"] == failed["revision"]
+
+    pre.engine = engine
+    client.post(path + "/check", json=retry).raise_for_status()
+    updated = wait_checks(client, cid)
+    assert not updated["error"] and not updated["retained_checks"]
+    assert extractor.calls == 1 and updated["draft"] == draft
+
+
 def test_ocr_and_blank_pages_never_silently_pass_integrity():
     pages = [
         Page(
@@ -312,3 +397,50 @@ def test_ocr_and_blank_pages_never_silently_pass_integrity():
     checks = materialize(FakePreanalysis().assess(pages), pages)
     assert checks["integrity"]["state"] == "unverified"
     assert "1" in checks["integrity"]["summary"]
+    assert "OCR" in checks["integrity"]["summary"]
+
+    blank = [Page(number=1, text="", method="native", needs_review=False)]
+    integrity = materialize(FakePreanalysis().assess(blank), blank)["integrity"]
+    assert integrity["state"] == "unverified"
+    assert "OCR" not in integrity["summary"]
+
+
+def test_unapproved_legacy_checks_reread_original_and_preserve_notes(managed):
+    app, client, cid, _, identifier, engine, extractor = managed
+    claim(client, cid)
+    pre = app.state.preanalysis
+    checks = check(client, cid)["checks"]
+    checks["integrity"].update(state="unverified", summary="Página transcrita por OCR.")
+    notes = {"integrity": "Revisar el sello en el original."}
+    old = pre.save(
+        cid, pre.saved(cid), check_version=None, checks=checks,
+        pages=[dict(number=1, method="ocr", needs_review=True, text="Lectura anterior")],
+        draft=dict(actor_id="gestor-1", acknowledged=["integrity"], notes=notes),
+    )
+    base = f"/api/cases/{cid}/preanalysis"
+    assert client.post(base + "/start", json=approval(old)).status_code == 409
+    current = check(client, cid)
+    assert current["checks"]["integrity"]["state"] == "pass"
+    assert pre.saved(cid)["pages"][0]["method"] == "native"
+    assert current["draft"]["notes"] == notes and not current["draft"]["acknowledged"]
+    assert current["approval"] is None and identifier.calls == 0
+    assert check(client, cid)["revision"] == current["revision"]
+    assert extractor.calls == engine.calls == 2
+
+
+def test_partial_transcription_cannot_clear_language_or_overwrite_a_grounded_alert():
+    pages = [
+        Page(number=1, method="native", needs_review=False, text="El proveedor es un idiota."),
+        Page(number=2, method="ocr", needs_review=True, text="Firma\n[ILEGIBLE]"),
+    ]
+    assessment = FakePreanalysis().assess(pages)
+    finding = materialize(assessment, pages)["respect"]
+    assert finding["state"] == "unverified"
+    assert finding["refs"] == [dict(page=2, line_start=2, line_end=2, quote="[ILEGIBLE]")]
+    assessment["respect"].update(
+        state="attention", summary="Descalificación del proveedor.",
+        refs=[dict(page=1, line_start=1, line_end=1)],
+    )
+    finding = materialize(assessment, pages)["respect"]
+    assert finding["state"] == "attention"
+    assert finding["refs"][0]["quote"] == pages[0].text

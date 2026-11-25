@@ -75,7 +75,7 @@ class DraftService:
     def _fingerprint(self, case, source_run):
         intake = getattr(self, "initial_review", None)
         initial_inputs = {}
-        if intake and intake.enabled:
+        if intake and intake.required(case):
             initial = intake.saved(case["id"])
             initial_inputs = {
                 "initial_review_revision": initial["revision"],
@@ -101,15 +101,17 @@ class DraftService:
 
     def _validation_key(self, case_id):
         intake = getattr(self, "initial_review", None)
+        case = self.cases.get(case_id)
         return digest({
-            "case": self.cases.get(case_id),
+            "case": case,
             "catalog_revision": self.library.catalog_revision(),
             "source_run": self.library.latest_run(case_id, compact=True),
             "verifications": self.sources_service.verification_fingerprint(case_id, None),
-            "initial_review": intake.saved(case_id) if intake and intake.enabled else None,
+            "initial_review": intake.saved(case_id) if intake and intake.required(case) else None,
             "management": self.cases.management.get(case_id) if self.cases.management else None,
             "model": self.settings.model,
             "retrieval": retrieval_signature(self.settings.data_dir),
+            "reader_policy": self.sources_service.reader_policy(),
         })
 
     def _current(self, case_id):
@@ -126,7 +128,7 @@ class DraftService:
                 and source_run["status"] in {"ready", "error"}
                 and not source_run.get("stale")
             )
-            if getattr(self, "initial_review", None) and self.initial_review.enabled:
+            if getattr(self, "initial_review", None) and self.initial_review.required(case):
                 current = current and self.initial_review.get(
                     case_id, _catalog=catalog, include_plan=False)["can_prepare"]
             result = case, source_run, self._fingerprint(case, source_run), current
@@ -138,10 +140,26 @@ class DraftService:
                 self._validation_cache[case_id] = key, deepcopy(result)
             return result
 
+    def progress(self, case_id):
+        """Estado ligero para sondeo; un resultado terminal siempre valida vigencia y originales."""
+        run = self.store.latest(case_id)
+        if not run or run["status"] != "running":
+            return self.get(case_id)
+        if self.library.run_scope_revoked(case_id, run.get("source_run_id")):
+            return {
+                **run,
+                "status": "stale",
+                "stale": True,
+                "results": [],
+                "completed_count": 0,
+                "error": "Cambió el permiso de consulta. Actualiza las fuentes del expediente.",
+            }
+        return {**run, "stale": False, "freshness_checked": False}
+
     def get(self, case_id):
-        case, _, fingerprint, current = self._current(case_id)
         run = self.store.latest(case_id)
         if not run:
+            case = self.cases.get(case_id)
             return dict(
                 id=None,
                 case_id=case_id,
@@ -155,6 +173,7 @@ class DraftService:
                 error=None,
                 requires_human_review=True,
             )
+        case, _, fingerprint, current = self._current(case_id)
         stale = run.get("stale", False) or not current or run["fingerprint"] != fingerprint
         ids = {s["source_id"] for result in run["results"] for s in result.get("supports", [])}
         if self.library.run_scope_revoked(case_id, run.get("source_run_id")) or (
@@ -374,7 +393,11 @@ class DraftService:
             run["completed_count"] = len(run["results"])
             self.store.save(run)
             self.active.add(case_id)
-            self.pool.submit(self.run, case, findings, run)
+            try:
+                self.pool.submit(self.run, case, findings, run)
+            except Exception:
+                self.active.discard(case_id)
+                raise
             return self.get(case_id)
 
     @staticmethod
@@ -406,7 +429,7 @@ class DraftService:
             if resolution and resolution.get("action") != "open":
                 decisions.append(deepcopy(pending))
             else:
-                opened.append(deepcopy(pending))
+                opened.append({**deepcopy(pending), "resolution": {"status": "open"}})
         # Keep decisions and their attribution as inputs, never as final approval.
         closed_checks = [
             {
@@ -482,14 +505,17 @@ class DraftService:
 
     @track_case("draft", "case")
     def run(self, case, findings, run):
+        owned_engine = None
         try:
             from .draft_engine import OpenAIDraftEngine
             from .draft_graph import build_draft_graph
 
-            engine = self.engine or OpenAIDraftEngine(
-                self.settings.api_key, self.settings.model,
-                procedure_scope_pilot=self.settings.procedure_scope_pilot,
-            )
+            engine = self.engine
+            if engine is None:
+                owned_engine = engine = OpenAIDraftEngine(
+                    self.settings.api_key, self.settings.model,
+                    procedure_scope_pilot=self.settings.procedure_scope_pilot,
+                )
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "draft_checkpoints.sqlite")
             ) as warmup:
@@ -502,7 +528,7 @@ class DraftService:
                 if r["id"] in findings
             ]
             intake = getattr(self, "initial_review", None)
-            if intake and intake.enabled and not intake.pilot_bypassed(case["id"]):
+            if intake and intake.required(case) and not intake.pilot_bypassed(case["id"]):
                 initial_review = intake.saved(case["id"])
                 requests = [
                     {**request, "initial_review": drafting_context(
@@ -687,13 +713,19 @@ class DraftService:
                 error=user_error(exc if not isinstance(exc, ValueError) else RuntimeError()),
             )
         finally:
-            run.update(current_request_id=None, current_step=None, finished_at=now())
-            self.store.save(run)
-            with self.lock:
-                self.active.discard(case["id"])
+            try:
+                run.update(current_request_id=None, current_step=None, finished_at=now())
+                self.store.save(run)
+            finally:
+                try:
+                    if owned_engine is not None:
+                        owned_engine.close()
+                finally:
+                    with self.lock:
+                        self.active.discard(case["id"])
 
     def recover(self):
         self.store.recover()
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)

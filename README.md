@@ -4,7 +4,8 @@ Asistente local para recibir documentos PQRS, identificar y clasificar sus petic
 buscar respaldo documental y preparar respuestas y oficios con revisión humana.
 
 La interfaz y la API se sirven juntas en **http://127.0.0.1:8772**.
-El flujo actual tiene cuatro etapas: **Preanálisis → Identificación → Redacción → Borrador**.
+En FIAGA, cada PQRS pasa del preanálisis a la preparación de un primer borrador. El administrador revisa
+las respuestas y organiza los aportes que necesita de otras dependencias.
 
 ## Empezar en otro equipo
 
@@ -26,12 +27,11 @@ Edita `.env.local` con una clave OpenAI propia y autorizada; después inicia:
 .\scripts\start.ps1
 ```
 
-Abre **http://127.0.0.1:8772** y selecciona o crea un gestor.
-En una instalación nueva la bandeja y la biblioteca están vacías. Puedes cargar un
-PDF ficticio de `examples/`. Al seleccionar el documento, elige **Agregar al pool**
-para dejarlo disponible sin asignar o **Iniciar análisis** para abrir su preanálisis
-como gestor responsable. La identificación comienza cuando confirmas la revisión. Las operaciones de IA necesitan
-configuración y pueden consumir saldo del proveedor.
+Abre **http://127.0.0.1:8772** con el perfil **Administrador**. Desde **Recepción**
+puedes revisar un PDF de `examples/` antes de enviarlo o abrir **Correo electrónico**
+para elegir el adjunto o el cuerpo de un mensaje de Gmail. Ambos canales abren un expediente.
+Una instalación nueva empieza con la biblioteca vacía. La búsqueda usa las fuentes
+disponibles para el expediente. Las llamadas de IA utilizan el proveedor configurado.
 
 **Guía completa:** [instalación, configuración y transferencia](docs/ENTREGA.md).
 **Para desarrollar:** [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -39,20 +39,39 @@ configuración y pueden consumir saldo del proveedor.
 
 ## Flujo de trabajo
 
-| Etapa | Qué hace el sistema y qué revisa el gestor |
+![Flujo completo de un expediente PQRS en FIAGA](docs/diagramas/flujo_expediente_fiaga.png)
+
+> Para ver también los diagramas de **arquitectura/framework (Local vs. Nube)**, **mapa híbrido de IAs** y los **6 grafos LangGraph**, consulta [docs/GUIA_VISUAL_PQRS_CLARO.md](docs/GUIA_VISUAL_PQRS_CLARO.md).
+
+| Etapa | Resultado |
 | --- | --- |
-| Preanálisis | Datos del solicitante, contenido respetuoso y legibilidad/integridad. Se consulta el original antes de iniciar. |
-| Identificación | Extrae las peticiones, propone sus tipos y permite corregirlas y confirmar su revisión conjunta. |
-| Redacción | Busca fuentes, evalúa el respaldo y prepara respuestas. El gestor consulta citas, aporta evidencia, atiende pendientes aplicables y revisa los textos. |
-| Borrador | Reúne las respuestas, permite editar el oficio y aprobar/generar Word y PDF. «Finalizar expediente» lo mueve a Finalizadas. |
+| 1. Preanálisis | El administrador coteja el solicitante, el lenguaje y la legibilidad con el PDF, documenta las alertas y confirma cuándo iniciar la identificación. |
+| 2. Identificación de peticiones | Contrasta cada petición con su fragmento del original, puede corregirla o descartarla y revisa el tipo y la ruta antes de iniciar la redacción. |
+| 3. Fuentes y redacción | Revisa las fuentes y las respuestas, guarda sus correcciones y confirma la lectura conjunta. Un soporte pendiente puede enviarse después a la dependencia responsable. |
+| 4. Borrador | Revisa el oficio completo en el editor y confirma su entrega a FIAGA para organizar los faltantes. |
+| Revisión inicial | El administrador contrasta el borrador con el original, puede corregir una respuesta con su motivo y ordenar los trámites pendientes. Si todo está respondido, pasa directamente a revisión final. |
+| Pool de trámites | El primer turno queda disponible y los posteriores esperan. Quien lo toma registra su respuesta o adjunta archivos. El administrador puede dejar el turno abierto o reservarlo para un tramitador. |
+| Integración y revisión final | Al completar la secuencia, la IA actualiza las peticiones atendidas con los aportes de esa ronda. El administrador puede pedir una corrección en otro turno o aprobar la versión y descargarla en Word. |
 
-Las etapas disponibles se pueden consultar recuperando su avance guardado. Generar
-un oficio y finalizar la gestión son acciones distintas. La selección de gestor es
-atribución local; no constituye autenticación ni permisos institucionales.
+Por ejemplo, si una solicitud pide los requisitos de un trámite y una constancia
+firmada, el borrador puede responder los requisitos con la biblioteca. Para la
+constancia, el administrador puede pedir primero el documento a Archivo y después la
+firma a Secretaría. Si falta una firma en la revisión final, devuelve ese punto y
+conserva la respuesta sobre requisitos y los aportes anteriores.
 
-En **Tiempos de gestión**, el equipo puede consultar la duración de los expedientes,
-el tiempo activo estimado de cada gestor y descargar ambas vistas en CSV.
-Las reglas de medición se describen en la [guía de la bandeja](docs/BANDEJA_GESTORES.md#tiempos-de-gestión).
+En **Expedientes** se puede consultar el documento recibido, sus peticiones, el
+borrador, los trámites y la decisión. Durante el procesamiento se muestra el avance
+de la lectura, la identificación, la búsqueda de fuentes y la redacción.
+**Pool de trámites** reúne los turnos disponibles. **Mi trabajo** reúne los turnos
+que ya tomó el tramitador activo.
+
+Los expedientes de la versión automática que quedaron en preparación o revisión inicial
+ofrecen **Revisar las cuatro etapas**. Esta acción abre el recorrido del administrador
+y conserva el borrador anterior para compararlo. Los casos que ya tienen trámites
+continúan desde su turno o decisión guardados.
+
+Los perfiles son identidades locales del prototipo. **Recursos → Expedientes anteriores** abre
+la gestión histórica, incluidos sus oficios, tiempos de gestión y registros de avance.
 
 ## Estructura
 
@@ -106,6 +125,20 @@ revisión humana. Consulta [recuperación](docs/RECUPERACION.md) y
 [suficiencia](docs/SUFICIENCIA.md).
 
 ## Comprobar los cambios
+
+GitHub Actions verifica cada PR dirigido a `master` desde una copia limpia de Windows.
+Arranca FIAGA con una bandeja temporal, comprueba la portada y la API, ejecuta Ruff
+y pytest con el modelo semántico público e incluye las pruebas de JavaScript,
+aprobación del oficio y recorridos en Chrome. Los resultados aparecen en la pestaña
+`Checks` del PR.
+
+Para repetir el arranque y los recorridos de navegador con Chrome instalado:
+
+```powershell
+uv sync --locked --python 3.12 --group browser
+uv run --no-sync python scripts/check-fiaga-startup.py
+uv run --no-sync python -m pytest -q -o 'python_files=check_*_browser.py' tests
+```
 
 ```powershell
 .\scripts\test.ps1

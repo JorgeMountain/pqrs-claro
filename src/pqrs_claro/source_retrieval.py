@@ -355,6 +355,8 @@ class _PassageGroups:
         self.by_source = defaultdict(list)
         self.historical = []
         self._ordered = {}
+        # Only lexical rankings for bodies actually searched in this request.
+        self.body_rankings = {}
         for row in eligible:
             self.by_id[row["chunk_id"]] = row
             self.by_source[row["source_id"]].append(row)
@@ -871,11 +873,77 @@ def _retrieve_base(request, chunks, limit=24, *, index=None, semantic=None, capt
 
 
 def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
-    """Keep the baseline selection; replace at most four weak tail candidates.
+    """Recupera evidencia y busca pasajes omitidos en los documentos localizados."""
+    query = " ".join(str(request.get(key) or "") for key in ("title", "description"))
+    ranker = _DocumentPassageRanker(query, semantic, title=str(request.get("title") or ""))
+    snapshot = {}
+    baseline = _retrieve(request, chunks, limit, index=index, semantic=semantic,
+                          snapshot=snapshot)
+    if not snapshot or limit <= 0:
+        return baseline
+    passages, index, named_ids = (snapshot[key] for key in ("passages", "index", "named_ids"))
+    located = named_ids | {row["source_id"] for row in baseline
+                           if row.get("retrieval_channel") == "document_content"}
+    # Reuse the exact body rankings of this query. Only rescue a passage the
+    # four lexical leaders would miss, at most one per located source.
+    sources = [key for key, hits in passages.body_rankings.items()
+               if key in located and hits and len(passages.by_source[key]) > 4]
+    lexical = [passages.body_rankings[key] for key in sources]
+    groups = [passages.by_source[key] for key in sources]
+    selected_ids = {row["chunk_id"] for row in baseline}
+    bodies = []
+    for hits, ranked in zip(lexical, ranker.rank(groups, lexical, index=index)):
+        seen = selected_ids | {row["chunk_id"] for row in hits[:4]}
+        novel = next((row for row in ranked if row["chunk_id"] not in seen), None)
+        if novel is not None:
+            bodies.append(passages.by_id[novel["chunk_id"]])
+    # The baseline already searched the entire calendar. Look for corroborating
+    # dates only inside documents located for this authorized request.
+    local_calendar = [row for source_id in sorted(located)
+                      for row in passages.by_source[source_id]]
+    proposals = [{**row, "retrieval_channel": "calendar"} for row in _date_passages(
+        request, local_calendar, index=index, prefer_period=True)]
+    proposals.extend({**row, "retrieval_channel": "document_content"} for row in bodies)
+    return _promote_passages(baseline, proposals, limit=min(24, limit),
+                             named_ids=named_ids, query=_calendar_scope_query(request))
 
-    Additional named-document bodies and adjacent originals do not reclaim slots
-    from the baseline's body/semantic/identity evidence or historical answer chain.
-    """
+
+def _promote_passages(baseline, proposals, *, limit, named_ids, query):
+    """Replace up to four weak rows, including calendar hits for another period."""
+    result = list(baseline)
+    seen = {row["chunk_id"] for row in result}
+    counts = Counter(row["document_id"] for row in result)
+    baseline_ids = set(seen)
+    added = 0
+    for row in proposals:
+        if added >= 4 or row["chunk_id"] in seen or counts[row["document_id"]] >= 8:
+            continue
+        if len(result) >= limit:
+            matches_period = (row.get("retrieval_channel") == "calendar"
+                              and _period_concordance(query, row) == 2)
+            removable = [(i, old) for i, old in enumerate(result)
+                         if old["chunk_id"] in baseline_ids
+                         and not old.get("document_identity_rank")
+                         and old["source_id"] not in named_ids
+                         and (old.get("retrieval_channel") in {"lexical", "context"}
+                              or (matches_period and old.get("retrieval_channel") == "calendar"
+                                  and _period_concordance(query, old) < 0))]
+            if not removable:
+                continue
+            position, replaced = max(removable, key=lambda pair: (
+                pair[1].get("retrieval_channel") == "calendar",
+                pair[1].get("category") in HISTORICAL_CATEGORIES, pair[0]))
+            result.pop(position)
+            seen.remove(replaced["chunk_id"])
+            counts[replaced["document_id"]] -= 1
+        result.append(row)
+        seen.add(row["chunk_id"])
+        counts[row["document_id"]] += 1
+        added += 1
+    return result
+
+
+def _retrieve(request, chunks, limit=24, *, index=None, semantic=None, snapshot=None):
     context = request.get("context") or {}
     original = context.get("document_context") or {}
     baseline_request = request
@@ -894,8 +962,10 @@ def retrieve(request, chunks, limit=24, *, index=None, semantic=None):
     passages, index = capture["passages"], capture["index"]
     seen = {row["chunk_id"] for row in baseline}
     named_ids = _named_scope_sources(request, [rows[0] for rows in passages.by_source.values()])
+    if snapshot is not None:
+        snapshot.update(passages=passages, index=index, named_ids=named_ids)
     bodies = ([row for row in _document_content(request, passages.rows, index=index,
-                                                passages=passages)
+                                                passages=passages, named_ids=named_ids)
                if row["source_id"] in named_ids] if named_ids else [])
     missing_bodies = [row for row in bodies if row["chunk_id"] not in seen][:2]
     proposals = []
@@ -1059,13 +1129,74 @@ def _rank_context(rows, query, index, prepared, *, body=False):
     return _rank({}, rows, query=query, index=local)
 
 
-def _date_passages(request, eligible, *, index=None, postings=None):
+def _calendar_scope_query(request):
+    """Use one literal shared period only for calendar ordering and promotion.
+
+    The atomic question wins. Aligned question ranges exclude siblings from the
+    original's shared introduction; generated subjects are not original evidence
+    of scope. Incomplete or ambiguous context cannot supply a missing period.
+    """
+    query = " ".join(str(request.get(key) or "") for key in ("title", "description"))
+    if re.search(r"(?<!\d)(?:19|20|21)\d{2}(?!\d)", query):
+        return query
+    context = request.get("context") or {}
+    original = context.get("document_context") or {}
+    if (context.get("origin") != "same_petition"
+            or context.get("target_request_id") != request.get("id")
+            or original.get("origin") != "original_petition"
+            or original.get("truncated")
+            or original.get("unverified_request_reference_count")
+            or not any(ref.get("request_id") == request.get("id")
+                       for ref in original.get("question_ranges", []))):
+        return query
+    try:
+        shared = "\n".join(_scope_quotes(original))
+    except (KeyError, TypeError, AttributeError):
+        return query
+    periods = {re.sub(r"\s+", "", value).replace("/", "-") for value in re.findall(
+        r"(?<!\d)(?:19|20|21)\d{2}\s*[-/]\s*[1-4](?![\d/-])", shared)}
+    return query + " " + next(iter(periods)) if len(periods) == 1 else query
+
+
+def _period_concordance(query, row):
+    """Literal scope hint, never an inference about which date applies.
+
+    A qualified period takes precedence over isolated years (e.g. an act signed
+    in one year can set dates for the following period). ISO dates are not terms.
+    Unknown scope remains eligible and the caller retains relevance tie-breaks.
+    """
+    period = re.compile(r"(?<!\d)(?:19|20|21)\d{2}\s*[-/]\s*[1-4](?![\d/-])")
+    year = re.compile(r"(?<!\d)(?:19|20|21)\d{2}(?!\d)")
+
+    def periods(text):
+        return {re.sub(r"\s+", "", value).replace("/", "-") for value in period.findall(text)}
+
+    requested = periods(query)
+    text = " ".join(str(row.get(key) or "") for key in (
+        "title", "filename", "historical_group", "quote"))
+    if requested:
+        observed = periods(text)
+        if requested.intersection(observed):
+            return 2
+        if observed:
+            return -1
+        # A bare matching year cannot establish the requested qualified period.
+        return 0
+    requested_years = set(year.findall(query))
+    observed_years = set(year.findall(text))
+    if requested_years.intersection(observed_years):
+        return 1
+    return -1 if requested_years and observed_years else 0
+
+
+def _date_passages(request, eligible, *, index=None, postings=None, prefer_period=False):
     """Reserva dos candidatos fechados; no interpreta la fecha ni su vigencia.
 
     Los fragmentos ya están filtrados por permisos. Se exige una coincidencia
     del asunto de la pregunta cerca de la fecha y se conserva el texto original.
     """
     query = " ".join(str(request.get(k) or "") for k in ("title", "description"))
+    period_query = _calendar_scope_query(request) if prefer_period else query
     words = set(tokenize(_search_words(query)))
     if not words.intersection({"fecha", "calendario"}) and not re.search(
         r"\bcu[aá]ndo\b", query, re.IGNORECASE
@@ -1100,7 +1231,9 @@ def _date_passages(request, eligible, *, index=None, postings=None):
                            index, prepared, body=True)
     # Relate the date to the requested event, not to repeated words elsewhere
     # on the page (e.g. historical regulations or registration deadlines).
-    ranked.sort(key=lambda r: proximity[r["chunk_id"]], reverse=True)
+    ranked.sort(key=lambda r: (
+        _period_concordance(period_query, originals[r["chunk_id"]]) if prefer_period else 0,
+        proximity[r["chunk_id"]]), reverse=True)
     return [originals[r["chunk_id"]] for r in ranked[:2]]
 
 
@@ -1186,7 +1319,83 @@ def _named_scope_sources(request, rows):
     return {source for (source, kind), score in scored.items() if score == strongest[kind]}
 
 
-def _baseline_document_content(request, eligible, *, index=None, passages=None):
+class _DocumentPassageRanker:
+    """Fuse local ranks without widening document or passage quotas.
+
+    Two lexical leaders stay protected, and a focused-title leader gets one slot.
+    Remaining slots use reciprocal ranks from the full question/title/semantics.
+    Long descriptions cannot drown out the subject of the requested answer.
+    All returned rows are current originals;
+    an optional provider cannot inject a revoked, stale or altered citation.
+    """
+
+    def __init__(self, query, semantic, *, title=""):
+        self.query, self.semantic, self.title = query, semantic, title
+
+    def rank(self, groups, lexical, *, index=None):
+        originals = {row["chunk_id"]: row for group in groups for row in group}
+        if not originals:
+            return lexical
+        rank = getattr(self.semantic, "rank_passages", None)
+        try:
+            semantic_rows = (rank(self.query, list(originals.values()), limit=len(originals))
+                             if rank is not None else [])
+        except Exception:
+            # A document-only reranker is optional, just like the global semantic
+            # channel. Never lose lexical evidence if its provider fails locally.
+            semantic_rows = []
+        semantic_by_source, seen = defaultdict(list), set()
+        for hit in semantic_rows:
+            key = hit.get("chunk_id")
+            row = originals.get(key)
+            if (row is None or key in seen or hit.get("source_id") != row["source_id"]
+                    or hit.get("quote") != row["quote"]):
+                continue
+            semantic_by_source[row["source_id"]].append(row)
+            seen.add(key)
+        result = []
+        title_query = _search_words(self.title, expand=True)
+        focused = len(set(tokenize(title_query))) >= 2 and title_query != _search_words(
+            self.query, expand=True)
+        for group, body_hits in zip(groups, lexical):
+            semantic_hits = semantic_by_source[group[0]["source_id"]] if group else []
+            channels = [body_hits]
+            title_hits = []
+            if focused:
+                title_body = group if index is not None else [
+                    {**row, "title": "", "quote": _search_words(row["quote"])} for row in group]
+                title_hits = _rank_context(title_body, title_query, index, {}, body=True)
+                if title_hits:
+                    channels.append(title_hits)
+            if semantic_hits:
+                channels.append(semantic_hits)
+            if len(channels) == 1:
+                result.append(body_hits[:4])
+                continue
+            selected = list(body_hits[:2])
+            chosen = {row["chunk_id"] for row in selected}
+            # Reserve the best focused hit before rank fusion: broad semantic
+            # similarity must not drown the actual subject of the atomic title.
+            if title_hits and title_hits[0]["chunk_id"] not in chosen:
+                key = title_hits[0]["chunk_id"]
+                selected.append(originals[key])
+                chosen.add(key)
+            fusion = Counter()
+            for channel in channels:
+                for position, row in enumerate(channel, 1):
+                    fusion[row["chunk_id"]] += 1 / (10 + position)
+            for key in sorted(fusion, key=lambda key: (-fusion[key], key)):
+                if key not in chosen:
+                    selected.append(originals[key])
+                    chosen.add(key)
+                if len(selected) == 4:
+                    break
+            result.append(selected)
+        return result
+
+
+def _baseline_document_content(request, eligible, *, index=None, passages=None,
+                                passage_ranker=None):
     """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
 
     El corpus ya está filtrado por permisos y versión. El asunto solo localiza
@@ -1214,7 +1423,7 @@ def _baseline_document_content(request, eligible, *, index=None, passages=None):
         return []
     # No favorecer documentos largos por repetir su título en cada fragmento.
     documents = _rank_context(matches, topic, index, prepared)[:3]
-    result = []
+    result, groups, rankings = [], [], []
     for document in documents:
         body = passages.by_source[document["source_id"]]
         if index is None:
@@ -1223,14 +1432,22 @@ def _baseline_document_content(request, eligible, *, index=None, passages=None):
         # Reservar más que los dos primeros: títulos de trámite y referencias
         # al portal pueden puntuar por encima del contenido de la respuesta.
         # El cupo semántico conserva espacio adicional dentro del mismo archivo.
-        for hit in _rank_context(body, _search_words(query, expand=True),
-                                 index, prepared, body=True)[:4]:
+        hits = _rank_context(body, _search_words(query, expand=True),
+                             index, prepared, body=True)
+        passages.body_rankings[document["source_id"]] = hits
+        groups.append(passages.by_source[document["source_id"]])
+        rankings.append(hits)
+    if passage_ranker is not None:
+        rankings = passage_ranker.rank(groups, rankings, index=index)
+    for hits in rankings:
+        for hit in hits[:4]:
             result.append(passages.by_id[hit["chunk_id"]])
     return result
 
 
 
-def _document_content(request, eligible, *, index=None, passages=None):
+def _document_content(request, eligible, *, index=None, passages=None, passage_ranker=None,
+                       named_ids=None):
     """Recuperación acotada dentro de hasta tres documentos de tema coincidente.
 
     El corpus ya está filtrado por permisos y versión. El asunto solo localiza
@@ -1259,7 +1476,8 @@ def _document_content(request, eligible, *, index=None, passages=None):
     generic = {"universidad", "institucional", "documento", "respuesta", "consulta", "solicita"}
     terms = {w for w in tokenize(topic) if len(w) >= 3 and w not in generic}
     norms = {"national_norm", "institutional_norm"}
-    named_ids = _named_scope_sources(request, originals)
+    if named_ids is None:
+        named_ids = _named_scope_sources(request, originals)
     matches = [row for row in metadata
                if row["source_id"] in named_ids
                or len(terms.intersection(prepared[terms_key(row)] if index is not None
@@ -1283,7 +1501,7 @@ def _document_content(request, eligible, *, index=None, passages=None):
                 body = [_normalized_passage(row, row["quote"], index, prepared, body=True)
                         for row in body]
             body_cache[source_id] = _rank_context(
-                body, _search_words(query, expand=True), index, prepared, body=True)[:4]
+                body, _search_words(query, expand=True), index, prepared, body=True)
         return body_cache[source_id]
 
     documents = [row for row in ranked if row["source_id"] in named_ids][:6]
@@ -1304,6 +1522,11 @@ def _document_content(request, eligible, *, index=None, passages=None):
         # al portal pueden puntuar por encima del contenido de la respuesta.
         # El cupo semántico conserva espacio adicional dentro del mismo archivo.
         hits_by_document.append(body_hits(document))
+        passages.body_rankings[document["source_id"]] = hits_by_document[-1]
+    if passage_ranker is not None:
+        hits_by_document = passage_ranker.rank(
+            [passages.by_source[row["source_id"]] for row in documents], hits_by_document,
+            index=index)
     # The first document cannot consume every body slot before another is read.
     return [passages.by_id[hits[position]["chunk_id"]] for position in range(4)
             for hits in hits_by_document if position < len(hits)]

@@ -44,7 +44,7 @@ def document_view_router(cases):
                 page_count=len(doc),
                 width=page.rect.width,
                 height=page.rect.height,
-                text=extracted.get("text", ""),
+                text=extracted.get("text") or page.get_text("text"),
                 marks=marks,
                 request_id=request_id,
                 has_visual_match=any(m["rectangles"] for m in marks),

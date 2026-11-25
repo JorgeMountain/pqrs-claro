@@ -1,6 +1,5 @@
 """Opera el grafo y proyecta sus resultados a un expediente versionado."""
 
-import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,12 +44,22 @@ class CaseService:
         self.management = None
         self.preanalysis = None
 
+    def _open_graph(self, saver):
+        owned = []
+        extractor = self.extractor
+        if extractor is None:
+            ocr = OpenAIOCR(self.settings.api_key, self.settings.model)
+            owned.append(ocr)
+            extractor = PDFExtractor(ocr_provider=ocr)
+        identifier = self.identifier
+        if identifier is None:
+            identifier = OpenAIIdentifier(self.settings.api_key, self.settings.model)
+            owned.append(identifier)
+        return build_graph(extractor, identifier, saver), owned
+
     def graph(self, saver):
-        extractor = self.extractor or PDFExtractor(
-            ocr_provider=OpenAIOCR(self.settings.api_key, self.settings.model)
-        )
-        identifier = self.identifier or OpenAIIdentifier(self.settings.api_key, self.settings.model)
-        return build_graph(extractor, identifier, saver)
+        graph, _ = self._open_graph(saver)
+        return graph
 
     def start(self, case_id):
         with self.lock:
@@ -58,8 +67,9 @@ class CaseService:
             case = self.store.get(case_id)
             if self.management:
                 self.management.require_started(case_id)
-                if self.preanalysis and not case.get("identification"):
-                    self.preanalysis.require_approved(case_id)
+            fiaga = (case.get("receipt") or {}).get("workflow") == "fiaga"
+            if (self.management or fiaga) and self.preanalysis and not case.get("identification"):
+                self.preanalysis.require_approved(case_id)
             if case_id in self.active or case["status"] not in {"uploaded", "error"}:
                 raise Conflict("Este expediente ya se está procesando o está listo para revisar.")
             if not self.settings.api_key and self.identifier is None:
@@ -67,54 +77,59 @@ class CaseService:
                     "Falta configurar OpenAI. No se realizará una identificación simulada."
                 )
             self.active.add(case_id)
-            case = self.store.update(
-                case_id,
-                status="reading",
-                error=None,
-                error_diagnostic=None,
-                event="Análisis solicitado. El original permanece guardado.",
-            )
-            self.pool.submit(self.run, case_id)
+            try:
+                case = self.store.update(
+                    case_id,
+                    status="reading",
+                    error=None,
+                    error_diagnostic=None,
+                    event="Análisis solicitado. El original permanece guardado.",
+                )
+                self.pool.submit(self.run, case_id)
+            except Exception:
+                self.active.discard(case_id)
+                raise
             return case
 
     @track_case("identification", "case_id")
     def run(self, case_id):
         config = {"configurable": {"thread_id": case_id}}
+        owned = []
         try:
             pdf_path = self.store.original(case_id)
-            if (
-                hashlib.sha256(pdf_path.read_bytes()).hexdigest()
-                != self.store.get(case_id)["sha256"]
-            ):
-                raise ValueError("El archivo original cambió en disco. Cargue nuevamente el PDF.")
+            case = self.store.get(case_id)
             with SqliteSaver.from_conn_string(
                 str(self.settings.data_dir / "checkpoints.sqlite")
             ) as saver:
-                graph = self.graph(saver)
+                graph, owned = self._open_graph(saver)
                 snapshot = graph.get_state(config)
-                if snapshot.values.get("confirmed"):
+                case_input = {"case_id": case_id, "pdf_path": str(pdf_path)}
+                initial = None if snapshot.values else case_input
+                if self.preanalysis and (not snapshot.values or not case.get("identification")):
+                    checked = self.preanalysis.saved(case_id)
+                    if (
+                        checked.get("approval")
+                        and checked["sha256"] == case["sha256"]
+                        and checked["pages"] != snapshot.values.get("pages")
+                    ):
+                        # A restored identification cites the old extraction. Start a new
+                        # run in the same thread so earlier checkpoints remain available.
+                        initial = {**case_input, "pages": checked["pages"]}
+                if initial is None and snapshot.values.get("confirmed"):
                     self.project(case_id, snapshot.values, confirmed=True)
                     return
                 if (
-                    snapshot.values.get("identification")
+                    initial is None and snapshot.values.get("identification")
                     and "review_identification" in snapshot.next
                 ):
                     # La revisión editable vive en el expediente hasta su confirmación.
                     # Reanudar no debe recuperar un borrador anterior sobre una corrección.
-                    saved = self.store.get(case_id).get("identification")
+                    saved = case.get("identification")
                     values = dict(snapshot.values)
                     if saved:
                         values["identification"] = saved
                     self.project(case_id, values)
                     return
-                initial = (
-                    None if snapshot.values else {"case_id": case_id, "pdf_path": str(pdf_path)}
-                )
-                if initial and self.preanalysis:
-                    checked = self.preanalysis.saved(case_id)
-                    if (checked.get("approval")
-                            and checked["sha256"] == self.store.get(case_id)["sha256"]):
-                        initial["pages"] = checked["pages"]
                 for update in graph.stream(initial, config, stream_mode="updates"):
                     if "read_pdf" in update:
                         values = update["read_pdf"]
@@ -144,8 +159,12 @@ class CaseService:
                 event=f"Proceso detenido: {type(exc).__name__}. Avance conservado.",
             )
         finally:
-            with self.lock:
-                self.active.discard(case_id)
+            try:
+                for client in owned:
+                    client.close()
+            finally:
+                with self.lock:
+                    self.active.discard(case_id)
 
     def project(self, case_id, values, *, confirmed=False):
         with self.lock:
@@ -205,11 +224,12 @@ class CaseService:
                 status="confirming",
                 event="Confirmación de la identificación solicitada.",
             )
+            owned = []
             try:
                 with SqliteSaver.from_conn_string(
                     str(self.settings.data_dir / "checkpoints.sqlite")
                 ) as saver:
-                    graph = self.graph(saver)
+                    graph, owned = self._open_graph(saver)
                     result = graph.invoke(
                         Command(resume=identification.model_dump(mode="json")),
                         {"configurable": {"thread_id": case_id}},
@@ -225,6 +245,9 @@ class CaseService:
                     event="No se completó la confirmación. Correcciones conservadas.",
                 )
                 raise ValueError(user_error(exc)) from None
+            finally:
+                for client in owned:
+                    client.close()
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)

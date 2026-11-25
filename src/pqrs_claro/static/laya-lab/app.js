@@ -101,11 +101,15 @@ function updateModelNote() {
     + " · ambos análisis se hacen por separado en Laya local.";
 }
 
+let statusInFlight = false;
 async function checkStatus() {
+  if (statusInFlight || document.hidden) return;
+  statusInFlight = true;
   const chip = $("#modelStatus");
   try {
     const response = await fetch("/api/status", { cache: "no-store" });
-    const status = await response.json();
+    const status = await response.json().catch(() => null);
+    if (!response.ok || !status) throw new Error("No se pudo comprobar Laya local.");
     modelReady = Boolean(status.connected);
     jevReady = Boolean(status.jev_configured);
     availableModels = new Set(Object.entries(status.models || {})
@@ -118,8 +122,11 @@ async function checkStatus() {
   } catch {
     modelReady = false;
     jevReady = false;
+    chip.classList.remove("ready");
     chip.classList.add("down");
     chip.querySelector("span:last-child").textContent = "No se pudo comprobar Laya local.";
+  } finally {
+    statusInFlight = false;
   }
   updateButton();
 }
@@ -274,8 +281,8 @@ async function classify() {
   $("#errorBox").hidden = true;
   try {
     const response = await fetch("/api/classify", { method: "POST", body: payload, cache: "no-store" });
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "No se pudo clasificar la comunicación.");
+    const data = await response.json().catch(() => null);
+    if (!response.ok || !data) throw new Error(data?.detail || "No se pudo clasificar la comunicación.");
     renderResult(data);
   } catch (error) {
     showError(error instanceof Error ? error.message : "No se pudo clasificar la comunicación.");

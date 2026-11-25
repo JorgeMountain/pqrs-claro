@@ -38,9 +38,8 @@ def scenario(label, first, second):
     }])
     plan = proposed_plan()
     plan["coverage_units"] = [
-        {"requirement_id": f"R{index}", "kind": "answer", "claim": text,
-         "required": True, "citations": [{"chunk_id": "S1", "line_start": index,
-                                           "line_end": index}],
+        {"requirement_id": f"R{index}", "role": "required_answer", "claim": text,
+         "citations": [{"chunk_id": "S1", "line_start": index, "line_end": index}],
          "reason": "Responde contenido expresamente solicitado.", "details": [],
          "no_details_reason": "Dato sin autoridad nombrada ni alternativa."}
         for index, text in enumerate((first, second), 1)

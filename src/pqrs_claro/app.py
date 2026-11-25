@@ -4,9 +4,10 @@ import os
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 import pymupdf
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -26,10 +27,17 @@ from .jev_classification import MODEL as JEV_CLASSIFICATION_MODEL
 from .jev_classification import get_key as get_jev_classification_key
 from .management import ManagementStore, management_router
 from .management_times import management_times_router
-from .models import Identification
+from .models import DomainError, Identification
 from .office_api import office_router
 from .office_service import OfficeService
 from .performance_metrics import read_metrics
+from .pool_admin_review import PoolAdminReview
+from .pool_api import pool_router
+from .pool_document import approved_document
+from .pool_drafts import PoolDrafts
+from .pool_jobs import PoolJobs
+from .pool_routing import OpenAIPoolRouting, suggest_responsibles
+from .pool_service import PoolService
 from .preanalysis import PreanalysisService, preanalysis_router
 from .preparation import PreparationService, preparation_router
 from .response_proposals import ResponseProposalService, response_proposal_router
@@ -89,6 +97,8 @@ def create_app(
     gmail_auth=None,
     intake_engine=None,
     preanalysis_engine=None,
+    pool_integration_engine=None,
+    pool_routing_engine=None,
     interface="workspace",
 ):
     if interface not in {"workspace", "recorrido"}:
@@ -146,6 +156,61 @@ def create_app(
     drafts_service.initial_review = initial_review
     reviews_service.initial_review = initial_review
     sources_service.initial_review = initial_review
+    pool = PoolService(store, pdf_extractor=source_extractor, library=library)
+    admin_review = PoolAdminReview(pool, preanalysis, offices_service)
+    pool_jobs = PoolJobs(pool, PoolDrafts(
+        settings, store, service, sources_service, drafts_service,
+        preanalysis_engine=preanalysis_engine, integration_engine=pool_integration_engine,
+    ))
+    pool.on_initial = pool_jobs.schedule
+    pool.on_integration = pool_jobs.schedule
+
+    def enroll_receipt(case_id):
+        library.link_all_collections(case_id)
+        pool.enroll(case_id)
+
+    def receive_fiaga_mail(case_id):
+        if not pool.exists(case_id):
+            pool.enroll(case_id)
+
+    async def protect_review(request: Request):
+        if request.method in {"GET", "HEAD", "OPTIONS"}:
+            return
+        path = request.scope["route"].path
+        if path.startswith("/api/cases/{case_id}/pool"):
+            return  # Each pool action checks its own profile, turn and revision.
+        case_id = request.path_params.get("case_id")
+        if path in {"/api/evidence", "/api/sources"}:
+            case_id = (await request.form()).get("case_id")
+        if path == "/api/sources/{source_id}/review":
+            try:
+                payload = await request.json()
+            except ValueError:
+                payload = None
+            case_id = request.query_params.get("case_id") or (
+                payload.get("case_id") if isinstance(payload, dict) else None
+            )
+        if path == "/api/gmail/messages/{mid}/import":
+            try:
+                payload = await request.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("mode") == "link":
+                case_id = payload.get("target_case_id")
+        if not case_id or not store.uses_fiaga(case_id):
+            return
+        if path in {
+            "/api/cases/{case_id}", "/api/cases/{case_id}/management",
+            "/api/cases/{case_id}/permanent", "/api/cases/{case_id}/restore",
+            "/api/cases/{case_id}/initial-review/pilot-mode",
+        }:
+            raise Conflict("Usa el recorrido de revisión administrativa de FIAGA.")
+        if request.headers.get("X-Fiaga-Actor") != "admin":
+            raise Conflict("Solo el administrador puede verificar las cuatro etapas de FIAGA.")
+        with store.connect() as db:
+            row = db.execute("SELECT stage FROM case_pool WHERE case_id=?", (case_id,)).fetchone()
+        if not row or row[0] != "admin_review":
+            raise Conflict("La revisión administrativa de las cuatro etapas no está abierta.")
 
     @asynccontextmanager
     async def lifespan(app):
@@ -160,7 +225,11 @@ def create_app(
         preanalysis.recover()
         library_preparation.start()
         semantic_preparation.start()
+        for case_id in pool.unenrolled_receipts():
+            enroll_receipt(case_id)
+        pool_jobs.recover()
         yield
+        pool_jobs.close()
         semantic_preparation.close()
         library_preparation.close()
         preanalysis.close()
@@ -176,15 +245,45 @@ def create_app(
         if source_ocr is not None and hasattr(source_ocr, "close"):
             source_ocr.close()
 
-    app = FastAPI(title="PQRS Claro", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="PQRS Claro",
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        dependencies=[Depends(protect_review)],
+    )
 
     @app.get("/api/cases/{case_id}/performance")
     def case_performance(case_id: str):
         store.get(case_id)
         return read_metrics(settings.data_dir, case_id)
 
+    def route_responsibles(detail, tasks):
+        if pool_routing_engine is not None:
+            return suggest_responsibles(pool_routing_engine, detail, tasks)
+        if not settings.api_key:
+            raise DomainError(
+                "Configura la clave de OpenAI para sugerir responsables con IA."
+            )
+        engine = OpenAIPoolRouting(
+            settings.api_key,
+            settings.model,
+            service_tier=settings.source_service_tier,
+        )
+        try:
+            return suggest_responsibles(engine, detail, tasks)
+        finally:
+            engine.client.close()
+
     app.state.store, app.state.service = store, service
     app.state.management = management
+    app.state.pool, app.state.pool_jobs = pool, pool_jobs
+    app.include_router(pool_router(pool, admin_review, routing=route_responsibles))
+
+    @app.get("/api/cases/{case_id}/pool/document.docx")
+    def pool_document(case_id: str):
+        return approved_document(pool.get(case_id), settings.data_dir)
     app.state.preanalysis = preanalysis
     app.include_router(preanalysis_router(preanalysis))
     app.state.library, app.state.sources = library, sources_service
@@ -213,14 +312,16 @@ def create_app(
     app.state.gmail = gmail
     app.state.initial_review = initial_review
     app.include_router(intake_router(initial_review))
-    lifecycle_services = (preparation, service, sources_service, drafts_service,
-                          proposals, offices_service, reviews_service, gmail, library,
-                          verifications, initial_review, preanalysis)
+    lifecycle_services = (
+        preparation, service, sources_service, drafts_service,
+        proposals, offices_service, reviews_service, gmail, library,
+        verifications, initial_review, preanalysis, pool_jobs,
+    )
     app.include_router(management_router(management, service, lifecycle_services))
     app.include_router(work_sessions_router(store.work_sessions))
     app.include_router(lifecycle_router(store, lifecycle_services))
     app.include_router(management_times_router(store))
-    app.include_router(gmail_router(gmail))
+    app.include_router(gmail_router(gmail, on_fiaga_receipt=receive_fiaga_mail))
     app.include_router(preparation_router(preparation))
     app.include_router(source_router(library, sources_service, store))
     app.include_router(document_view_router(store))
@@ -313,6 +414,7 @@ def create_app(
         file: UploadFile = File(...), subject: str = Form('', max_length=240),
         reference: str = Form('', max_length=100), received_date: date | None = Form(None),
         due_date: date | None = Form(None),
+        workflow: Literal["legacy", "fiaga"] = Form("legacy"),
     ):
         try:
             data = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
@@ -324,6 +426,10 @@ def create_app(
             receipt = dict(subject=subject.strip(), reference=reference.strip(),
                            received_date=received.isoformat(),
                            due_date=due_date.isoformat() if due_date else None)
+            if workflow == "fiaga":
+                case = store.create(filename, data, receipt={**receipt, "workflow": workflow})
+                enroll_receipt(case["id"])
+                return case
             return create_case(filename, data, receipt)
         finally:
             await file.close()
@@ -346,16 +452,20 @@ def create_app(
     @app.get("/api/cases/{case_id}")
     def get_case(case_id: str):
         case = store.get(case_id)
-        managed = management.get(case_id) if settings.management_enabled else None
+        fiaga = (case.get("receipt") or {}).get("workflow") == "fiaga"
+        managed = management.get(case_id) if settings.management_enabled or fiaga else None
         if managed:
-            managed["owner_name"] = next((m["name"] for m in management.managers()
-                                          if m["id"] == managed["owner_id"]), None)
+            managed["owner_name"] = ("Administrador" if fiaga and managed["owner_id"] == "admin"
+                                     else next((m["name"] for m in management.managers()
+                                                if m["id"] == managed["owner_id"]), None))
         navigation = store.workflow_summary(
-            {case_id: case["version"]}, initial_review_enabled=initial_review.enabled
+            {case_id: case["version"]}, initial_review_enabled=initial_review.required(case)
         )[case_id]
         stage = saved_stages([case_id], drafts=drafts_service.store,
                              reviews=reviews_service.store, offices=offices_service.store)[case_id]
         return {**case, **navigation, "saved_stage": stage,
+                **({"has_saved_response_reading": bool(reviews_service.store.reading(case_id))}
+                   if fiaga else {}),
                 "office_progress": saved_offices(
                     [case], reviews=reviews_service.store, offices=offices_service.store
                 )[case_id],
@@ -382,6 +492,7 @@ def create_app(
             media_type="application/pdf",
             filename=case["filename"],
             content_disposition_type="inline",
+            headers={"Content-Security-Policy": "default-src 'none'; sandbox"},
         )
 
     @app.get("/api/cases/{case_id}/pages/{number}.png")
@@ -390,7 +501,7 @@ def create_app(
             if not 1 <= number <= len(doc):
                 raise HTTPException(404, "No existe esa página.")
             page = doc[number - 1]
-            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height))
+            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height, 1.0))
             pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
             return Response(pix.tobytes("png"), media_type="image/png")
 

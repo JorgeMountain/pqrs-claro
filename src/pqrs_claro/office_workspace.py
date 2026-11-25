@@ -105,20 +105,7 @@ def get_workspace(service, case_id):
         "signer_role": "Cargo",
     }.items():
         display[key] = display[key] or f"[{label}]"
-    options = {}
-    for row in rows:
-        cited = {c for p in row["paragraphs"] for c in p.get("cited_chunk_ids", [])}
-        for support in row.get("available_supports", []):
-            if support["chunk_id"] in cited:
-                try:
-                    source = service.library.get(support["source_id"], case_id=case_id)["source"]
-                    options[source["id"]] = {
-                        **{k: source[k] for k in ("title", "filename", "sha256")},
-                        "source_id": source["id"],
-                        "size": service.library.original(source["id"], case_id).stat().st_size,
-                    }
-                except (KeyError, ValueError):
-                    continue
+    options = _attachment_options(service, case_id, rows)
     selected = [sid for sid in state.get("attachment_source_ids", []) if sid in options]
     document = {
         "metadata": display,
@@ -140,6 +127,24 @@ def get_workspace(service, case_id):
         "attachment_options": list(options.values()),
         "attachment_source_ids": selected,
     }
+
+
+def _attachment_options(service, case_id, rows):
+    options = {}
+    for row in rows:
+        cited = {c for p in row["paragraphs"] for c in p.get("cited_chunk_ids", [])}
+        for support in row.get("available_supports", []):
+            if support["chunk_id"] in cited:
+                try:
+                    source = service.library.get(support["source_id"], case_id=case_id)["source"]
+                    options[source["id"]] = {
+                        **{k: source[k] for k in ("title", "filename", "sha256")},
+                        "source_id": source["id"],
+                        "size": service.library.original(source["id"], case_id).stat().st_size,
+                    }
+                except (KeyError, ValueError):
+                    continue
+    return options
 
 
 def save_workspace(service, case_id, body):
@@ -174,7 +179,9 @@ def save_workspace(service, case_id, body):
         letterhead = service._letterhead()
         if letterhead:
             service._letterhead_metadata(metadata, letterhead)
-        options = {s["source_id"] for s in get_workspace(service, case_id)["attachment_options"]}
+        prepared_by_id = {row["request_id"]: row for row, _ in prepared}
+        merged_rows = [prepared_by_id.get(row["request_id"], row) for row in current]
+        options = set(_attachment_options(service, case_id, merged_rows))
         if (
             len(set(body.attachment_source_ids)) != len(body.attachment_source_ids)
             or not set(body.attachment_source_ids) <= options

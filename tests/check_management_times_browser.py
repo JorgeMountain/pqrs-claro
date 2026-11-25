@@ -46,7 +46,7 @@ def test_work_and_report_from_inbox(tmp_path, pdf_bytes):  # noqa: F811
                 page = browser.new_page(viewport={"width": 1440, "height": 900})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
-                page.goto(url)
+                page.goto(url + "/?view=legacy")
                 page.locator("[data-manager-toggle]").click()
                 page.locator('[data-manager-id="gestor-1"]').click()
                 page.locator(f'[data-management-action="preanalysis"][data-id="{cid}"]').click()

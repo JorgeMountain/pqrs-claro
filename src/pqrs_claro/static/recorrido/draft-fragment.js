@@ -1,4 +1,5 @@
 // A visual range only: never inserts markup into editable text or export data.
+import {revealPage} from './document-pages.js';
 export function createDraftFragment(root){
   let current=null;
   const registry=()=>globalThis.CSS?.highlights;
@@ -15,11 +16,14 @@ export function createDraftFragment(root){
     const ranges=elements.map(el=>{const range=document.createRange();range.selectNodeContents(el);return range;});
     if(registry()&&globalThis.Highlight)registry().set('draft-fragment',new Highlight(...ranges));
     const canvas=root.querySelector('.document-canvas'),first=elements[0];
-    const rect=first.getBoundingClientRect(),viewport=canvas.getBoundingClientRect();
-    if(rect.top<viewport.top+8||rect.bottom>viewport.bottom-48)canvas.scrollTop+=rect.top-viewport.top-Math.max(24,viewport.height/3);
     // Keep keyboard focus on the action, not inside contenteditable.
     const strip=bar();strip.hidden=false;
     root.querySelector('[data-fragment-label]').textContent=`${registry()&&globalThis.Highlight?'Fragmento':'Ubicación'} del ajuste ${number}`;
+    if(canvas.classList.contains('fit-page'))revealPage(canvas,first);
+    else {
+      const rect=first.getBoundingClientRect(),viewport=canvas.getBoundingClientRect();
+      if(rect.top<viewport.top+8||rect.bottom>viewport.bottom-48)canvas.scrollTop+=rect.top-viewport.top-Math.max(24,viewport.height/3);
+    }
     current=item.id;
     return true;
   }

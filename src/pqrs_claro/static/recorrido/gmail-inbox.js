@@ -1,16 +1,15 @@
+import {apiJson} from './http.js';
 import {esc} from './views.js';
 import {connectionView,messageList,importView,originalView} from './gmail-views.js?v=receipt-choice';
 
-async function api(path,body,method='POST'){
-  const response=await fetch('/api/gmail'+path,body===undefined?{}:{method,body:body instanceof FormData?body:JSON.stringify(body),headers:body instanceof FormData?{}:{'Content-Type':'application/json'}});
-  const value=await response.json();if(!response.ok)throw new Error(typeof value.detail==='string'?value.detail:'No se pudo completar la operación con Gmail.');return value;
+function api(path,body,method='POST'){
+  return apiJson('/api/gmail'+path,{body,method,fallbackError:'No se pudo completar la operación con Gmail.'});
 }
-export function createGmail({open,close,notice,onOpenCase,onReceive,getManager}){
+export function createGmail({open,close,notice,onOpenCase,onReceive,getManager,fiaga=false,getPanel=()=>document.querySelector('#gmail-panel')}){
   let poll, label='PQRS-Pruebas';
-  const panel=()=>document.querySelector('#gmail-panel');
-  function shell(title){clearTimeout(poll);open(title,'<section id="gmail-panel" class="gmail-panel"><div id="gmail-content"><p role="status">Cargando…</p></div><p id="gmail-operation" role="status"></p><p id="gmail-error" role="alert"></p></section>');return panel();}
+  function shell(title){clearTimeout(poll);open(title,'<section id="gmail-panel" class="gmail-panel"><div id="gmail-content"><p role="status">Cargando…</p></div><p id="gmail-operation" role="status"></p><p id="gmail-error" role="alert"></p></section>');return getPanel();}
   async function action(node,work){
-    if(node.dataset.busy)return;node.dataset.busy='true';node.setAttribute('aria-busy','true');
+    if(!node?.isConnected || node.dataset.busy)return;node.dataset.busy='true';node.setAttribute('aria-busy','true');
     node.querySelector('#gmail-error').textContent='';node.querySelector('#gmail-operation').textContent='Procesando…';
     node.querySelectorAll('button,input,select').forEach(b=>b.disabled=true);
     try{await work();}catch(e){if(node.isConnected)node.querySelector('#gmail-error').textContent=e.message;}
@@ -50,10 +49,15 @@ export function createGmail({open,close,notice,onOpenCase,onReceive,getManager})
   async function detail(id,account){
     const node=shell('Correo recibido');
     await action(node,async()=>{
-      const [message,response]=await Promise.all([api(`/messages/${encodeURIComponent(id)}?`+new URLSearchParams({account})),fetch('/api/cases')]);
-      if(!response.ok)throw new Error('No se pudieron consultar los expedientes.');const cases=await response.json();
+      const [message,cases]=await Promise.all([
+        api(`/messages/${encodeURIComponent(id)}?`+new URLSearchParams({account})),
+        fiaga ? [] : fetch('/api/cases').then(response=>{
+          if(!response.ok)throw new Error('No se pudieron consultar los expedientes.');
+          return response.json();
+        }),
+      ]);
       if(!node.isConnected)return;const content=node.querySelector('#gmail-content');
-      content.innerHTML='<button class="text-button" data-mail="back">← Volver a la bandeja</button>'+importView(message,cases);
+      content.innerHTML='<button class="text-button" data-mail="back">← Volver a la bandeja</button>'+importView(message,cases,fiaga);
       content.querySelector('[data-mail="back"]').onclick=()=>void show();
       content.querySelector('[data-open-case]')?.addEventListener('click',()=>void action(node,async()=>{await onOpenCase(message.case_id);close();}));
       const form=content.querySelector('#gmail-import');
@@ -80,6 +84,7 @@ export function createGmail({open,close,notice,onOpenCase,onReceive,getManager})
             if(destination==='analyze'&&!manager)throw new Error('Selecciona tu gestor antes de iniciar el análisis.');
             const fields=form.elements;
             const body={account,mode:fields.mode.value,case_number:fields.case_number.value,
+              ...(fiaga?{workflow:'fiaga'}:{}),
               attachment_id:fields.attachment_id?.value||null,body_confirmed:fields.body_confirmed.checked,
               target_case_id:fields.target_case_id?.value||null};
             const result=await api(`/messages/${encodeURIComponent(id)}/import`,body);
@@ -91,14 +96,15 @@ export function createGmail({open,close,notice,onOpenCase,onReceive,getManager})
           else await onOpenCase(result.case_id);
           close();
           notice(result.duplicate?'Este correo ya estaba incorporado.':result.linked?'Correo vinculado al expediente.':
-            mode==='save'?'Expediente agregado al pool.':'Expediente abierto para preanálisis.');
+            fiaga?'Solicitud recibida para preanálisis.':mode==='save'?'Expediente agregado al pool.':'Expediente abierto para preanálisis.');
         });
         if(form.isConnected)update();
       }
-      buttons.forEach(button=>button.onclick=()=>void submit(button.dataset.receiptDestination));
+      buttons.forEach(button=>{if(button.type!=='submit')button.onclick=()=>void submit(button.dataset.receiptDestination);});
       form.onsubmit=event=>{
         event.preventDefault();
         if(form.elements.mode.value==='link')void submit('save');
+        else if(fiaga)void submit('fiaga');
       };
       form.elements.mode.onchange=update;
       update();

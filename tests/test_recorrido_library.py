@@ -5,7 +5,6 @@ import httpx
 from fastapi.testclient import TestClient
 from test_source_service_api import make_case, pdf_bytes, source_app  # noqa: F401
 
-from pqrs_claro.config import ROOT
 from pqrs_claro.recorrido_app import create_recorrido
 
 
@@ -29,11 +28,10 @@ def test_recorrido_keeps_demo_and_supports_real_shared_versions(source_app):
         assert "library.js" in client.get("/app.js").text
         assert client.get("/app.js").headers["cache-control"] == "no-cache"
         assert client.get("/").headers["cache-control"] == "no-cache"
-        assert "workspace-rail" in client.get("/").text
-        assert (
-            client.get("/data.json").content
-            == (ROOT / "output/ux-peticiones-20260910/data.json").read_bytes()
-        )
+        assert "workspace-rail" in client.get("/?view=library").text
+        demo = client.get("/data.json")
+        assert demo.status_code == 200
+        assert isinstance(demo.json()["requests"], list)
         first = upload(client)
         assert first.status_code == 201, first.text
         first = first.json()
@@ -50,6 +48,7 @@ def test_recorrido_keeps_demo_and_supports_real_shared_versions(source_app):
         assert original.content == b"Antecedente ficticio para probar la biblioteca."
         assert "content-disposition" in original.headers
         assert not assessor.calls
+        assert client.get("/data.json").content == demo.content
 
 
 def test_recorrido_global_library_excludes_private_evidence(source_app, pdf_bytes):

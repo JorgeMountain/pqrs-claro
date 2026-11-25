@@ -167,7 +167,7 @@ def test_three_remote_stages_receive_identical_citation_scope_and_original_passa
             "description": "Atribuir la conclusión al oficio de 2025 para el período 2017.",
             "cited_chunk_ids": ["S1"],
         }], "coverage_units": [{
-            "requirement_id": "R1", "kind": "context", "required": False,
+            "requirement_id": "R1", "role": "optional_context",
             "claim": "El pasaje describe la decisión de 2017.",
             "citations": [{"chunk_id": "S1", "line_start": 1, "line_end": 3}],
             "reason": "Permite distinguir el alcance temporal del antecedente.",

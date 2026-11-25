@@ -7,6 +7,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from .models import DomainError
 
 IMAGE_FORMATS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG"}
+MAX_IMAGE_PIXELS = 40_000_000
 
 
 def validate_image(data, suffix):
@@ -20,6 +21,10 @@ def validate_image(data, suffix):
                     "La imagen tiene varios fotogramas; requiere extracción específica."
                 )
             size = image.size
+            if size[0] * size[1] > MAX_IMAGE_PIXELS:
+                raise DomainError(
+                    "La imagen supera la resolución máxima admitida para OCR."
+                )
             image.verify()
             return size
     except DomainError:
@@ -36,13 +41,18 @@ def normalized_image_png(data, suffix, *, max_dimension=3200):
     with Image.open(BytesIO(data)) as image:
         orientation = image.getexif().get(274, 1)
         with ImageOps.exif_transpose(image) as oriented:
-            rgba = oriented.convert("RGBA")
+            scale = min(2.0, max_dimension / max(oriented.size))
+            size = tuple(
+                max(1, min(max_dimension, round(value * scale))) for value in oriented.size
+            )
+            source = (
+                oriented.resize(size, Image.Resampling.LANCZOS) if scale < 1.0 else oriented
+            )
+            rgba = source.convert("RGBA")
             canvas = Image.new("RGBA", rgba.size, "white")
             canvas.alpha_composite(rgba)
             rgb = canvas.convert("RGB")
-            scale = min(2.0, max_dimension / max(rgb.size))
-            size = tuple(max(1, min(max_dimension, round(value * scale))) for value in rgb.size)
-            raster = rgb.resize(size, Image.Resampling.LANCZOS)
+            raster = rgb if scale < 1.0 else rgb.resize(size, Image.Resampling.LANCZOS)
             output = BytesIO()
             raster.save(output, format="PNG")
             metadata = {
@@ -50,8 +60,11 @@ def normalized_image_png(data, suffix, *, max_dimension=3200):
                 "raster_size": list(raster.size),
                 "exif_orientation": orientation,
             }
-            raster.close()
+            if raster is not rgb:
+                raster.close()
             rgb.close()
             canvas.close()
             rgba.close()
+            if source is not oriented:
+                source.close()
             return output.getvalue(), metadata

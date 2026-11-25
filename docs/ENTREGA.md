@@ -67,7 +67,45 @@ de análisis real sí requieren su proveedor y pueden consumir saldo. La búsque
 semántica local se instala aparte mediante el comando documentado en
 [busqueda-semantica-local.md](busqueda-semantica-local.md).
 
-## 4. Recorrer las cuatro etapas
+## 4. Recorrer una PQRS en FIAGA
+
+```mermaid
+flowchart TD
+    A[Recepción de la solicitud] --> P[1. Preanálisis]
+    P -->|Administrador coteja el original y confirma| Q[2. Identificación de peticiones]
+    Q -->|Administrador revisa peticiones, tipos y ruta| R[3. Fuentes y redacción]
+    R -->|Administrador confirma la lectura| B[4. Borrador inicial]
+    B --> C{Administrador revisa el borrador}
+    C -->|Faltan aportes| D[Ordenar trámites por petición y dependencia]
+    C -->|Peticiones respondidas| H{Revisión final}
+    D --> E[Publicar el siguiente turno en el pool]
+    E --> F[El tramitador toma el turno y aporta su respuesta o archivo]
+    F -->|Quedan turnos| E
+    F -->|Último turno| G[La IA integra los aportes en el borrador]
+    G --> H
+    H -->|Requiere corrección| D
+    H -->|Aprueba| I[Respuesta final en Word]
+```
+
+En **Recepción**, revisa un PDF y envíalo al preanálisis, o selecciona un correo
+en Gmail y confirma qué contenido contiene la petición. Dentro del expediente
+el administrador coteja los tres puntos del **Preanálisis** con el original,
+registra cómo resolvió las alertas y confirma el inicio de la identificación.
+En **Identificación**, puede corregir peticiones, descartar fragmentos y ajustar
+el tipo y la ruta antes de confirmar la revisión conjunta. En **Redacción**,
+revisa fuentes, texto y faltantes por petición y confirma la lectura de esa versión.
+En **Borrador**, puede ajustar y guardar el oficio y confirmar su entrega a FIAGA.
+Los faltantes que requieren evidencia o una firma pasan a la planificación. Para demostrar una
+secuencia, prepara dos encargos con su dependencia y publícalos. Cambia al perfil
+del primer tramitador, toma su turno y entrega un aporte. El segundo turno queda
+disponible. Al terminarlo, vuelve al perfil del administrador para revisar el
+borrador integrado. Puedes devolver un punto con su motivo o aprobar y descargar
+la respuesta en Word.
+
+El menú **Recursos → Expedientes anteriores** conserva la navegación y los oficios del
+recorrido que sigue a continuación.
+
+### Etapas del recorrido anterior
 
 ```mermaid
 flowchart LR

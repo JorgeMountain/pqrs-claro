@@ -1,0 +1,210 @@
+/* The same document also serves the historical demo. Select its chrome before first paint. */
+.fiaga-review :is(.institutional-header, .workspace-rail, #main > .prototype, #main > .steps, .workspace-opening) {
+  display: none !important;
+}
+.fiaga-review .shell:not(.fiaga-route-layout) { display: block; }
+.fiaga-review .shell:not(.fiaga-route-layout) > #main {
+  padding: 1.5rem clamp(1rem, 4vw, 3.5rem);
+}
+.fiaga-review-opening, .workspace-load-error { display: none; }
+.fiaga-review .fiaga-review-opening {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  margin: .75rem 0;
+  color: #355448;
+  font: 400 1rem/1.5 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+}
+.fiaga-review-opening::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid #c9d9cf;
+  border-top-color: #346048;
+  border-radius: 50%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .fiaga-review-opening::before { animation: fiaga-open-spin .85s linear infinite; }
+  @keyframes fiaga-open-spin { to { transform: rotate(1turn); } }
+}
+.workspace-load-failed :is(.workspace-opening, .fiaga-review-opening) { display: none; }
+.workspace-load-failed .workspace-load-error { display: block; }
+:root:has(.fiaga-brandbar) {
+  --fiaga-brandbar-height: 2.25rem;
+  scroll-padding-top: calc(var(--fiaga-brandbar-height) + .5rem);
+}
+.fiaga-brandbar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  color: #fff;
+  background: #203f30;
+  font: 400 .87rem/1.3 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+}
+.fiaga-brandbar-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: var(--fiaga-brandbar-height);
+  max-width: 79rem;
+  margin-inline: auto;
+  padding: .25rem clamp(1rem, 4vw, 3.5rem);
+}
+.fiaga-brandbar-name { display: flex; align-items: center; }
+.fiaga-brandbar-name strong { font-size: 1rem; letter-spacing: .025em; }
+.fiaga-brandbar-name span { margin-left: .85rem; padding-left: .85rem; border-left: 1px solid #86a193; }
+.fiaga-brandbar time { flex: none; font-size: .78rem; color: #e5eee6; }
+body:has(.fiaga-brandbar) > .skip:focus { z-index: 11; }
+header.fiaga-header {
+  --header-ink: #153d36;
+  --header-text: #405d55;
+  --header-line: #d0dcd5;
+  --header-hover: #f0f5f1;
+  --color-focus: #16715f;
+  display: block;
+  min-height: 0;
+  padding: 0;
+  background: white;
+  border: 0;
+  border-bottom: 1px solid var(--header-line);
+  color: var(--header-ink);
+  font: 400 1rem/1.5 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+}
+.fiaga-header [hidden] { display: none !important; }
+.fiaga-header .top-inner {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "brand menu profile";
+  align-items: center;
+  gap: clamp(1rem, 2vw, 2.25rem);
+  min-height: 3.5rem;
+  max-width: 79rem;
+  margin-inline: auto;
+  padding-inline: clamp(1rem, 4vw, 3.5rem);
+}
+.fiaga-header-brand {
+  grid-area: brand;
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  color: var(--header-ink);
+  text-decoration: none;
+}
+.fiaga-header-brand img { width: 8rem; max-height: 2.7rem; object-fit: contain; }
+.fiaga-header .tabs { grid-area: menu; min-width: 0; }
+.fiaga-header .tabs-inner { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .18rem; }
+.fiaga-header .tabs-inner > a, .fiaga-header .resources > summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .35rem;
+  min-height: 2.5rem;
+  padding: .52rem .8rem;
+  border-radius: .6rem;
+  color: var(--header-text);
+  font: 500 .86rem/1.2 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.fiaga-header .tabs-inner > a:hover, .fiaga-header .resources > summary:hover, .fiaga-header .resources[open] > summary { background: var(--header-hover); }
+.fiaga-header .tabs-inner > a[aria-current] { color: #104737; background: #dfefe5; }
+.fiaga-header .resources { position: relative; margin: 0; padding: 0; border: 0; }
+.fiaga-header .resources > summary { margin: 0; cursor: pointer; list-style: none; }
+.fiaga-header .resources > summary::-webkit-details-marker { display: none; }
+.fiaga-header .resources > summary::after {
+  content: "";
+  width: .38rem;
+  height: .38rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-.1rem) rotate(45deg);
+}
+.fiaga-header .resources[open] > summary::after { transform: translateY(.06rem) rotate(225deg); }
+.fiaga-header .resources-links {
+  position: absolute;
+  z-index: 10;
+  right: 0;
+  top: calc(100% + .3rem);
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: .3rem;
+  background: white;
+  border: 1px solid var(--header-line);
+  border-radius: .75rem;
+  box-shadow: 0 .6rem 1.6rem rgb(21 61 54 / 12%);
+}
+.fiaga-header .resources-links > * {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 2.55rem;
+  padding: .55rem .75rem;
+  border: 0;
+  border-radius: .45rem;
+  background: white;
+  color: var(--header-text);
+  font: 500 .87rem/1.35 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+  text-decoration: none;
+  cursor: pointer;
+}
+.fiaga-header .resources-links > :hover { background: var(--header-hover); }
+.fiaga-header .profile-tools { grid-area: profile; justify-self: end; min-width: 0; }
+.fiaga-header .profile { display: grid; gap: .15rem; margin: 0; color: var(--header-text); font-size: .72rem; line-height: 1.2; }
+.fiaga-header .profile select {
+  width: auto;
+  max-width: 15rem;
+  min-height: 2rem;
+  padding: .26rem .45rem;
+  border: 1px solid #7c9086;
+  border-radius: .45rem;
+  background: white;
+  color: var(--header-ink);
+  font: 500 .82rem/1.5 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+}
+.fiaga-header :is(a, button, select, summary):focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+#manager-dialog {
+  inset: 0;
+  margin: auto;
+  width: min(25rem, calc(100% - 2rem));
+  height: fit-content;
+  max-height: calc(100dvh - 2rem);
+  padding: 1.5rem;
+  border: 1px solid #d0dcd5;
+  border-radius: .9rem;
+  background: white;
+  color: #153d36;
+  font: 400 1rem/1.5 "Inbox Roboto", Roboto, "Segoe UI", sans-serif;
+}
+#manager-dialog::backdrop { background: rgb(14 43 36 / 38%); }
+#manager-dialog h2 { font-size: 1.15rem; margin: 0; }
+#manager-dialog .field { display: grid; gap: .32rem; margin: .85rem 0; font-size: .9rem; font-weight: 500; }
+#manager-dialog input { width: 100%; padding: .5rem .65rem; border: 1px solid #7c9086; border-radius: .45rem; font: inherit; font-weight: 400; }
+#manager-dialog [role="alert"] { margin: .85rem 0; color: #b02f49; }
+#manager-dialog [role="alert"]:empty { display: none; }
+#manager-dialog .actions { display: flex; flex-wrap: wrap; gap: .55rem; margin-top: .85rem; }
+#manager-dialog button { padding: .55rem .9rem; min-height: 2.5rem; border: 1px solid #7c9086; border-radius: .55rem; background: white; color: #153d36; font: 500 .9rem/1.35 "Inbox Roboto", Roboto, "Segoe UI", sans-serif; }
+#manager-dialog button.primary { border-color: #195b48; background: #195b48; color: white; }
+#manager-dialog button:hover { background: #f0f5f1; }
+#manager-dialog button.primary:hover { background: #104737; }
+@media (max-width: 60rem) {
+  .fiaga-header .top-inner { grid-template-columns: minmax(0,1fr) auto; grid-template-areas: "brand profile" "menu menu"; gap: 0 1rem; padding-top: .65rem; }
+  .fiaga-header .tabs { margin-top: .6rem; border-top: 1px solid var(--header-line); }
+  .fiaga-header .tabs-inner { position: relative; justify-content: flex-start; padding-block: .28rem; }
+  .fiaga-header .resources { position: static; margin-left: auto; }
+  .fiaga-header .resources-links { top: 100%; }
+}
+@media (max-width: 36rem) {
+  .fiaga-header-brand img { width: 6.8rem; }
+  .fiaga-header .profile { font-size: .67rem; }
+  .fiaga-header .profile select { max-width: min(35vw, 9rem); font-size: .78rem; }
+  .fiaga-header .top-inner { column-gap: .4rem; }
+  .fiaga-header .tabs-inner { justify-content: space-between; gap: 0; margin-inline: -.4rem; }
+  .fiaga-header .tabs-inner > a, .fiaga-header .resources > summary { padding: .4rem clamp(.2rem,1vw,.5rem); font-size: clamp(.73rem,3.2vw,.82rem); }
+  .fiaga-header .resources { margin-left: 0; }
+}
+@media print {
+  .fiaga-brandbar, header.fiaga-header { display: none; }
+}

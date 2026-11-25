@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from .catalog_labels import MAX_TOPICS
 from .config import ROOT
 from .redaction_notice import redaction_notice
 from .source_library import MAX_SOURCE_BYTES
@@ -29,6 +30,14 @@ class SearchSources(BaseModel):
 class LinkCollections(BaseModel):
     model_config = ConfigDict(extra="forbid")
     collection_ids: list[str] = Field(max_length=100)
+
+
+class SectorLabels(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    topics: list[str] = Field(max_length=MAX_TOPICS)
+    issuer: str | None = Field(max_length=120)
+    period: str | None = Field(max_length=120)
+    expected_revision: int = Field(ge=0)
 
 
 def source_router(library, service, cases):
@@ -63,11 +72,14 @@ def source_router(library, service, cases):
             }
 
     @router.get("/api/sources")
-    def sources(case_id: str | None = None):
+    def sources(case_id: str | None = None, with_labels: bool = False,
+                topic: str | None = None, issuer: str | None = None, period: str | None = None):
         if case_id:
             cases.get(case_id)
         return dict(
-            sources=library.list(case_id),
+            sources=(library.catalog_sources(case_id, topic=topic, issuer=issuer, period=period)
+                     if with_labels or any(v is not None for v in (topic, issuer, period))
+                     else library.list(case_id)),
             storage=dict(
                 mode="local",
                 description="Originales y versiones conservados en este equipo",
@@ -101,8 +113,15 @@ def source_router(library, service, cases):
             file.file.close()
 
     @router.get("/api/sources/{source_id}")
-    def detail(source_id: str, case_id: str | None = None):
-        return library.get(source_id, case_id)
+    def detail(source_id: str, case_id: str | None = None, with_labels: bool = False):
+        result = library.get(source_id, case_id)
+        if with_labels:
+            result["sector"] = library.sector_record(source_id, case_id)
+        return result
+
+    @router.put("/api/sources/{source_id}/sector")
+    def update_shared_labels(source_id: str, body: SectorLabels):
+        return library.update_sector_labels(source_id, **body.model_dump())
 
     @router.get("/api/sources/{source_id}/versions")
     def versions(source_id: str, case_id: str | None = None):
@@ -125,13 +144,19 @@ def source_router(library, service, cases):
             ".txt": "text/plain; charset=utf-8",
             ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         }
+        unreadable = source.get("extraction_status") == "error"
+        inline = not unreadable and extension in {".pdf", ".png", ".jpg", ".jpeg"}
+        headers = {"Content-Security-Policy": "default-src 'none'; sandbox"} if inline else None
         return FileResponse(
             library.original(source_id, case_id),
-            media_type=media.get(extension, "application/octet-stream"),
-            filename=source["filename"],
-            content_disposition_type=(
-                "inline" if extension in {".pdf", ".png", ".jpg", ".jpeg"} else "attachment"
+            media_type=(
+                "application/octet-stream"
+                if unreadable
+                else media.get(extension, "application/octet-stream")
             ),
+            filename=source["filename"],
+            content_disposition_type="inline" if inline else "attachment",
+            headers=headers,
         )
 
     @router.get("/api/sources/{source_id}/pages/{number}.png")
@@ -145,11 +170,39 @@ def source_router(library, service, cases):
             if not 1 <= number <= len(doc):
                 raise HTTPException(404, "La página no existe.")
             page = doc[number - 1]
-            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height))
+            scale = min(1.5, 1800 / max(page.rect.width, page.rect.height, 1.0))
             return Response(
                 page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False).tobytes("png"),
                 media_type="image/png",
             )
+
+    @router.get("/api/cases/{case_id}/source-versions/{source_id}/pages/{number}/view")
+    def citation_page(case_id: str, source_id: str, number: int, response: Response):
+        cases.assert_visible(case_id)
+        detail = library.get(source_id, case_id)
+        source = detail["source"]
+        page = next((p for p in detail["pages"] if p["number"] == number), None)
+        if page is None:
+            raise HTTPException(404, detail={
+                "code": "page_not_found",
+                "message": "La página o sección citada no está disponible.",
+            })
+        response.headers["Cache-Control"] = "no-store"
+        result = dict(text=page["text"], method=page["method"], version=source["version"],
+                      filename=source["filename"], page=number, words=[])
+        if Path(source["filename"]).suffix.lower() == ".pdf":
+            with pymupdf.open(library.original(source_id, case_id)) as document:
+                pdf_page = document[number - 1]
+                bounds = pdf_page.rect
+                result.update(width=bounds.width, height=bounds.height)
+                if page["method"] == "native":
+                    # PDF word boxes are unrotated; use the coordinate system of the PNG.
+                    rotation = pdf_page.rotation_matrix
+                    result["words"] = [
+                        [word[4], *list((pymupdf.Rect(word[:4]) * rotation) & bounds)]
+                        for word in pdf_page.get_text("words", sort=True)
+                    ]
+        return result
 
     @router.put("/api/sources/{source_id}/review")
     def review(source_id: str, body: SourceReview, case_id: str | None = None):

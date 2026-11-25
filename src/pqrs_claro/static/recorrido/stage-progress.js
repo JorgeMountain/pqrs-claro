@@ -29,9 +29,15 @@ export function preanalysisProgress(record={},navigation={}){
   const count=ready?checkKeys.filter(key=>['pass','attention'].includes(record.checks?.[key]?.state)).length:0;
   const attention=ready&&checkKeys.some(key=>record.checks?.[key]?.state!=='pass');
   const approved=ready&&Boolean(record.approval);
-  const title=failed?'Verificaciones por consultar':loading?'Recuperando las verificaciones guardadas…':running?'Revisando el documento':`${count} de 3 verificaciones realizadas`;
-  const message=failed?'No se completaron las verificaciones; revisa el aviso':loading?'El avance se conserva':running?'Comprobando datos, contenido y legibilidad':approved?'Revisión previa confirmada':ready?attention?'Revisa los hallazgos antes de continuar':'Pendiente de tu revisión':'Verificaciones pendientes';
-  return stageProgress({stage:0,title,message,count:loading||running||failed?null:count,total:3,running:!failed&&(loading||running),completed:navigation.completed,stageComplete:approved,warning:failed||attention});
+  if(failed){
+    const retained=ready&&record.retained_checks;
+    const title=retained?'Se muestran los resultados guardados':ready?'Verificación automática pendiente':'Verificaciones por consultar';
+    const message=retained?'El último intento no pudo actualizarlos':'No se completaron las verificaciones. Consulta el aviso.';
+    return stageProgress({stage:0,title,message,count:ready?(retained?count:0):null,total:3,completed:navigation.completed,stageComplete:approved,warning:true});
+  }
+  const title=loading?'Recuperando las verificaciones guardadas…':running?'Revisando el documento':`${count} de 3 verificaciones realizadas`;
+  const message=loading?'El avance se conserva':running?'Comprobando datos, contenido y legibilidad':approved?'Revisión previa confirmada':ready?attention?'Revisa los hallazgos antes de continuar':'Pendiente de tu revisión':'Verificaciones pendientes';
+  return stageProgress({stage:0,title,message,count:loading||running?null:count,total:3,running:loading||running,completed:navigation.completed,stageComplete:approved,warning:attention});
 }
 
 export function identificationProgress(current,initial={},navigation){
@@ -52,7 +58,7 @@ export function identificationProgress(current,initial={},navigation){
   return stageProgress({stage:1,title,message,count:loading||missing?null:count,total,running:!failed&&(extracting||classifying||loading),completed:navigation?.completed||[current.preanalysis_status==='ready'],stageComplete:reviewed,warning:failed||historical,historical});
 }
 
-export function draftProgress(work,model,{total=0,dirty=false,externalChanges=false,busy=false,message='',error='',generated=false,confirmed=false,completed=[],approval=null}={}){
+export function draftProgress(work,model,{total=0,dirty=false,externalChanges=false,busy=false,message='',error='',generated=false,confirmed=false,completed=[],approval=null,handoff=false}={}){
   if(!work)return stageProgress({stage:3,title:error?'No se pudo recuperar el borrador':'Recuperando el borrador guardado…',message:error?'Vuelve a cargar para consultar el avance':'Armando el documento con las respuestas guardadas',running:!error,completed,warning:Boolean(error)});
   const rows=work.requests||[],expected=Math.max(total,rows.length),unsaved=dirty||externalChanges;
   const final=generated&&!unsaved&&!error;
@@ -63,6 +69,7 @@ export function draftProgress(work,model,{total=0,dirty=false,externalChanges=fa
   }
   const pending=model.items.length;
   const title=final?'Versión final generada':unsaved?'Cambios pendientes de comprobar':expected?`${model.ready} de ${expected} ${expected===1?'respuesta comprobada':'respuestas comprobadas'}`:'Borrador sin respuestas preparadas';
-  const detail=error?'La operación requiere atención; revisa el aviso':busy?message||'Actualizando el borrador':unsaved?'Guarda los cambios para actualizar el avance':final?'Word y PDF disponibles':model.checking?`Comprobando ${model.checking} ${model.checking===1?'respuesta':'respuestas'}`:pending?`${pending} ${pending===1?'ajuste pendiente':'ajustes pendientes'}`:!model.canGenerate||model.ready<expected?'Falta preparar las respuestas':confirmed?'Revisión confirmada; falta generar el oficio':'Pendiente de tu revisión final';
+  const preparation=model.awaitingCheck&&model.written===expected?'Pendiente de comprobación':'Falta preparar las respuestas';
+  const detail=error?'La operación requiere atención; revisa el aviso':busy?message||'Actualizando el borrador':unsaved?'Guarda los cambios para actualizar el avance':final?'Word y PDF disponibles':model.checking?`Comprobando ${model.checking} ${model.checking===1?'respuesta':'respuestas'}`:pending?`${pending} ${pending===1?'ajuste pendiente':'ajustes pendientes'}`:!model.canGenerate||model.ready<expected?preparation:confirmed?(handoff?'Revisión confirmada para organizar los trámites':'Revisión confirmada; falta generar el oficio'):'Pendiente de tu revisión final';
   return stageProgress({stage:3,title,message:detail,count:unsaved?null:model.ready,total:expected,running:busy||model.checking>0,completed,stageComplete:final,warning:Boolean(error)||pending>0});
 }

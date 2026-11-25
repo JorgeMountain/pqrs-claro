@@ -55,6 +55,9 @@ class IntakeService:
                 "CREATE TABLE IF NOT EXISTS intake_reviews (case_id TEXT PRIMARY KEY, body TEXT)"
             )
             conn.execute("CREATE TABLE IF NOT EXISTS intake_history (case_id TEXT, body TEXT)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS intake_history_case ON intake_history(case_id)"
+            )
 
     @staticmethod
     def analysis_scope(row):
@@ -203,7 +206,7 @@ class IntakeService:
                     "reason": plan["reason"]}
         return {
             **{k: v for k, v in row.items() if k != "analysis_cache"},
-            "enabled": self.enabled,
+            "enabled": self.required(case),
             "stale": stale,
             "legacy_report": legacy,
             "can_prepare": allowed,
@@ -228,8 +231,11 @@ class IntakeService:
             )
         return result
 
+    def required(self, case):
+        return self.enabled or (case.get("receipt") or {}).get("workflow") == "fiaga"
+
     def _decision_allows_preparation(self, case, row, stale, bypass):
-        return not self.enabled or (
+        return not self.required(case) or (
             case["status"] == "confirmed"
             and (row["status"] == "approved" and not stale or bypass)
         )
@@ -237,7 +243,7 @@ class IntakeService:
     def assert_allowed(self, case_id, *, read_only=False):
         if not read_only:
             self.cases.assert_open(case_id)
-        if not self.enabled:
+        if not self.enabled and not self.cases.uses_fiaga(case_id):
             return
         row = self.get(case_id, include_plan=False)
         if not self._decision_allows_preparation(
@@ -249,6 +255,8 @@ class IntakeService:
 
     def pilot_bypassed(self, case_id):
         case = self.cases.get(case_id)
+        if (case.get("receipt") or {}).get("workflow") == "fiaga":
+            return False
         bypass = self.saved(case_id).get("pilot_bypass") or {}
         return bool(bypass.get("enabled") and bypass.get("basis") == digest({
             "original": case["sha256"], "identification": case.get("identification")
@@ -295,7 +303,7 @@ class IntakeService:
 
     def analyze_identified(self, case):
         """Start automatically; provider failures must not erase extracted petitions."""
-        if not self.enabled:
+        if not self.required(case):
             return
         with self.identification.lock if self.identification else nullcontext(), self.lock:
             previous = self.get(case["id"])
@@ -323,7 +331,7 @@ class IntakeService:
         Keep a persisted full report for undo. Its fingerprint must still match
         sources, model and policy; never bless stale evidence as current.
         """
-        if not self.enabled:
+        if not self.required(case):
             return False
         with self.lock:
             row = self.saved(case["id"])
@@ -407,10 +415,11 @@ class IntakeService:
     def start(self, case_id, body):
         with self.identification.lock if self.identification else nullcontext(), self.lock:
             self.cases.assert_open(case_id)
-            if not self.enabled:
+            case = self.cases.get(case_id)
+            if not self.required(case):
                 raise Conflict("La revisión inicial no está habilitada en este entorno.")
             self.assert_idle(case_id)
-            case, previous = self.cases.get(case_id), self.saved(case_id)
+            previous = self.saved(case_id)
             if (
                 case["status"] not in {"needs_review", "confirmed"}
                 or case["version"] != body.version
@@ -459,7 +468,11 @@ class IntakeService:
                 decided_at=None,
             )
             self.active.add(case_id)
-            self.pool.submit(self.run, row)
+            try:
+                self.pool.submit(self.run, row)
+            except Exception:
+                self.active.discard(case_id)
+                raise
             return self.get(case_id)
 
     @track_case("classification_inputs", "case_id")

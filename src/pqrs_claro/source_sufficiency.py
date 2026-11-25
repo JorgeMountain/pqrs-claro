@@ -13,10 +13,11 @@ import unicodedata
 from .models import DomainError
 from .request_intent import classify_request_intent
 from .request_requirements import validate_requirement_checks
+from .source_context import _scope_quotes
 from .source_documents import available_copy_matches
 from .source_uncertainties import validated_uncertainties
 
-POLICY_VERSION = 9
+POLICY_VERSION = 10
 
 DOCUMENT_STATE_GUIDANCE = """
 document_states separa tres dimensiones locales: availability=identified_copy
@@ -90,8 +91,6 @@ def _positive_copy_requirements(texts):
 
 
 def _copy_scope_texts(request):
-    from .source_context import _scope_quotes
-
     context = request.get("context") or {}
     scope = _scope_quotes(context.get("document_context") or {})
     texts = [request.get("description") or request.get("title") or "", *scope]
@@ -295,9 +294,14 @@ def _copy_without_legal_application(request):
     # Time alone (the document's year or today's delivery) is not legal effect.
     # Keep broad positive/negative questions about effect, even if mislabeled as
     # attributed content by the reader. Negated decision mandates were removed above.
-    return not bool(re.search(
+    return not (_legal_application_language(text) or re.search(r"\bregul\w*\b", text))
+
+
+def _legal_application_language(text):
+    return bool(re.search(
         r"\b(?:vigencia|vigentes?|vigor|aplic\w*|derog\w*|rige[n]?|regia[n]?|rigio|rigieron|"
-        r"regir\w*|regul\w*|obligatori\w*|exigib\w*|puedo|podemos|debo|debemos|"
+        r"regir\w*|regul(?:a[n]?|aba[n]?|o|aron|ara[n]?|aria[n]?)|"
+        r"obligatori\w*|exigib\w*|puedo|podemos|debo|debemos|"
         r"corresponde|derechos?|suspendid[ao]s?|suspension)\b|\bpara\s+mi\s+caso\b|"
         r"\b(?:efectos?|validez|fuerza)\s+(?:juridic\w*|normativ\w*|legal\w*|vinculante)\b|"
         r"\b(?:surt\w*|produc\w*|tiene|conserva|sin)\s+efectos?\b|"
@@ -312,11 +316,51 @@ def _normative_description_only(request):
     if _requires_more_than_attribution(request):
         return False
     text = _plain(request.get("description") or request.get("title") or "")
-    return bool(re.search(
+    if re.search(
         r"\b(?:segun|contenido|texto|transcrib\w*|describe|describio|describia|"
         r"dice|decia|establece|establecio|establecia|fija|fijo|fijado|"
         r"preve|preveia|senala|senalo|senalaba|indicaba|indica|indico|"
-        r"consta|constaba|dispone|disponia|dispuesto|definio|definido)\b", text))
+        r"consta|constaba|dispone|disponia|dispuesto|definio|definido)\b", text):
+        return True
+    # Some writers specify once that every question asks about a document's
+    # contents. Only inherit that purpose from explicit wording in an aligned,
+    # complete original.
+    context = request.get("context") or {}
+    document = context.get("document_context") or {}
+    if (context.get("origin") != "same_petition" or context.get("truncated")
+            or context.get("target_request_id") != request.get("id")
+            or document.get("origin") != "original_petition"
+            or not document.get("original_fully_retained") or document.get("truncated")
+            or document.get("unverified_request_reference_count") or document.get("omitted_ranges")
+            or not any(isinstance(ref, dict) and ref.get("request_id") == request.get("id")
+                       for ref in document.get("question_ranges") or [])):
+        return False
+    try:
+        shared = _plain(". ".join(_scope_quotes(document)))
+    except (KeyError, TypeError, AttributeError):
+        return False
+    # A preamble can assign a different purpose to an individual numbered
+    # point. Those clauses cannot establish common scope for every question.
+    common = ". ".join(clause for clause in re.split(r"[.!?;]+", shared)
+                       if not re.search(r"\b(?:punto|numeral|apartado|inciso)\b", clause))
+    documentary = re.search(
+        r"\b(?:consulta|peticion|consulto|conocer|explicar|describir)\b[^.;]{0,70}"
+        r"(?:\b(?:contenido|texto)\s+(?:de|del)\b|"
+        r"\b(?:descrit[ao]s?|publicad[ao]s?|previst[ao]s?|consignad[ao]s?)\s+en\b)", common)
+    if not documentary:
+        return False
+    excluded_validity = re.compile(
+        r"\b(?:no\s+(?:(?:pido|solicito|requiero)\s+)?certificar\s+"
+        r"(?:(?:la|su)\s+)?|sin\s+certificacion\s+de\s+(?:la\s+)?)"
+        r"vigencia\b(?:\s+(?:actual|hoy))?")
+    # A separate positive mandate in the request, common scope or a parent
+    # always prevails. Remove only the actual exclusion, never the whole clause.
+    parent = ". ".join(_plain(a.get("description", "")) for a in context.get("ancestors", []))
+    scope = excluded_validity.sub("", ". ".join([text, shared, parent]))
+    return (not _legal_application_language(scope)
+            and not re.search(r"\b(?:prevalec\w*|prelacion|comparar|compare[n]?|"
+                              r"contradiccion\w*|incompatib\w*)\b", scope)
+            and not re.search(rf"\b{_SCOPE_DECISION}\b", _application_request_text(scope)))
 
 
 def validated_coverage(selection, request, supports):

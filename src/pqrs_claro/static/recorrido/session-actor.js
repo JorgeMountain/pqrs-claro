@@ -2,14 +2,18 @@
 const key='gestion-peticiones-responsable-v1';
 let value='';
 try{value=sessionStorage.getItem(key)||'';}catch{}
-export const sessionActor=()=>value;
+let adminReview=false;
+export const useAdminReviewerName=()=>{adminReview=true;};
+export const sessionActor=()=>adminReview?'Administrador':value;
 export function rememberActor(name){
+  if(adminReview)return;
   value=String(name||'').trim().slice(0,240);
   try{sessionStorage.setItem(key,value);}catch{}
 }
 export function bindActor(form,selector='[name="author"],#pending-actor,#response-actor,#proposal-actor,#office-actor'){
   const input=form?.querySelector(selector);if(!input)return;
   const label=input.closest('label');if(!label)return;
+  if(adminReview){input.value=sessionActor();input.readOnly=true;return;}
   const text=[...label.childNodes].find(n=>n.nodeType===3);
   if(text)text.textContent='Responsable de esta sesión';
   input.value=value||input.value;

@@ -1,0 +1,457 @@
+{
+  "schema_version": 1,
+  "corpus_id": "full-library-retrieval-holdout-20261117",
+  "independence": "Consultas y criterios fijados leyendo originales antes de ejecutar o inspeccionar rankings o lecturas de estas cuatro preguntas. El autor conocía el diagnóstico anterior, pero no resultados de estas consultas nuevas. Sin búsqueda RAG ni llamadas al lector.",
+  "scoring": {
+    "required_alternatives": "Obligaciones AND y alternativas OR. Cita presente no prueba interpretación correcta ni validez de los pendientes.",
+    "literal_match": "NFKC y espacios normalizados; preservar identidad, página, versión y permiso.",
+    "equivalent_evidence": "Alternativas originales con texto equivalente fijadas previamente. Otras equivalencias necesitan adjudicación documentada aplicable a ambos modos, sin cambiar el criterio retrospectivamente.",
+    "pending": "El caso individual requiere prueba individual aunque exista la norma. Los tres casos informativos no exigen demostrar requisitos personales.",
+    "coverage": "No exigir contenido incidental de un pasaje que no haya sido solicitado."
+  },
+  "global_forbidden": [
+    "Pedir demostrar requisitos personales para responder una consulta informativa documental.",
+    "Pedir certificar vigencia actual sin solicitud de aplicación presente ni conflicto pertinente.",
+    "Declarar ausencia de documentos por falta de recuperación, preparación o permisos."
+  ],
+  "source_manifest": {
+    "9178f41db9604e0d9ec337d2424585ed": {
+      "title": "Guía técnica para aspirantes nuevos 2027-1 - V4",
+      "collection_id": "drive-admisiones-udea-2027-1",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "reviewed",
+      "validity": "current",
+      "extraction_status": "partial",
+      "version": 1,
+      "sha256": "e9f57d0a1c000d7636c715ee043ce598470b66dced62587dd74ae52614ca279c",
+      "original_sha256_verified": "e9f57d0a1c000d7636c715ee043ce598470b66dced62587dd74ae52614ca279c",
+      "pages": [
+        {
+          "number": 3,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "SHA-256 cotejado; cita contrastada contra extracción nativa normal/layout del PDF original. Compilaciones alternativas fijadas antes de ejecutar estas preguntas."
+    },
+    "35d06c9866f24d948100886c0c27d776": {
+      "title": "08_Reglamento_Estudiantil_Pregrado_UdeA.pdf",
+      "collection_id": "drive-pqrs-fuentes",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "version": 1,
+      "sha256": "aa04239c218912111efeac1c2c6687003e9d7d4f1b9395506f407e67deeaded6",
+      "original_sha256_verified": "aa04239c218912111efeac1c2c6687003e9d7d4f1b9395506f407e67deeaded6",
+      "pages": [
+        {
+          "number": 15,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 16,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "SHA-256 cotejado; cita contrastada contra extracción nativa normal/layout del PDF original. Compilaciones alternativas fijadas antes de ejecutar estas preguntas."
+    },
+    "b3ed4e20b779403eacf37b8888782c64": {
+      "title": "Acuerdo Superior 1 · 1981/02/15 · código 35227518 · Por el cual se expide el Reglamento Estudiantil y de Normas Académicas",
+      "collection_id": "consejo-superior-20261007",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "version": 1,
+      "sha256": "8741cfc3175148ee202a3f535761c1bd570ff92c5b640ed8f758b5a91d51c51a",
+      "original_sha256_verified": "8741cfc3175148ee202a3f535761c1bd570ff92c5b640ed8f758b5a91d51c51a",
+      "pages": [
+        {
+          "number": 16,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "SHA-256 cotejado; cita contrastada contra extracción nativa normal/layout del PDF original. Compilaciones alternativas fijadas antes de ejecutar estas preguntas."
+    },
+    "7d4ecd1e38de451899c3ee40abc013fa": {
+      "title": "Acuerdo Superior 1 · 1981/02/15 · código 35227516 · Por el cual se expide el Reglamento Estudiantil y de Normas Académicas",
+      "collection_id": "consejo-superior-20261007",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "version": 1,
+      "sha256": "5ab4bbea90f8040e2f84da200f6e591d22f26a3ce54bbf9574d5cf71957baa4f",
+      "original_sha256_verified": "5ab4bbea90f8040e2f84da200f6e591d22f26a3ce54bbf9574d5cf71957baa4f",
+      "pages": [
+        {
+          "number": 11,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 12,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "SHA-256 cotejado; cita contrastada contra extracción nativa normal/layout del PDF original. Compilaciones alternativas fijadas antes de ejecutar estas preguntas."
+    },
+    "489659a80f834ad99ab58cd9e8cd92fb": {
+      "title": "NORMA. Acuerdo CdF 958 del 7 octubre de 2020. Reglamento de Prácticas Ingeniería",
+      "collection_id": "onman-20260907",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "version": 1,
+      "sha256": "d265c01db7365e6cf0094446ddf6b40bebf03cdc9f43780dd6301cb3f052a231",
+      "original_sha256_verified": "d265c01db7365e6cf0094446ddf6b40bebf03cdc9f43780dd6301cb3f052a231",
+      "pages": [
+        {
+          "number": 3,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 4,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 5,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "SHA-256 cotejado; cita contrastada contra extracción nativa normal/layout del PDF original. Compilaciones alternativas fijadas antes de ejecutar estas preguntas."
+    }
+  },
+  "cases": {
+    "HO-ADM": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "registration_window",
+            "criterion": "Inscripción del 14 de agosto al 14 de septiembre de 2026.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 3,
+                "quote": "Del 14 de agosto al 14 de septiembre de 2026 en"
+              }
+            ]
+          },
+          {
+            "id": "payment_window",
+            "criterion": "Pago de derechos del 14 de agosto al 14 de septiembre de 2026: mismo inicio y cierre; no había ventanas distintas para estos dos trámites.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 3,
+                "quote": "Del 14 de agosto al 14 de septiembre de 2026.Consulte las\nformas de pago en el numeral 7."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Inscripción del 14 de agosto al 14 de septiembre de 2026.",
+          "Pago de derechos del 14 de agosto al 14 de septiembre de 2026: mismo inicio y cierre; no había ventanas distintas para estos dos trámites."
+        ],
+        "legitimate_pending": [
+          "Conservar sólo un control concreto de autenticidad/procedencia que realmente corresponda a la fuente. Metadatos generales pending no obligan a cotejar OCR de una página nativa legible."
+        ],
+        "forbidden": [
+          "Pedir demostrar requisitos personales para responder una consulta informativa documental.",
+          "Pedir certificar vigencia actual sin solicitud de aplicación presente ni conflicto pertinente.",
+          "Declarar ausencia de documentos por falta de recuperación, preparación o permisos.",
+          "Confundir estos plazos con biometría, credencial, examen o resultados.",
+          "Pedir verificar una inscripción individual que no se está consultando."
+        ]
+      }
+    },
+    "HO-PRE": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "authority",
+            "criterion": "El consejo de la unidad académica estudia y recomienda al Consejo Académico.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 15,
+                "quote": "Es competencia de cada consejo de\nunidad académica estudiar y recomendar, al Consejo Académico"
+              },
+              {
+                "source_id": "b3ed4e20b779403eacf37b8888782c64",
+                "page": 16,
+                "quote": "Es competencia de cada consejo de\nunidad académica estudiar y recomendar, al Consejo Académico"
+              },
+              {
+                "source_id": "7d4ecd1e38de451899c3ee40abc013fa",
+                "page": 11,
+                "quote": "Es competencia de cada consejo de\nunidad académica estudiar y recomendar, al Consejo Académico"
+              }
+            ]
+          },
+          {
+            "id": "places",
+            "criterion": "Cupos de transferencia regular previamente determinados por el consejo.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 16,
+                "quote": "a. Cupos disponibles para transferencia regular, previamente determinados para el efecto\npor dicho Consejo."
+              },
+              {
+                "source_id": "b3ed4e20b779403eacf37b8888782c64",
+                "page": 16,
+                "quote": "a. Cupos disponibles para transferencia regular, previamente determinados para el efecto\npor dicho Consejo."
+              },
+              {
+                "source_id": "7d4ecd1e38de451899c3ee40abc013fa",
+                "page": 11,
+                "quote": "a. Cupos disponibles para transferencia regular, previamente determinados para el efecto\npor dicho Consejo."
+              }
+            ]
+          },
+          {
+            "id": "average",
+            "criterion": "Promedio académico acumulado.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 16,
+                "quote": "b. Promedio académico acumulado."
+              },
+              {
+                "source_id": "b3ed4e20b779403eacf37b8888782c64",
+                "page": 16,
+                "quote": "b. Promedio académico acumulado."
+              },
+              {
+                "source_id": "7d4ecd1e38de451899c3ee40abc013fa",
+                "page": 12,
+                "quote": "b. Promedio académico acumulado."
+              }
+            ]
+          },
+          {
+            "id": "certificate",
+            "criterion": "Certificado oficial de autoridad competente de la universidad de origen: ausencia de sanciones disciplinarias vigentes y de sanciones vigentes por insuficiencia académica al expedirse.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 16,
+                "quote": "c. Certificado oficial emitido por la autoridad competente de la universidad de origen, en\nel cual se manifieste que, al momento de su expedición, el solicitante no presenta\nsanciones disciplinarias vigentes, como tampoco sanciones vigentes por insuficiencia\nacadémica."
+              },
+              {
+                "source_id": "b3ed4e20b779403eacf37b8888782c64",
+                "page": 16,
+                "quote": "c. Certificado oficial emitido por la autoridad competente de la universidad de origen, en\nel cual se manifieste que, al momento de su expedición, el solicitante no presenta\nsanciones disciplinarias vigentes, como tampoco sanciones vigentes por insuficiencia\nacadémica."
+              },
+              {
+                "source_id": "7d4ecd1e38de451899c3ee40abc013fa",
+                "page": 12,
+                "quote": "c. Certificado oficial emitido por la autoridad competente de la universidad de origen, en\nel cual se manifieste que, al momento de su expedición, el solicitante no presenta\nsanciones disciplinarias vigentes, como tampoco sanciones vigentes por insuficiencia\nacadémica."
+              }
+            ]
+          },
+          {
+            "id": "affinity",
+            "criterion": "Afinidad entre programa solicitado y de origen, según concepto del consejo de la unidad académica.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 16,
+                "quote": "d. Afinidad entre el programa al cual aspira a ingresar el solicitante y el que estaba\ncursando en la institución de la cual proviene, según concepto del consejo de la unidad\nacadémica al cual pertenece el programa."
+              },
+              {
+                "source_id": "b3ed4e20b779403eacf37b8888782c64",
+                "page": 16,
+                "quote": "d. Afinidad entre el programa al cual aspira a ingresar el solicitante y el que estaba\ncursando en la institución de la cual proviene, según concepto del consejo de la unidad\nacadémica al cual pertenece el programa."
+              },
+              {
+                "source_id": "7d4ecd1e38de451899c3ee40abc013fa",
+                "page": 12,
+                "quote": "d. Afinidad entre el programa al cual aspira a ingresar el solicitante y el que estaba\ncursando en la institución de la cual proviene, según concepto del consejo de la unidad\nacadémica al cual pertenece el programa."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "El consejo de la unidad académica estudia y recomienda al Consejo Académico.",
+          "Cupos de transferencia regular previamente determinados por el consejo.",
+          "Promedio académico acumulado.",
+          "Certificado oficial de autoridad competente de la universidad de origen: ausencia de sanciones disciplinarias vigentes y de sanciones vigentes por insuficiencia académica al expedirse.",
+          "Afinidad entre programa solicitado y de origen, según concepto del consejo de la unidad académica."
+        ],
+        "legitimate_pending": [
+          "Conservar sólo un control concreto de autenticidad/procedencia que realmente corresponda a la fuente. Metadatos generales pending no obligan a cotejar OCR de una página nativa legible."
+        ],
+        "forbidden": [
+          "Pedir demostrar requisitos personales para responder una consulta informativa documental.",
+          "Pedir certificar vigencia actual sin solicitud de aplicación presente ni conflicto pertinente.",
+          "Declarar ausencia de documentos por falta de recuperación, preparación o permisos.",
+          "Solicitar certificado individual para explicar la lista de criterios.",
+          "Omitir sanciones por insuficiencia académica al describir el certificado.",
+          "Trasladar reglas de posgrado o transferencia especial a la transferencia regular."
+        ]
+      }
+    },
+    "HO-PRA": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "credits",
+            "criterion": "Aprobar el 80% de los créditos del plan de estudios.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 3,
+                "quote": "a) Haber aprobado el 80% de los créditos de su plan de estudios"
+              }
+            ]
+          },
+          {
+            "id": "induction",
+            "criterion": "Realizar talleres de inducción programados por la Coordinación de Prácticas de Ingeniería.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 3,
+                "quote": "b) Haber realizado los talleres de inducción a la práctica académica, programados por la \nCoordinación de Prácticas de la Facultad de Ingeniería."
+              }
+            ]
+          },
+          {
+            "id": "program_requirements",
+            "criterion": "Cumplir los requisitos académicos específicos del programa.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 3,
+                "quote": "c) Cumplir con los demás requisitos académicos específicos que defina cada programa."
+              }
+            ]
+          },
+          {
+            "id": "business_course",
+            "criterion": "En Empresarismo, certificar curso de planes de negocio de al menos 40 horas.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 3,
+                "quote": "d) En caso de optar por la práctica en modalidad empresarismo, certificar la realización de un curso \nsobre planes de negocio con intensidad no inferior a 40 horas."
+              }
+            ]
+          },
+          {
+            "id": "study_plan",
+            "criterion": "Cumplir los demás requisitos del plan de estudios parametrizados en el sistema de registro académico.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 3,
+                "quote": "f) Los demás requisitos establecidos en el plan de estudios y parametrizados en el sistema de \nregistro académico de la Universidad."
+              }
+            ]
+          },
+          {
+            "id": "expiry",
+            "criterion": "Inducción vigente durante un año desde su realización.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 4,
+                "quote": "Parágrafo 2° Los talleres de inducción a la práctica académica, tendrán una vigencia de un (1) año \na partir de su realización por parte del estudiante. Pasado este período de tiempo sin que se haya"
+              }
+            ]
+          },
+          {
+            "id": "refresh",
+            "criterion": "Si transcurre ese año sin matricular práctica, realizar taller de actualización en las fechas programadas por la Coordinación.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 4,
+                "quote": "a partir de su realización por parte del estudiante. Pasado este período de tiempo sin que se haya \nmatriculado la práctica académica en cualquiera de sus modalidades, el estudiante deberá realizar \nun taller de actualización en las fechas en que sean programados por la Coordinación de Prácticas \nde la Facultad de Ingeniería."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Aprobar el 80% de los créditos del plan de estudios.",
+          "Realizar talleres de inducción programados por la Coordinación de Prácticas de Ingeniería.",
+          "Cumplir los requisitos académicos específicos del programa.",
+          "En Empresarismo, certificar curso de planes de negocio de al menos 40 horas.",
+          "Cumplir los demás requisitos del plan de estudios parametrizados en el sistema de registro académico.",
+          "Inducción vigente durante un año desde su realización.",
+          "Si transcurre ese año sin matricular práctica, realizar taller de actualización en las fechas programadas por la Coordinación."
+        ],
+        "legitimate_pending": [
+          "Conservar sólo un control concreto de autenticidad/procedencia que realmente corresponda a la fuente. Metadatos generales pending no obligan a cotejar OCR de una página nativa legible."
+        ],
+        "forbidden": [
+          "Pedir demostrar requisitos personales para responder una consulta informativa documental.",
+          "Pedir certificar vigencia actual sin solicitud de aplicación presente ni conflicto pertinente.",
+          "Declarar ausencia de documentos por falta de recuperación, preparación o permisos.",
+          "Exigir curso coterminal y aval de Posgrados propios de Proyecto de Investigación.",
+          "Exigir internacionalización sin pasantía ni doble titulación exterior.",
+          "Confundir vigencia del taller con un pendiente de vigencia actual de la norma."
+        ]
+      }
+    },
+    "HO-IND": {
+      "P1": {
+        "kind": "legitimate_pending",
+        "required_alternatives": [
+          {
+            "id": "enrollment_condition",
+            "criterion": "La práctica sólo puede iniciarse cuando la matrícula esté asentada; el reglamento no demuestra matrícula individual.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 5,
+                "quote": "El estudiante puede iniciar su práctica académica solo cuando esté asentada la respectiva \nmatrícula. En el caso de práctica empresarial debe enviar al Coordinador de Prácticas de su"
+              },
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 4,
+                "quote": "El estudiante sólo podrá realizar su práctica académica siempre y cuando se encuentre matriculado \nen la misma. Esta matrícula la podrán realizar a través del Comité de Asuntos Estudiantiles, desde"
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Explicar con cita la condición reglamentaria de matrícula.",
+          "No afirmar ni negar matrícula individual: no se aporta prueba de ese hecho.",
+          "Conservar comprobación concreta del registro o constancia de matrícula del estudiante para curso y periodo pertinentes; consultar sistema o dependencia competente es válido."
+        ],
+        "legitimate_pending": [
+          "Verificar matrícula individual asentada. Un reglamento, solicitud o carta aval no prueban por sí solos el asiento de matrícula.",
+          "Si hace falta identificar el registro, solicitar sólo datos mínimos de estudiante, curso o periodo necesarios para esa comprobación."
+        ],
+        "forbidden": [
+          "Afirmar matrícula o habilitación porque el reglamento describe el trámite.",
+          "Afirmar que no está matriculado porque la constancia no aparece en biblioteca.",
+          "Cerrar la comprobación individual con una cita normativa general.",
+          "Duplicar la obtención o comprobación de la misma constancia en varios pendientes.",
+          "Exigir evidencia de todos los requisitos previos o contrato empresarial sin una brecha pertinente a la matrícula consultada."
+        ]
+      }
+    }
+  }
+}

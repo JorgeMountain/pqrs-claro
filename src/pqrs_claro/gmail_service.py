@@ -31,6 +31,9 @@ class GmailService:
                 "id TEXT PRIMARY KEY, account TEXT, message_id TEXT, "
                 "case_id TEXT, body TEXT, UNIQUE(account,message_id))"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS gmail_messages_case ON gmail_messages(case_id)"
+            )
 
     def account(self, expected=None):
         account = self.auth.status().get("account")
@@ -225,7 +228,12 @@ class GmailService:
                             "primary": body.mode,
                             "attachment_id": body.attachment_id,
                         }
-                        case = self.cases.create(filename, pdf, case_id=cid, origin=origin)
+                        receipt = None
+                        if body.workflow == "fiaga":
+                            receipt = {"workflow": "fiaga", "subject": row["subject"],
+                                       "reference": body.case_number.strip()}
+                        case = self.cases.create(filename, pdf, case_id=cid, origin=origin,
+                                                 receipt=receipt)
                     self.library.link_collections(
                         cid, [c["id"] for c in self.library.collections()]
                     )

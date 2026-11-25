@@ -29,9 +29,9 @@ from .source_semantic import (
 )
 from .storage import Conflict, now
 
-SOURCE_ANALYSIS_VERSION = 29
+SOURCE_ANALYSIS_VERSION = 30
 # Version the prompt, schema and validation policy used by a reader checkpoint.
-SOURCE_READER_POLICY_VERSION = 9
+SOURCE_READER_POLICY_VERSION = 12
 INTERACTIVE_SEMANTIC_BUDGET_SECONDS = 15
 logger = logging.getLogger(__name__)
 
@@ -67,9 +67,18 @@ def _request_checkpoint(case_id, request, context, attempt):
     return {"configurable": {"thread_id": thread_id}}
 
 
-def _matches_reader(run, policy):
+def _matches_reader(run, policy, *, viewing_saved=False):
     if "reader_policy" in run:
-        return run["reader_policy"] == policy
+        saved = run["reader_policy"]
+        if saved == policy:
+            return True
+        # The supplementary reading changes how new searches can resolve an OCR
+        # check. Earlier results retain their original evidence and open checks.
+        # Never reuse that older policy as a checkpoint for a new search.
+        return (viewing_saved and policy["reader_version"] == 12
+                and run.get("status") in {"ready", "error"}
+                and saved == {**{k: v for k, v in policy.items() if k != "independent_ocr_read"},
+                              "reader_version": 10})
     # A previously completed result remains available under the original reader
     # policy. It cannot supply a raw reading for a new catalog snapshot.
     return (policy["reader_version"] == 1
@@ -104,6 +113,8 @@ class SourceService:
             key = getattr(self.assessor, "reader_cache_key", None)
         return {"provider": provider, "reader": key, "model": self.settings.model,
                 "reader_version": SOURCE_READER_POLICY_VERSION,
+                "independent_ocr_read": getattr(self.settings, "independent_ocr_read",
+                                                Settings.independent_ocr_read),
                 "passage_version": PASSAGE_SELECTION_VERSION}
 
     def verification_fingerprint(self, case_id, sources):
@@ -198,11 +209,8 @@ class SourceService:
                 stale=False,
             )
         stale = run["fingerprint"] != fingerprint
-        # v19 relaciona cada fecha con el evento cercano, no con toda la página.
-        # v18 amplía pasajes y evita que el cupo léxico cierre el canal semántico.
-        # v17 recupera fechas explícitas; v16 busca dentro de documentos.
-        # Un resultado anterior ya satisfactorio sigue siendo utilizable si TODAS sus
-        # entradas actuales coinciden. No se promueven errores ni se reescribe el run.
+        # Compatibilidad hacia atrás cuando un resultado válido de una versión previa
+        # de análisis ya encontró respaldos completos sin errores bajo las mismas entradas.
         if (stale and SOURCE_ANALYSIS_VERSION in {15, 16, 17, 18, 19, 20}
                 and run.get("status") == "ready" and not run.get("error")):
             results = run.get("results", [])
@@ -224,7 +232,7 @@ class SourceService:
                     if run["fingerprint"] == digest(previous):
                         stale = False
                         break
-        stale = stale or not _matches_reader(run, self.reader_policy())
+        stale = stale or not _matches_reader(run, self.reader_policy(), viewing_saved=True)
         return {
             **run,
             "status": "stale" if stale and run["status"] != "running" else run["status"],
@@ -351,17 +359,24 @@ class SourceService:
             )
             self.library.save_run(run)
             self.active.add(case_id)
-            self.pool.submit(self.run, case, chunks, run, catalog=catalog,
-                             applications=applications, prior_read=prior_read)
+            try:
+                self.pool.submit(self.run, case, chunks, run, catalog=catalog,
+                                 applications=applications, prior_read=prior_read)
+            except Exception:
+                self.active.discard(case_id)
+                raise
             return self.progress(case_id)
 
     @track_case("sources", "case")
     def run(self, case, chunks, run, *, catalog, applications, prior_read=None):
+        owned_assessor = None
         try:
-            assessor = self.assessor or OpenAISourceAssessor(
-                self.settings.api_key, self.settings.model,
-                service_tier=self.settings.source_service_tier,
-            )
+            assessor = self.assessor
+            if assessor is None:
+                owned_assessor = assessor = OpenAISourceAssessor(
+                    self.settings.api_key, self.settings.model,
+                    service_tier=self.settings.source_service_tier,
+                )
             lexical = RetrievalIndex(chunks, prepared_terms=self.library.prepared_terms(chunks))
             # No bloquear la primera consulta hasta indexar toda la biblioteca.
             # La recuperación léxica mantiene su alcance completo y el canal
@@ -431,8 +446,9 @@ class SourceService:
                     )
                     prior_config = (_request_checkpoint(case["id"], request, *prior_read)
                                     if prior_read else None)
-                    graph = build_source_graph(locate, assessor, saver, prior_config=prior_config,
-                                               check_scope=check_scope)
+                    graph = build_source_graph(
+                        locate, assessor, saver, prior_config=prior_config, check_scope=check_scope,
+                        independent_ocr_read=run["reader_policy"]["independent_ocr_read"])
                     try:
                         check_scope()
                         snapshot = graph.get_state(config)
@@ -511,10 +527,16 @@ class SourceService:
         except Exception as exc:
             run.update(status="error", error=user_error(exc))
         finally:
-            self.library.save_run(run)
-            with self.lock:
-                self.active.discard(case["id"])
+            try:
+                self.library.save_run(run)
+            finally:
+                try:
+                    if owned_assessor is not None:
+                        owned_assessor.close()
+                finally:
+                    with self.lock:
+                        self.active.discard(case["id"])
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)
         self.semantic_model.clear()
