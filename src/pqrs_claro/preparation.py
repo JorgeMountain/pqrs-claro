@@ -64,7 +64,7 @@ class PreparationService:
             ):
                 return {"case": case, "preparation": previous}
             case = self.identification.confirm(case_id, version)
-            if self.initial_review and self.initial_review.enabled:
+            if self.initial_review and self.initial_review.required(case):
                 job = self.save(
                     dict(
                         case_id=case_id,
@@ -100,7 +100,7 @@ class PreparationService:
                 return previous
             initial_revision = (
                 self.initial_review.saved(case_id)["revision"]
-                if self.initial_review and self.initial_review.enabled
+                if self.initial_review and self.initial_review.required(case)
                 else None
             )
             if retry_failed_only:
@@ -113,6 +113,7 @@ class PreparationService:
                 and previous.get("initial_review_revision") == initial_revision
                 and not retry_analysis
                 and not retry_failed_only
+                and not previous.get("draft_error_ids")
             ):
                 mapping = self.sources.get(case_id)
                 if mapping["status"] == "ready" and not mapping["stale"]:
@@ -215,13 +216,28 @@ class PreparationService:
             errors = [
                 r["request_id"] for r in mapping.get("results", []) if r.get("status") == "error"
             ]
+            draft_run = self.drafts.get(case_id)
+            draft_errors = (
+                [
+                    r["request_id"]
+                    for r in draft_run.get("results", [])
+                    if r.get("status") == "error"
+                ]
+                if not draft_run.get("stale")
+                else []
+            )
+            draft_failed = bool(
+                not draft_run.get("stale") and draft_run.get("status") == "failed"
+            )
+            has_pending = bool(waiting or errors or draft_errors or draft_failed)
             self.save(
                 job,
-                status="waiting_review" if waiting or errors else "ready",
-                stage="points" if waiting or errors else "review",
+                status="waiting_review" if has_pending else "ready",
+                stage="points" if has_pending else "review",
                 error=None,
                 waiting_request_ids=waiting,
                 analysis_error_ids=errors,
+                draft_error_ids=draft_errors,
             )
         except InterruptedError:
             self.save(

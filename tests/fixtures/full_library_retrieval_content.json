@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "corpus_id": "full-library-retrieval-20261117",
+  "description": "Consultas nuevas e independientes para evaluación con la biblioteca completa. Peticiones ficticias sin datos personales. La rúbrica está en otro archivo y no debe enviarse al recuperador ni al lector.",
+  "cases": [
+    {
+      "id": "FL-ADM",
+      "title": "Consulta informativa de admisión de pregrado 2027-1",
+      "introduction": [
+        "Esta petición ficticia consulta exclusivamente las reglas publicadas para aspirantes nuevos de pregrado de la convocatoria 2027-1. No solicita resultados individuales ni aplicar el calendario a otro periodo.",
+        "Quiero una explicación documental con sus citas; no solicito certificar la vigencia actual ni recibir copias de documentos."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "¿En qué orden se asignaban los cupos de primera y segunda opción, qué debía ocurrir para que se usara la segunda opción y podía el admitido aprovechar las dos?"
+        },
+        {
+          "id": "P2",
+          "text": "Para resolver el examen, ¿la guía recomendaba contestar todas las preguntas y una respuesta incorrecta restaba o anulaba una correcta?"
+        },
+        {
+          "id": "P3",
+          "text": "Para la modalidad virtual, ¿eran obligatorios el registro biométrico y el simulacro, y cómo debía cerrarse EvalVirtual al terminar para restablecer el computador?"
+        }
+      ]
+    },
+    {
+      "id": "FL-ACT",
+      "title": "Reglamento del Consejo Académico y copia simple",
+      "introduction": [
+        "Es una consulta ficticia sobre el contenido del Acuerdo Académico 528 del 30 de noviembre de 2017, que adopta el Reglamento Interno del Consejo Académico. No pido certificar su vigencia hoy ni examinar la legalidad de una sesión real.",
+        "En el último punto solicito sólo una copia simple del documento disponible, sin certificación de autenticidad."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "Para una reunión ordinaria, ¿con cuánta anticipación debía enviarse la citación y con cuánta debían entregarse los temas y sus documentos? Indique quién recibía o emitía cada trámite y si eran días hábiles o calendario."
+        },
+        {
+          "id": "P2",
+          "text": "¿Quién podía convocar o solicitar una reunión extraordinaria del Consejo y podían decidirse en ella asuntos que no estuvieran en la citación?"
+        },
+        {
+          "id": "P3",
+          "text": "Solicito copia simple del Acuerdo Académico 528: identifique su fecha y el reglamento que adopta, y facilite el documento disponible."
+        }
+      ]
+    },
+    {
+      "id": "FL-PRE",
+      "title": "Reglas informativas de evaluación y reconocimiento en pregrado",
+      "introduction": [
+        "Consulta ficticia exclusivamente de pregrado sobre el Reglamento Estudiantil disponible en biblioteca. No presento una solicitud personal de homologación ni reclamo una nota concreta.",
+        "Solicito explicar el texto documental y citar los artículos relevantes; no certificar vigencia actual."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "¿Cómo se tratan las centésimas cuando una evaluación tiene más de un decimal y cuál es la nota definitiva mínima para aprobar un curso de pregrado?"
+        },
+        {
+          "id": "P2",
+          "text": "Si un examen escrito fue calificado por el propio decano y sigue existiendo desacuerdo, ¿qué revisión previa y plazos establece el reglamento, ante quién se pide el jurado y puede ese jurado dejar una nota inferior?"
+        },
+        {
+          "id": "P3",
+          "text": "¿Los cursos obligatorios de inglés del plan de estudios podían reconocerse con una prueba externa? Explique las condiciones de esa prueba y quién verifica que la entidad emisora esté habilitada."
+        }
+      ]
+    },
+    {
+      "id": "FL-PRA",
+      "title": "Orientación sobre prácticas de Ingeniería",
+      "introduction": [
+        "Petición ficticia informativa sobre el contenido del Acuerdo del Consejo de Facultad 958 de 7 de octubre de 2020, Reglamento de Prácticas de Ingeniería. No denuncio un caso ocurrido ni pido aprobar una práctica concreta.",
+        "Quiero conocer las reglas descritas en ese documento, con citas, sin certificación de vigencia actual ni remisión de copias."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "En la modalidad de Empresarismo, ¿cuántos asesores internos se asignan, qué labor desempeña cada uno y cuántas horas se reconocen a cada asesor por proyecto?"
+        },
+        {
+          "id": "P2",
+          "text": "Según el reglamento, si un practicante considera vulnerado un derecho en el sitio de práctica, ¿a quién debe comunicarlo, quién verifica y a qué órgano pasa? ¿El traslado a otro sitio y el reconocimiento del tiempo anterior son automáticos?"
+        },
+        {
+          "id": "P3",
+          "text": "¿Con cuánta anticipación se verifica la afiliación a ARL, quién debe autorizar un cambio de horario o turno y cómo deben acreditarse las ausencias por enfermedad, calamidad o fuerza mayor?"
+        }
+      ]
+    },
+    {
+      "id": "FL-NEG",
+      "title": "Controles de alcance y de prueba individual",
+      "introduction": [
+        "Escenarios ficticios independientes: el primer punto es una duda de alcance de reglamentos para pregrado; el segundo pide un resultado individual que no se adjunta. No hay expedientes académicos personales anexos."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "Quiero solicitar transferencia regular a pregrado y vi que el reglamento de posgrado menciona aprobar un 25% del programa de origen. ¿Ese porcentaje basta para pregrado, o qué condición de estudios previos describe su propio reglamento? Sólo pido aclarar la regla, no que resuelvan mi admisión."
+        },
+        {
+          "id": "P2",
+          "text": "Solicito que calculen y certifiquen mi nota final de un curso de pregrado. No adjunto calificaciones parciales, resultado del final, porcentajes de evaluación ni registro académico; la única información disponible es esta solicitud. Indiquen qué información falta para poder calcularla."
+        }
+      ]
+    }
+  ]
+}

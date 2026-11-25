@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from pqrs_claro.app import create_app
 from pqrs_claro.config import Settings
+from pqrs_claro.evidence_contract import apply_evidence_contract
 from pqrs_claro.extraction import PDFExtractor
 from pqrs_claro.models import DomainError
 from pqrs_claro.source_library import make_chunks
@@ -290,6 +291,40 @@ def test_modified_original_bytes_cannot_be_used_to_apply_verification(environmen
     with pytest.raises(DomainError, match="original cambió"):
         apply_record(environment, record)
     assert app.state.verifications.active_applications(case) == []
+
+
+def test_complementary_transcription_check_accepts_only_its_verified_passage(
+    environment, monkeypatch
+):
+    app, client, case, source, passage = environment
+    record = create_human(environment)
+    check = {
+        **api_check(source, reason="transcription"), "scope_key": "passage",
+        "description": "Cotejar la transcripción del documento complementario.",
+        "linked_chunk_ids": [passage["chunk_id"]], "blocks_approval": False,
+        "resolution": {"status": "open"},
+    }
+    support = {"source_id": "reglamento", "role": "rule", "category": "institutional_norm"}
+    finding = {"request_id": "P2", "status": "references_found", "supports": [support],
+               "checks": [], "missing": [], "secondary_source_checks": [check]}
+    monkeypatch.setattr(app.state.sources, "get", lambda _: {
+        "status": "ready", "stale": False, "results": [finding],
+    })
+    url = f"/api/cases/{case['id']}/verifications/{record['id']}/applications"
+    payload = {"version": case["version"], "request_ids": ["P2"], "check_key": CHECK_KEY,
+               "basis": "Lectura humana de la página escaneada.", "recorded_by": "Revisora"}
+    assert client.post(url, json={**payload, "request_ids": ["P1"]}).status_code == 422
+    check["linked_chunk_ids"] = [f"{source['id']}:2:1:1"]
+    assert client.post(url, json=payload).status_code == 422
+    check["linked_chunk_ids"] = [passage["chunk_id"]]
+    response = client.post(url, json=payload)
+    assert response.status_code == 201, response.text
+    request = case["identification"]["requests"][1]
+    result = apply_evidence_contract(request, finding,
+                                     applications=app.state.verifications.active_applications(case))
+    assert result["secondary_source_checks"][0]["resolution"]["verification_id"] == record["id"]
+    assert result["supports"] == [support] and result["missing"] == []
+    assert check["resolution"]["status"] == "open"
 
 
 @pytest.mark.parametrize("reason,stage", [

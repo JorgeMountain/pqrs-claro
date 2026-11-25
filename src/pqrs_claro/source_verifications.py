@@ -72,7 +72,10 @@ class SourceVerificationStore:
                     id TEXT PRIMARY KEY, target_type TEXT NOT NULL,
                     target_id TEXT NOT NULL, body TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS verification_source ON verifications(source_id);
+                CREATE INDEX IF NOT EXISTS verification_case ON verifications(case_id);
                 CREATE INDEX IF NOT EXISTS application_case ON verification_applications(case_id);
+                CREATE INDEX IF NOT EXISTS verification_events_target
+                    ON verification_events(target_type, target_id);
             """)
 
     @contextmanager

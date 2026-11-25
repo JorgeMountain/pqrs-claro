@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
+from pydantic import ValidationError
 from test_draft_engine import engine, finding, inquiry, proposed_plan, support
 
 from pqrs_claro.draft_graph import build_draft_graph
@@ -26,16 +27,16 @@ def inputs():
     }])
     plan = proposed_plan()
     plan["coverage_units"] = [
-        {"requirement_id": rid, "kind": kind, "claim": claim, "required": required,
+        {"requirement_id": rid, "role": role, "claim": claim,
          "citations": [{"chunk_id": "S1", "line_start": line, "line_end": line}],
          "reason": reason, "details": [],
          "no_details_reason": "Dato o fundamento sin identidad nombrada ni alternativa."}
-        for rid, kind, claim, required, line, reason in [
-            ("R1", "answer", "El límite fijado fue de cuatro equipos.", True, 1,
+        for rid, role, claim, line, reason in [
+            ("R1", "required_answer", "El límite fijado fue de cuatro equipos.", 1,
              "Responde el límite preguntado."),
-            ("R2", "basis", "El fundamento fue un estudio técnico de cargas.", True, 2,
+            ("R2", "required_basis", "El fundamento fue un estudio técnico de cargas.", 2,
              "Explica el fundamento expresamente preguntado."),
-            ("R2", "context", "El informe enumera un calendario de reuniones.", False, 3,
+            ("R2", "optional_context", "El informe enumera un calendario de reuniones.", 3,
              "Es contexto que no condiciona ni responde el fundamento consultado."),
         ]
     ]
@@ -76,6 +77,68 @@ def test_literal_inventory_reaches_writer_and_reviewer_without_forcing_optional_
         sent = json.loads(call["input"])["plan"]["coverage_units"]
         assert sent[1]["citations"][0]["chunk_id"] == "S1"
         assert sent[1]["id"] == "U2"
+
+
+def test_provider_schema_accepts_every_valid_role_and_excludes_required_context():
+    request, data, proposed = inputs()
+    expected = [
+        (f"{prefix}_{kind}", kind, required)
+        for kind in ("answer", "condition", "exception", "basis", "sequence")
+        for prefix, required in (("required", True), ("optional", False))
+    ] + [("optional_context", "context", False)]
+    example = proposed["coverage_units"][0]
+    proposed["coverage_units"] = [dict(example, role=role) for role, _, _ in expected]
+    worker, calls = engine(proposed)
+    result = worker.plan(request, data)
+    assert [(u["kind"], u["required"]) for u in result["coverage_units"]] == [
+        (kind, required) for _, kind, required in expected
+    ]
+    assert len(calls) == 1
+    wire_schema = calls[0]["text_format"]
+    for invalid in (dict(example, role="required_context"),
+                    dict(example, role="optional_context", required=True)):
+        with pytest.raises(ValidationError):
+            wire_schema.model_validate({**proposed, "coverage_units": [invalid]})
+
+
+def test_explicit_comparison_preserves_the_recommendation_without_making_it_a_deadline():
+    request = inquiry(description="Distinga el plazo de entrega de la anticipación recomendada.")
+    request["request_requirements"] = build_requirements(request)
+    lines = [
+        "El plazo termina a las cinco.",
+        "Se recomienda llegar una hora antes.",
+        "El edificio dispone de estacionamiento.",
+    ]
+    data = finding(supports=[support(quote="\n".join(lines), line_end=3)], missing=[])
+    proposed = proposed_plan()
+    proposed["coverage_units"] = [
+        {"requirement_id": "R1", "role": role, "claim": claim,
+         "citations": [{"chunk_id": "S1", "line_start": n, "line_end": n}],
+         "reason": reason, "details": [], "no_details_reason": "No hay autoridades ni opciones."}
+        for n, (role, claim, reason) in enumerate([
+            ("required_answer", lines[0], "Se pide identificar el plazo."),
+            (
+                "required_answer",
+                lines[1],
+                "La petición pide distinguir la recomendación del plazo.",
+            ),
+            ("optional_context", lines[2], "El estacionamiento es accesorio a la comparación."),
+        ], 1)
+    ]
+    response = "El plazo termina a las cinco. Llegar una hora antes es una recomendación."
+    worker, calls = engine(proposed, {
+        "paragraphs": [{"text": response, "cited_chunk_ids": ["S1"]}], "pending": [],
+    })
+    plan = worker.plan(request, data)
+    draft = worker.write(request, data, plan)
+    assert len(calls) == 2
+    writer_units = json.loads(calls[1]["input"])["plan"]["coverage_units"]
+    assert [(u["claim"], u["kind"], u["required"]) for u in writer_units] == [
+        (lines[0], "answer", True), (lines[1], "answer", True), (lines[2], "context", False),
+    ]
+    assert writer_units[1]["citations"] == [{"chunk_id": "S1", "quote": lines[1] + "\n"}]
+    assert draft["paragraphs"][0]["cited_chunk_ids"] == [data["supports"][0]["chunk_id"]]
+    assert draft["pending"] == []
 
 
 def test_omitted_grounded_unit_is_repaired_once_while_pending_controls_remain_identical():

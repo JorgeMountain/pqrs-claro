@@ -111,3 +111,45 @@ def test_recovery_marks_interruption_without_running_again(source_app, pdf_bytes
     assert result["status"] == "interrupted"
     assert result["error"] and not result["stale"]
     assert not service.active and not assessor.calls
+
+
+def test_draft_error_blocks_fiaga_reading_and_retries_without_repeating_sources(
+    source_app, pdf_bytes
+):
+    import json
+
+    app, client, assessor, _ = source_app
+    engine = FakeDraftEngine(fail_once=("P2", "plan"))
+    app.state.drafts.engine = engine
+    case = make_case(client, pdf_bytes)
+    upload_source(client)
+    prefix = f"/api/cases/{case['id']}"
+    response = client.post(prefix + "/preparation", json={"version": case["version"]})
+    assert response.status_code == 202, response.text
+    job = wait(app, client, case["id"])
+    assert job["status"] == "waiting_review"
+    assert job["draft_error_ids"] == ["P2"]
+    assessor_calls = dict(assessor.calls)
+
+    fiaga_case = {**case, "receipt": {"workflow": "fiaga"}}
+    rows = client.get(prefix + "/review").json()["requests"]
+    assert not app.state.reviews._summary(fiaga_case, rows)["reading_confirmation"]["eligible"]
+
+    legacy_job = {k: v for k, v in job.items() if k != "draft_error_ids"}
+    with app.state.store.connect() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO preparations VALUES (?,?)",
+            (case["id"], json.dumps(legacy_job)),
+        )
+    assert not app.state.reviews._summary(fiaga_case, rows)["reading_confirmation"]["eligible"]
+
+    retry = client.post(prefix + "/preparation", json={"version": case["version"]})
+    assert retry.status_code == 202, retry.text
+    recovered = wait(app, client, case["id"])
+    assert recovered["status"] == "ready"
+    assert recovered["draft_error_ids"] == []
+    assert dict(assessor.calls) == assessor_calls
+    assert engine.calls[("P1", "plan")] == 1
+    assert engine.calls[("P2", "plan")] == 2
+    rows = client.get(prefix + "/review").json()["requests"]
+    assert app.state.reviews._summary(fiaga_case, rows)["reading_confirmation"]["eligible"]

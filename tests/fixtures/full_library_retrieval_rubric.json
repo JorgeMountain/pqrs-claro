@@ -1,0 +1,833 @@
+{
+  "schema_version": 1,
+  "corpus_id": "full-library-retrieval-20261117",
+  "independence": "Preguntas, criterios y citas fijados mediante lectura de páginas originales antes de ejecutar recuperador o lector candidato. No se inspeccionó la solución candidata.",
+  "scoring": {
+    "required_alternatives": "Cada elemento es una obligación (AND). Basta una de sus alternatives (OR). La cita debe cubrir la idea completa del criterio, no sólo una coincidencia corta.",
+    "literal_match": "NFKC + espacios normalizados; no se permite trasladar fuente, página, versión ni permiso.",
+    "equivalent_evidence": "Puede aceptarse otra fuente pública accesible si se coteja el pasaje original y demuestra el mismo punto; documentar la equivalencia sin reescribir la rúbrica.",
+    "pending": "Distinguir respuesta informativa, autenticidad/transcripción, entrega solicitada y prueba individual. No convertir una recuperación vacía o un metadato pending en documento ausente.",
+    "coverage": "La puntuación de cobertura se determina por todas las obligaciones solicitadas; no exigir contenidos incidentales que el usuario no pidió."
+  },
+  "global_forbidden": [
+    "Declarar ausente una fuente disponible por fallos de búsqueda, permisos o extracción.",
+    "Inventar aprobación, entrega realizada, certificación o dato de un caso individual.",
+    "Crear una solicitud de aclaración sobre nivel, periodo o modalidad ya escritos en el contexto.",
+    "Duplicar el mismo control de autenticidad/transcripción entre texto libre y pendiente estructurado.",
+    "Exigir entrega, vigencia actual o prueba de recepción no solicitadas para explicar contenido documental histórico."
+  ],
+  "source_manifest": {
+    "2355507919a244ec9f227b5adfb9804c": {
+      "title": "Acuerdo Académico 528 · 2017/11/30 · código 29929527 · Por el cual se adopta el Reglamento Interno del Consejo Académico de la Universidad de Antioquia.",
+      "collection_id": "consejo-academico-20261009",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "sha256": "d2abf4f8e39b3d345a5bf7d7dfec6d571103e06ea873586fbb47a910171208ba",
+      "original_sha256_verified": "d2abf4f8e39b3d345a5bf7d7dfec6d571103e06ea873586fbb47a910171208ba",
+      "pages": [
+        {
+          "number": 1,
+          "method": "native",
+          "needs_review": true
+        },
+        {
+          "number": 4,
+          "method": "native",
+          "needs_review": true
+        },
+        {
+          "number": 5,
+          "method": "native",
+          "needs_review": true
+        },
+        {
+          "number": 6,
+          "method": "native",
+          "needs_review": true
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    },
+    "35d06c9866f24d948100886c0c27d776": {
+      "title": "08_Reglamento_Estudiantil_Pregrado_UdeA.pdf",
+      "collection_id": "drive-pqrs-fuentes",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "sha256": "aa04239c218912111efeac1c2c6687003e9d7d4f1b9395506f407e67deeaded6",
+      "original_sha256_verified": "aa04239c218912111efeac1c2c6687003e9d7d4f1b9395506f407e67deeaded6",
+      "pages": [
+        {
+          "number": 15,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 31,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 32,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 41,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    },
+    "489659a80f834ad99ab58cd9e8cd92fb": {
+      "title": "NORMA. Acuerdo CdF 958 del 7 octubre de 2020. Reglamento de Prácticas Ingeniería",
+      "collection_id": "onman-20260907",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "sha256": "d265c01db7365e6cf0094446ddf6b40bebf03cdc9f43780dd6301cb3f052a231",
+      "original_sha256_verified": "d265c01db7365e6cf0094446ddf6b40bebf03cdc9f43780dd6301cb3f052a231",
+      "pages": [
+        {
+          "number": 12,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 13,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 14,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    },
+    "905ba78a584b457cb0f5d11bf6835205": {
+      "title": "09_Reglamento_Posgrado_UdeA.pdf",
+      "collection_id": "drive-pqrs-fuentes",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "sha256": "854faeffc2792994231b4726b61a965881a7072eed68b9712ecbb507ecea5267",
+      "original_sha256_verified": "854faeffc2792994231b4726b61a965881a7072eed68b9712ecbb507ecea5267",
+      "pages": [
+        {
+          "number": 4,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    },
+    "9178f41db9604e0d9ec337d2424585ed": {
+      "title": "Guía técnica para aspirantes nuevos 2027-1 - V4",
+      "collection_id": "drive-admisiones-udea-2027-1",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "reviewed",
+      "validity": "current",
+      "extraction_status": "partial",
+      "sha256": "e9f57d0a1c000d7636c715ee043ce598470b66dced62587dd74ae52614ca279c",
+      "original_sha256_verified": "e9f57d0a1c000d7636c715ee043ce598470b66dced62587dd74ae52614ca279c",
+      "pages": [
+        {
+          "number": 4,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 45,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 46,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    },
+    "b8b242e8b9a643de812bc4030844aae6": {
+      "title": "ANEXO 5. reglamento-estudiantil-pregrado-con-concordancias",
+      "collection_id": "onman-20260907",
+      "category": "institutional_norm",
+      "case_id": null,
+      "review_status": "pending",
+      "validity": "unknown",
+      "extraction_status": "ready",
+      "sha256": "9d7d58ad54a3d906152deb26098430e8cdafcb13f7f0756a6ceb498370d7bc09",
+      "original_sha256_verified": "9d7d58ad54a3d906152deb26098430e8cdafcb13f7f0756a6ceb498370d7bc09",
+      "pages": [
+        {
+          "number": 14,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 29,
+          "method": "native",
+          "needs_review": false
+        },
+        {
+          "number": 30,
+          "method": "native",
+          "needs_review": false
+        }
+      ],
+      "verification": "Full original page text read; for AA528 also visually inspected scans. Same-quote old-compilation alternatives checked against original text."
+    }
+  },
+  "cases": {
+    "FL-ADM": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "first",
+            "criterion": "Primera opción: cupos a mayores puntajes estandarizados totales.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 4,
+                "quote": "los cupos ofrecidos en cada programa son asignados inicialmente a los aspirantes que lo seleccionan como primera opción y obtienen los mayores puntajes estandarizados totales."
+              }
+            ]
+          },
+          {
+            "id": "second",
+            "criterion": "Segunda opción sólo con cupos sobrantes, para no admitidos en primera que inscribieron ese programa, por mayores puntajes estandarizados.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 4,
+                "quote": "Si resultan cupos sobrantes, éstos son llenados por los aspirantes que no son admitidos en la primera opción e inscriben dicho programa como segunda opción y obtengan los mayores puntajes estandarizados totales."
+              }
+            ]
+          },
+          {
+            "id": "exclusive",
+            "criterion": "No se pueden usar ambas opciones.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 4,
+                "quote": "El aspirante admitido a la primera opción no puede hacer uso de la segunda y viceversa."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Primera opción: cupos a mayores puntajes estandarizados totales.",
+          "Segunda opción sólo con cupos sobrantes, para no admitidos en primera que inscribieron ese programa, por mayores puntajes estandarizados.",
+          "No se pueden usar ambas opciones."
+        ],
+        "legitimate_pending": [],
+        "forbidden": [
+          "Pedir puntaje o resultado individual para explicar el procedimiento general."
+        ]
+      },
+      "P2": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "all",
+            "criterion": "La guía recomienda responder las 80 preguntas en la tarjeta.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 45,
+                "quote": "En el examen, responda las 80 preguntas en la tarjeta de respuestas"
+              }
+            ]
+          },
+          {
+            "id": "no_penalty",
+            "criterion": "Las respuestas malas no anulan las buenas; no inventar descuento.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 46,
+                "quote": "malas NO anulan las respuestas buenas."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "La guía recomienda responder las 80 preguntas en la tarjeta.",
+          "Las respuestas malas no anulan las buenas; no inventar descuento."
+        ],
+        "legitimate_pending": [],
+        "forbidden": [
+          "Crear cotejo OCR por la extracción parcial global cuando estas páginas son nativas sin needs_review."
+        ]
+      },
+      "P3": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "prepare",
+            "criterion": "Registro biométrico y simulacro son exigencias previas para modalidad virtual; no trasladar reglas de aula presencial.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 46,
+                "quote": "deberá realizar el registro biométrico y el simulacro del examen en la plataforma que dispondrá la Universidad para tal fin."
+              }
+            ]
+          },
+          {
+            "id": "restore",
+            "criterion": "Finalizar simulacro/examen con Archivo > Restaurar y salir, en lugar de cerrar directamente la aplicación.",
+            "alternatives": [
+              {
+                "source_id": "9178f41db9604e0d9ec337d2424585ed",
+                "page": 46,
+                "quote": "Utilice la opción “Restaurar y salir”, disponible en el menú superior, dentro de “Archivo”."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Registro biométrico y simulacro son exigencias previas para modalidad virtual; no trasladar reglas de aula presencial.",
+          "Finalizar simulacro/examen con Archivo > Restaurar y salir, en lugar de cerrar directamente la aplicación."
+        ],
+        "legitimate_pending": [],
+        "forbidden": [
+          "Pedir credencial, puntaje o constancia individual para esta consulta informativa."
+        ]
+      }
+    },
+    "FL-ACT": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "notice",
+            "criterion": "Secretaría del Consejo remite citación escrita con orden del día, cinco días calendario antes.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 5,
+                "quote": "La citación a las reuniones ordinarias deberá hacerse con cinco (5) días calendario de anticipación"
+              }
+            ]
+          },
+          {
+            "id": "agenda",
+            "criterion": "Temas y documentos deben entregarse a Secretaría del Consejo al menos ocho días calendario antes.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 6,
+                "quote": "Los temas y la documentación a tratar en las sesiones ordinarias deberán ser entregados a la Secretaría del Consejo con una anticipación no menor de ocho (8) días calendario"
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Secretaría del Consejo remite citación escrita con orden del día, cinco días calendario antes.",
+          "Temas y documentos deben entregarse a Secretaría del Consejo al menos ocho días calendario antes."
+        ],
+        "legitimate_pending": [
+          "Es admisible un único cotejo de transcripción del pasaje utilizado porque la página original está escaneada y needs_review=true; conservar la cita y no describirlo como ausencia de la norma.",
+          "Puede mantenerse un control real de procedencia si su estado pendiente no fue revisado; no duplicar la misma comprobación con otro nombre."
+        ],
+        "forbidden": [
+          "Confundir plazo de convocatoria (5) con radicación de temas (8).",
+          "Pedir prueba de una convocatoria real no alegada."
+        ]
+      },
+      "P2": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "convoke",
+            "criterion": "Presidencia convoca a través de Secretaría, o se solicita por más de la mitad de miembros.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 4,
+                "quote": "convocadas por la Presidencia, a través de la Secretaría de la Corporación, o cuando lo solicite por lo menos más de la mitad de sus miembros."
+              }
+            ]
+          },
+          {
+            "id": "scope",
+            "criterion": "Sólo se tratan temas para los cuales se hizo citación.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 4,
+                "quote": "En dicha reunión sólo podrán tratarse los temas para los cuales se hizo la citación."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Presidencia convoca a través de Secretaría, o se solicita por más de la mitad de miembros.",
+          "Sólo se tratan temas para los cuales se hizo citación."
+        ],
+        "legitimate_pending": [
+          "Es admisible un único cotejo de transcripción del pasaje utilizado porque la página original está escaneada y needs_review=true; conservar la cita y no describirlo como ausencia de la norma.",
+          "Puede mantenerse un control real de procedencia si su estado pendiente no fue revisado; no duplicar la misma comprobación con otro nombre."
+        ],
+        "forbidden": []
+      },
+      "P3": {
+        "kind": "document_copy",
+        "required_alternatives": [
+          {
+            "id": "date",
+            "criterion": "Identificar Acuerdo Académico 528 del 30 de noviembre de 2017.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 1,
+                "quote": "ACUERDO ACADÉMICO 528 30 de noviembre de 2017"
+              }
+            ]
+          },
+          {
+            "id": "object",
+            "criterion": "Adopta Reglamento Interno del Consejo Académico de la Universidad de Antioquia.",
+            "alternatives": [
+              {
+                "source_id": "2355507919a244ec9f227b5adfb9804c",
+                "page": 1,
+                "quote": "Por el cual se adopta el Reglamento Interno del Consejo Académico de la Universidad de Antioquia."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Identificar Acuerdo Académico 528 del 30 de noviembre de 2017.",
+          "Adopta Reglamento Interno del Consejo Académico de la Universidad de Antioquia."
+        ],
+        "legitimate_pending": [
+          "La entrega de la copia simple solicitada puede permanecer pendiente hasta que se adjunte o se habilite el acceso; encontrarla no prueba que ya se entregó.",
+          "Si se basa respuesta en una transcripción marcada needs_review, conservar como máximo un cotejo pertinente."
+        ],
+        "forbidden": [
+          "Exigir certificar firma o vigencia para entregar copia simple.",
+          "Negar copia por la categoría institutional_norm.",
+          "Marcar el documento solicitado como ausente."
+        ]
+      }
+    },
+    "FL-PRE": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "round",
+            "criterion": "Centésimas 5 a 9 suben a la décima siguiente; 4 o menos se eliminan.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 31,
+                "quote": "de cinco a nueve se aproximan a la décima inmediatamente superior, con cuatro o menos se eliminan las centésimas."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 29,
+                "quote": "de cinco a nueve se aproximan a la décima inmediatamente superior, con cuatro o menos se eliminan las centésimas."
+              }
+            ]
+          },
+          {
+            "id": "pass",
+            "criterion": "Aprobación con nota definitiva >=3.0 en escala 0.0-5.0.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 31,
+                "quote": "definitiva sea igual o superior a tres, cero (3.0) en la escala de cero, cero (0.0) a cinco, cero (5.0)."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 29,
+                "quote": "definitiva sea igual o superior a tres, cero (3.0) en la escala de cero, cero (0.0) a cinco, cero (5.0)."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Centésimas 5 a 9 suben a la décima siguiente; 4 o menos se eliminan.",
+          "Aprobación con nota definitiva >=3.0 en escala 0.0-5.0."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Aplicar umbral de posgrado a pregrado.",
+          "Exigir notas individuales para describir regla general."
+        ]
+      },
+      "P2": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "teacher_first",
+            "criterion": "Revisión previa con profesor solicitada dentro de dos días hábiles desde promulgación; es necesaria para jurado.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 31,
+                "quote": "La revisión deberá solicitarla el interesado en los dos días hábiles siguientes a la promulgación de la nota por parte del profesor."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 29,
+                "quote": "La revisión deberá solicitarla el interesado en los dos días hábiles siguientes a la promulgación de la nota por parte del profesor."
+              }
+            ]
+          },
+          {
+            "id": "jury_deadline",
+            "criterion": "Jurado se pide por escrito en dos días hábiles siguientes a la revisión y se compone de dos profesores distintos de evaluadores iniciales.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 32,
+                "quote": "podrá pedir por escrito, en los dos días hábiles siguientes a la revisión, y ante el decano de su facultad, que le asigne un jurado de dos profesores diferentes"
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 30,
+                "quote": "podrá pedir por escrito, en los dos días hábiles siguientes a la revisión, y ante el decano de su facultad, que le asigne un jurado de dos profesores diferentes"
+              }
+            ]
+          },
+          {
+            "id": "dean_exception",
+            "criterion": "Si el docente fue el decano, petición va al Consejo de Facultad que sirve el curso, quien nombra jurado.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 32,
+                "quote": "la solicitud se elevará ante el Consejo de Facultad que sirve el curso, quien nombrará el jurado calificador."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 30,
+                "quote": "la solicitud se elevará ante el Consejo de Facultad que sirve el curso, quien nombrará el jurado calificador."
+              }
+            ]
+          },
+          {
+            "id": "can_lower",
+            "criterion": "Nota del jurado es definitiva y puede ser inferior.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 32,
+                "quote": "La nota que asignen estos profesores será la definitiva para esta prueba, aunque resulte inferior a la asignada por el profesor que calificó inicialmente el examen."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 30,
+                "quote": "La nota que asignen estos profesores será la definitiva para esta prueba, aunque resulte inferior a la asignada por el profesor que calificó inicialmente el examen."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Revisión previa con profesor solicitada dentro de dos días hábiles desde promulgación; es necesaria para jurado.",
+          "Jurado se pide por escrito en dos días hábiles siguientes a la revisión y se compone de dos profesores distintos de evaluadores iniciales.",
+          "Si el docente fue el decano, petición va al Consejo de Facultad que sirve el curso, quien nombra jurado.",
+          "Nota del jurado es definitiva y puede ser inferior."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Omitir excepción de autoridad cuando el docente es el decano.",
+          "Crear pendiente de calificación, examen o fecha individual: la consulta es informativa."
+        ]
+      },
+      "P3": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "eligible",
+            "criterion": "Cursos obligatorios de inglés del Programa Institucional: reconocimiento por pruebas estandarizadas vigentes, internacionales, realizadas por entidades certificadas y acreditadas.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 41,
+                "quote": "podrán ser reconocidos con pruebas estandarizadas de proficiencia en inglés vigentes y de reconocimiento internacional, realizadas por entidades certificadas y acreditadas para tal fin."
+              }
+            ]
+          },
+          {
+            "id": "authority",
+            "criterion": "Escuela de Idiomas verifica entidad emisora certificada y acreditada legalmente.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 41,
+                "quote": "la Escuela de Idiomas verificará que los resultados de la prueba hayan sido emitidos por entidades debidamente certificadas y acreditadas legalmente para administrar las pruebas."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Cursos obligatorios de inglés del Programa Institucional: reconocimiento por pruebas estandarizadas vigentes, internacionales, realizadas por entidades certificadas y acreditadas.",
+          "Escuela de Idiomas verifica entidad emisora certificada y acreditada legalmente."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Solicitar certificado individual de inglés para responder cómo funciona el reconocimiento.",
+          "Confundir vigencia de la prueba externa exigida por el artículo con un pendiente para certificar vigencia actual de la norma."
+        ]
+      }
+    },
+    "FL-PRA": {
+      "P1": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "academic",
+            "criterion": "Dos asesores internos designados por Universidad; académico/técnico/metodológico: 16 horas por proyecto.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 12,
+                "quote": "Los estudiantes que realicen la práctica en Empresarismo tendrán dos asesores internos designados por la universidad"
+              }
+            ]
+          },
+          {
+            "id": "sixteen",
+            "criterion": "Primer asesor académico/técnico/metodológico tiene 16 horas.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 12,
+                "quote": "al cual se le reconocerán dieciséis horas (16) por cada proyecto a su cargo"
+              }
+            ]
+          },
+          {
+            "id": "business",
+            "criterion": "Otro asesor orienta plan de negocios y tiene 32 horas por proyecto.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 12,
+                "quote": "y otro que lo orientará en la elaboración del plan de negocios, al cual se le reconocerán treinta y dos horas (32) por cada proyecto a su cargo"
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Dos asesores internos designados por Universidad; académico/técnico/metodológico: 16 horas por proyecto.",
+          "Primer asesor académico/técnico/metodológico tiene 16 horas.",
+          "Otro asesor orienta plan de negocios y tiene 32 horas por proyecto."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Aplicar un asesor externo y horas de práctica empresarial a Empresarismo."
+        ]
+      },
+      "P2": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "route",
+            "criterion": "Comunicación inmediata al asesor interno, quien verifica y remite al Comité de Prácticas de la Facultad.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 13,
+                "quote": "deberá comunicar tal situación, de manera inmediata, al asesor interno de práctica, quien verificará la situación relatada."
+              }
+            ]
+          },
+          {
+            "id": "committee",
+            "criterion": "Remisión al Comité de Prácticas de Facultad para medidas dentro de competencia.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 13,
+                "quote": "El asesor interno deberá remitir la situación relatada por el estudiante al Comité de Prácticas de la Facultad"
+              }
+            ]
+          },
+          {
+            "id": "discretion",
+            "criterion": "Comité puede asignar nuevo sitio si lo considera necesario y evalúa posibilidad de reconocer tiempo anterior: no es automático.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 13,
+                "quote": "podrá asignar al estudiante un nuevo sitio de práctica y evaluará la posibilidad de reconocimiento del tiempo ejecutado en el sitio precedente."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Comunicación inmediata al asesor interno, quien verifica y remite al Comité de Prácticas de la Facultad.",
+          "Remisión al Comité de Prácticas de Facultad para medidas dentro de competencia.",
+          "Comité puede asignar nuevo sitio si lo considera necesario y evalúa posibilidad de reconocer tiempo anterior: no es automático."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Abrir pendiente de denuncia, pruebas o reporte de vulneración individual no alegada.",
+          "Afirmar traslado o reconocimiento automáticos."
+        ]
+      },
+      "P3": {
+        "kind": "answerable",
+        "required_alternatives": [
+          {
+            "id": "arl",
+            "criterion": "ARL se verifica al menos un día hábil antes de iniciar.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 14,
+                "quote": "por lo menos un (1) día hábil antes de iniciar la práctica."
+              }
+            ]
+          },
+          {
+            "id": "schedule",
+            "criterion": "Cambio de turno/horario requiere autorización previa de ambos asesores, interno y externo; ambos informados.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 14,
+                "quote": "sin la autorización previa del asesor interno y externo, en cualquiera de los casos, ambos deberían estar informados."
+              }
+            ]
+          },
+          {
+            "id": "absence",
+            "criterion": "Enfermedad, calamidad doméstica o fuerza mayor deben certificarse o comprobarse.",
+            "alternatives": [
+              {
+                "source_id": "489659a80f834ad99ab58cd9e8cd92fb",
+                "page": 14,
+                "quote": "Las ausencias motivadas por enfermedad, calamidad doméstica o fuerza mayor, deberán ser debidamente certificadas o comprobadas."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "ARL se verifica al menos un día hábil antes de iniciar.",
+          "Cambio de turno/horario requiere autorización previa de ambos asesores, interno y externo; ambos informados.",
+          "Enfermedad, calamidad doméstica o fuerza mayor deben certificarse o comprobarse."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Pedir certificado ARL o médico de una persona para responder regla general.",
+          "Aceptar permiso de un solo asesor."
+        ]
+      }
+    },
+    "FL-NEG": {
+      "P1": {
+        "kind": "scope_negative",
+        "required_alternatives": [
+          {
+            "id": "post_scope",
+            "criterion": "El 25% citado pertenece a ingreso por transferencia de posgrado; no basta trasladarlo a pregrado.",
+            "alternatives": [
+              {
+                "source_id": "905ba78a584b457cb0f5d11bf6835205",
+                "page": 4,
+                "quote": "Modalidad de ingreso por trasferencia es aquella utilizada por una persona que está o estuvo matriculada en un posgrado"
+              }
+            ]
+          },
+          {
+            "id": "undergrad",
+            "criterion": "Pregrado describe aprobación de cursos correspondientes a un año de labor académica o equivalente en institución acreditada; no asegurar admisión individual.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 15,
+                "quote": "los cursos correspondientes a un año de labor académica, o su equivalente."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 14,
+                "quote": "los cursos correspondientes a un año de labor académica, o su equivalente."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "El 25% citado pertenece a ingreso por transferencia de posgrado; no basta trasladarlo a pregrado.",
+          "Pregrado describe aprobación de cursos correspondientes a un año de labor académica o equivalente en institución acreditada; no asegurar admisión individual."
+        ],
+        "legitimate_pending": [
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Aplicar el 25% de posgrado o de doble titulación para transferencia regular de pregrado.",
+          "Pedir historial individual para aclarar únicamente la regla."
+        ]
+      },
+      "P2": {
+        "kind": "missing_case_evidence",
+        "required_alternatives": [
+          {
+            "id": "weighted",
+            "criterion": "Nota final usa promedio ponderado de todas las evaluaciones parciales y final; la norma no contiene resultados individuales.",
+            "alternatives": [
+              {
+                "source_id": "35d06c9866f24d948100886c0c27d776",
+                "page": 31,
+                "quote": "Es la obtenida mediante el promedio ponderado de todas las evaluaciones parciales y final."
+              },
+              {
+                "source_id": "b8b242e8b9a643de812bc4030844aae6",
+                "page": 29,
+                "quote": "Es la obtenida mediante el promedio ponderado de todas las evaluaciones parciales y final."
+              }
+            ]
+          }
+        ],
+        "required_points": [
+          "Nota final usa promedio ponderado de todas las evaluaciones parciales y final; la norma no contiene resultados individuales."
+        ],
+        "legitimate_pending": [
+          "Solicitar las calificaciones parciales/final y ponderaciones, o el registro oficial equivalente que permita calcular y certificar; pueden agruparse en un pendiente específico reutilizable.",
+          "Conservar la certificación/validación del registro individual como gestión real: una explicación de la fórmula no certifica una nota.",
+          "Un control específico de procedencia/autenticidad puede conservarse si el estado real de la fuente lo exige; no inferir OCR por review_status=pending y no pedir vigencia actual ajena al alcance informativo."
+        ],
+        "forbidden": [
+          "Inventar una nota, asumir aprobación o certificar un resultado inexistente.",
+          "Pedir buscar otra norma en vez de identificar la falta de datos individuales.",
+          "Generar un pendiente de OCR para esta página nativa."
+        ]
+      }
+    }
+  }
+}

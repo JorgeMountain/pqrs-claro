@@ -57,7 +57,8 @@ def _matching_checks(run, request_ids, check_key):
     results = {result["request_id"]: result for result in run.get("results", [])}
     for request_id in request_ids:
         result = results.get(request_id, {})
-        checks = [*result.get("checks", []), *result.get("missing", [])]
+        checks = [*result.get("checks", []), *result.get("missing", []),
+                  *result.get("secondary_source_checks", [])]
         item = next((check for check in checks if check.get("check_key") == check_key), None)
         if item is None:
             raise DomainError("Selecciona una comprobación vigente en cada pregunta indicada.")

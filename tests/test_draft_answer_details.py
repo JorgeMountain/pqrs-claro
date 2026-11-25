@@ -6,7 +6,6 @@ from copy import deepcopy
 from langgraph.checkpoint.memory import InMemorySaver
 from test_draft_engine import engine, finding, inquiry, proposed_check, support
 
-from pqrs_claro.answer_coverage import materialize_detailed_units
 from pqrs_claro.draft_graph import build_draft_graph
 
 SOURCE = "El Comité de Talleres o el Consejo de Oficios autoriza la reserva."
@@ -35,8 +34,9 @@ def inputs():
         "description": "Indicar la autoridad y la relación alternativa.",
         "cited_chunk_ids": ["S1"]}],
         "coverage_units": [{
-            "requirement_id": "R1", "kind": "answer", "claim": "El órgano autoriza la reserva.",
-            "required": True, "citations": [citation], "reason": "Contesta la autoridad.",
+            "requirement_id": "R1", "role": "required_answer",
+            "claim": "El órgano autoriza la reserva.",
+            "citations": [citation], "reason": "Contesta la autoridad.",
             "details": details, "no_details_reason": "",
         }]}
     return request, found, plan
@@ -112,8 +112,8 @@ def test_old_inventory_is_readable_but_cannot_reuse_a_current_detail_check():
 
     request, found, plan = inputs()
     src = found["supports"][0]
-    units = materialize_detailed_units(plan["coverage_units"], request,
-                                      {src["chunk_id"]: src}, {src["chunk_id"]: "S1"})
+    worker, _ = engine(plan)
+    units = worker.plan(request, found)["coverage_units"]
     for unit in units:
         for key in ("details_version", "details", "no_details_reason"):
             unit.pop(key)

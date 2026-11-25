@@ -209,6 +209,131 @@ def test_image_page_requires_ocr_and_gets_review_flag(tmp_path):
         PDFExtractor(lambda _: "[ILEGIBLE]").extract(str(pdf))
 
 
+def test_native_text_over_watermark_and_separate_scanned_content(tmp_path):
+    def raster(text, grey):
+        with pymupdf.open() as art:
+            p = art.new_page(width=550, height=280)
+            p.insert_text((20, 144), text, fontsize=36, color=(grey,) * 3)
+            return p.get_pixmap().tobytes("png")
+
+    watermark = raster("MARCA DE AGUA", 0.85)
+    scanned = raster("Datos del anexo", 0.0)
+    pdf = tmp_path / "mixto.pdf"
+    with pymupdf.open() as document:
+        for index in range(5):
+            page = document.new_page(width=600, height=800)
+            image_box = page.rect if index == 4 else pymupdf.Rect(25, 80, 575, 360)
+            image = scanned if index == 2 else watermark
+            if index == 4:
+                image = raster("Datos de una fotocopia tenue", 0.85)
+            page.insert_image(image_box, stream=image, keep_proportion=False)
+            lines = ["Solicitud de informacion", "Solicito copia del acta",
+                     "Gracias por la respuesta"]
+            if index == 3:
+                lines = ["Remitente", "Firma", "Cierre"]
+            for y, line in zip((112, 185, 275), lines, strict=True):
+                page.insert_text((50, y), line)
+            if index == 1:
+                page.insert_image(pymupdf.Rect(25, 380, 575, 660), stream=scanned)
+        document.save(pdf)
+
+    calls = []
+
+    def transcribe(image):
+        calls.append(image)
+        return "Solicitud de informacion. Datos del anexo."
+
+    pages = PDFExtractor(transcribe).extract(str(pdf))
+    assert [(p.method, p.needs_review) for p in pages] == [
+        ("native", False), ("ocr", True), ("ocr", True), ("native", False), ("ocr", True)
+    ]
+    assert len(calls) == 3
+    assert "Solicito copia del acta" in pages[0].text
+
+
+def test_short_selectable_request_and_logo_stay_native(tmp_path):
+    path = tmp_path / "nota.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        page.insert_text((55, 100), "Solicito copia.")
+        page.draw_line((55, 115), (150, 115))
+        page = doc.new_page()
+        page.insert_text((55, 80), "Firma")
+        logo = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 30, 30), 0)
+        logo.clear_with(128)
+        page.insert_image(pymupdf.Rect(20, 20, 50, 50), pixmap=logo)
+        blank = doc.new_page()
+        white = pymupdf.Pixmap(pymupdf.csRGB, (0, 0, 32, 32), 0)
+        white.clear_with(255)
+        blank.insert_image(blank.rect, pixmap=white)
+        doc.save(path)
+    pages = PDFExtractor().extract(str(path))
+    assert [p.method for p in pages] == ["native", "native", "native"]
+    assert pages[0].text.strip() == "Solicito copia."
+    assert pages[2].text == ""
+
+
+def test_searchable_scan_only_reuses_text_when_it_covers_the_raster(tmp_path):
+    path = tmp_path / "con-capa.pdf"
+    lines = ["Solicito el informe de actividades.", "Se adjuntan los datos del contrato."]
+    with pymupdf.open() as scan:
+        source = scan.new_page(width=480, height=300)
+        for i, text in enumerate(lines):
+            source.insert_text((25, 80 + i * 40), text)
+        scanned = source.get_pixmap()
+        for x, y in ((3, 4), (15, 60), (110, 230), (58, 157), (350, 40), (434, 278)):
+            scanned.set_pixel(x, y, (0, 0, 0))
+        raster = scanned.tobytes("png")
+    with pymupdf.open() as doc:
+        for layer in (lines, lines[:1], []):
+            page = doc.new_page(width=480, height=300)
+            page.insert_image(page.rect, stream=raster)
+            for i, text in enumerate(layer):
+                page.insert_text((25, 80 + i * 40), text, render_mode=3)
+            page.set_rotation(90)
+        doc.save(path)
+    pages = PDFExtractor(lambda _: "\n".join(lines)).extract(str(path))
+    assert [p.method for p in pages] == ["native", "ocr", "ocr"]
+    assert all(lines[-1] in p.text for p in pages)
+
+
+def test_scanned_insert_detected_alongside_long_native_text(tmp_path):
+    path = tmp_path / "anexo.pdf"
+    with pymupdf.open() as source:
+        annex = source.new_page(width=300, height=75)
+        annex.insert_text((10, 24), "La solicitud incluye material en este anexo.")
+        annex.insert_text((10, 49), "El numero de expediente consta en la carta.")
+        raster = annex.get_pixmap().tobytes("png")
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        for i in range(30):
+            page.insert_text((30, 40 + i * 17), "Solicito el informe del departamento academico.")
+        page.insert_image(pymupdf.Rect(25, 600, 370, 690), stream=raster)
+        assert len("".join(page.get_text().split())) > 1200
+        doc.save(path)
+    pages = PDFExtractor(lambda _: "Transcripción de la página con su anexo.").extract(str(path))
+    assert pages[0].method == "ocr" and pages[0].needs_review
+
+
+def test_damaged_unicode_mapping_and_outline_only_page_need_recognition(tmp_path):
+    path = tmp_path / "sin-unicode.pdf"
+    with pymupdf.open() as doc:
+        page = doc.new_page()
+        font_xref = page.insert_font(fontname="Broken", fontbuffer=pymupdf.Font("helv").buffer)
+        page.insert_text((40, 80), "Solicitud visible en el original.", fontname="Broken")
+        cmap = int(doc.xref_get_key(font_xref, "ToUnicode")[1].split()[0])
+        doc.update_stream(cmap, b"/CIDInit /ProcSet findresource begin 12 dict begin begincmap "
+                          b"/CMapType 2 def 1 begincodespacerange <0000> <ffff> endcodespacerange "
+                          b"1 beginbfchar <0035> <fffd> endbfchar endcmap "
+                          b"CMapName currentdict /CMap defineresource pop end end")
+        outline = doc.new_page()
+        outline.draw_polyline([(30, 80), (40, 55), (50, 80)])
+        outline.draw_line((35, 68), (45, 68))
+        doc.save(path)
+    pages = PDFExtractor(lambda _: "Contenido recuperado.").extract(str(path))
+    assert [(p.method, p.needs_review) for p in pages] == [("ocr", True), ("ocr", True)]
+
+
 def selection():
     return _IdentificationSelection.model_validate(
         {

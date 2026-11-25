@@ -102,7 +102,10 @@ def _same_source(item, task):
     versions = sorted(item.get("source_versions", []), key=lambda row: row.get("source_id", ""))
     if versions and versions != task["source_versions"]:
         return False
-    if item.get("resolution", {}).get("status") == "resolved" and not item.get("source_versions"):
+    if (
+        (item.get("resolution") or {}).get("status") == "resolved"
+        and not item.get("source_versions")
+    ):
         return False
     if item.get("followup_passages") and item["followup_passages"] != task["followup_passages"]:
         return False

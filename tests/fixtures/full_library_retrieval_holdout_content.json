@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "corpus_id": "full-library-retrieval-holdout-20261117",
+  "description": "Cuatro consultas ficticias adicionales, fijadas antes de ejecutar o inspeccionar sus rankings. Entrada sin respuestas esperadas; la rúbrica separada no se envía al recuperador ni al lector.",
+  "cases": [
+    {
+      "id": "HO-ADM",
+      "title": "Ventanas de inscripción y pago para aspirantes nuevos 2027-1",
+      "introduction": [
+        "Consulta ficticia sobre lo que publicó la Guía técnica para aspirantes nuevos de pregrado 2027-1 de la Universidad de Antioquia. Me refiero a su calendario de 2026, no a otro periodo ni a una inscripción individual."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "Al organizar el trámite, ¿desde qué día y hasta qué día se podía hacer la inscripción y desde cuándo y hasta cuándo pagar sus derechos? Aclare si la guía daba ventanas distintas para esas dos gestiones."
+        }
+      ]
+    },
+    {
+      "id": "HO-PRE",
+      "title": "Lista de criterios para estudiar una transferencia regular a pregrado",
+      "introduction": [
+        "Consulta ficticia para entender el contenido del Reglamento Estudiantil de Pregrado disponible en biblioteca. Todavía no presento una solicitud individual de transferencia ni aporto antecedentes académicos personales."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "Cuando se estudia una transferencia regular, ¿qué aspectos deben revisarse? Dé la lista completa, precise qué debe acreditar el certificado oficial de la universidad de origen e indique qué órgano formula la recomendación y a cuál la dirige."
+        }
+      ]
+    },
+    {
+      "id": "HO-PRA",
+      "title": "Requisitos previos de una práctica en modalidad Empresarismo",
+      "introduction": [
+        "Consulta ficticia sobre los requisitos de inicio descritos en el Acuerdo del Consejo de Facultad 958 del 7 de octubre de 2020, Reglamento de Prácticas de Ingeniería. Mi pregunta es informativa y se limita a la modalidad Empresarismo."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "¿Qué condiciones de créditos, inducción, formación y plan de estudios hay que reunir antes de empezar el proceso en esta modalidad? Incluya la duración mínima del curso específico y explique cuándo deja de servir la inducción y qué procede si se vence sin haber matriculado la práctica."
+        }
+      ]
+    },
+    {
+      "id": "HO-IND",
+      "title": "Confirmación individual de matrícula de práctica sin constancia aportada",
+      "introduction": [
+        "Escenario ficticio SIM-HO-IND-20261117: soy una persona estudiante de Ingeniería que quiere iniciar su práctica. No adjunto registro de matrícula, carta aval ni comunicación sobre la decisión individual. La biblioteca contiene el reglamento general del Acuerdo de Facultad 958 de 2020."
+      ],
+      "questions": [
+        {
+          "id": "P1",
+          "text": "¿Ya quedó asentada mi matrícula de práctica y puedo comenzarla? Si no puede confirmarse con lo disponible, explique la condición reglamentaria y qué comprobación concreta permitiría establecer mi situación."
+        }
+      ]
+    }
+  ]
+}

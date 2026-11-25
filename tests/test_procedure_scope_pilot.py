@@ -93,7 +93,7 @@ def test_both_modes_require_details_but_only_opt_in_requires_procedure_readings(
         assert DETAIL_CHECK_GUIDANCE in instructions
     assert DETAIL_PLAN_GUIDANCE in draft_engine._PLAN_INSTRUCTIONS
     plan_schema = draft_engine._PlanSelection.model_json_schema()
-    details = plan_schema["$defs"]["DetailedPlanUnitProposal"]
+    details = plan_schema["$defs"]["PlannerUnitProposal"]
     assert {"details", "no_details_reason"} <= set(details["required"])
     assert PROCEDURE_SCOPE_CHECK_INSTRUCTIONS not in review_engine._INSTRUCTIONS
     assert PROCEDURE_SCOPE_CHECK_INSTRUCTIONS in review_engine._PILOT_INSTRUCTIONS

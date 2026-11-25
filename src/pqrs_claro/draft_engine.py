@@ -20,11 +20,11 @@ from .answer_coverage import (
     MAX_UNITS,
     UNIT_CHECK_GUIDANCE,
     DetailCheck,
-    DetailedPlanUnitProposal,
+    PlannerUnitProposal,
     UnitCheck,
     aliased_units,
     detail_issues,
-    materialize_detailed_units,
+    materialize_planner_units,
     numbered_detail_lines,
     numbered_detail_paragraphs,
     unit_issues,
@@ -40,6 +40,7 @@ from .draft_repair import (
     repair_unit_ids,
 )
 from .evidence_contract import normalize_pending, pending_identity, pending_registry
+from .independent_support import secondary_source_ids
 from .models import DomainError, StrictModel
 from .performance_metrics import metrics_http_client, provider_call
 from .procedure_scope import (
@@ -78,7 +79,7 @@ class _Plan(StrictModel):
 class _PlanSelection(StrictModel):
     objective: str = Field(min_length=1, max_length=2000)
     points: list[_Point] = Field(min_length=1, max_length=20)
-    coverage_units: list[DetailedPlanUnitProposal] = Field(
+    coverage_units: list[PlannerUnitProposal] = Field(
         default_factory=list, max_length=64,
         description="Contenido respaldado por pasajes literales. Los controles de catálogo "
                     "y las actuaciones futuras se conservan en points y pending, no aquí.",
@@ -378,16 +379,21 @@ conclusiones de finding.summary/sufficiency pueden ser parciales: no son el inve
 exhaustivo ni sustituyen esos pasajes. Cada soporte aporta numbered_lines con números
 LOCALES al fragmento. En citations selecciona alias S y line_start/line_end locales;
 Python copiará ese texto. No inventes citas ni uses candidate_documents como evidencia.
-Cada unidad relaciona un requirement_id R con UNA proposición comprobable (claim),
-su kind y reason que explique por qué responde, condiciona o delimita ese inciso.
-Usa required=true para respuesta, condición, excepción, fundamento o paso necesarios.
+Cada unidad relaciona un requirement_id R con UNA proposición comprobable (claim).
+Elige un solo role y explica en reason cómo se relaciona con ese inciso. Usa
+required_answer, required_condition, required_exception, required_basis o
+required_sequence para el contenido necesario. El prefijo required indica qué debe
+explicar la respuesta; la fuente determina si una conducta es obligatoria o aconsejada.
 Si se piden varios datos de una actuación (por ejemplo fecha, lugar y condición),
 inventaría cada dato solicitado con respaldo como proposición de su mismo inciso.
 Registrar un seguimiento no sustituye esos datos; conserva aparte el acto futuro.
 Al explicar una discrepancia o comparación solicitada, conserva la relación entre
-ambos términos con sus pasajes. Incluye los valores o identificadores necesarios
-para entenderla; no exijas otros códigos incidentales cuando el contraste ya sea
-inequívoco. No conviertas esa descripción en un cotejo ya realizado.
+ambos términos con sus pasajes. Si piden distinguir una regla de una recomendación,
+explicar la diferencia es required_answer. Conserva el carácter de recomendación
+y atribuye cifras o condiciones sólo a pasajes que las respalden. Incluye los
+valores o identificadores necesarios para entenderla; no exijas otros códigos
+incidentales cuando el contraste ya sea inequívoco. No conviertas esa descripción
+en un cotejo ya realizado.
 Conserva cada criterio de una lista, sus alternativas y calificadores; no reemplaces
 una enumeración solicitada por dos ejemplos ni por el título del artículo. Una
 alternativa unida por «o» sigue siendo alternativa: no conviertas opciones en deberes
@@ -400,8 +406,8 @@ artículos no seleccionados; no ocultes esa limitación al resumir la regla prin
 Para listas repartidas entre pasajes, revisa todas las continuaciones disponibles.
 No deduzcas una lista completa de un recorte. Si falta evidencia necesaria, conserva
 la brecha concreta; no conviertas el recorte en inexistencia de un archivo.
-Los datos adicionales que NO responden ni condicionan lo pedido son kind=context,
-required=false. No conviertas todo el artículo, una pregunta hermana, un trámite
+Usa optional_context para datos adicionales que NO responden ni condicionan lo pedido.
+No conviertas todo el artículo, una pregunta hermana, un trámite
 distinto o un control de catálogo en obligación narrativa o documento faltante.
 Hay dos bloques distintos: coverage_units es únicamente contenido que puede
 respaldarse con texto literal de los pasajes; points también puede incluir tareas
@@ -953,9 +959,12 @@ def _candidate_inventory(finding: dict) -> list[dict]:
         raise DomainError("El inventario candidato del borrador contiene campos inválidos.")
     result = []
     count = 0
+    excluded = secondary_source_ids(finding)
     for document in documents:
         if not isinstance(document, dict) or document.get("location_status") != "candidate_located":
             raise DomainError("El inventario incluye un documento sin localización confirmada.")
+        if document.get("source_id") in excluded:
+            continue
         chunks = document.get("chunks", [])
         if not isinstance(chunks, list) or any(not isinstance(chunk, dict) for chunk in chunks):
             raise DomainError("El inventario incluye fragmentos candidatos inválidos.")
@@ -1061,6 +1070,11 @@ class OpenAIDraftEngine:
         self.client = OpenAI(api_key=api_key, timeout=80.0, max_retries=2,
                              http_client=metrics_http_client())
 
+    def close(self) -> None:
+        close = getattr(self.client, "close", None)
+        if callable(close):
+            close()
+
     def _call(self, instructions: str, context: dict, schema: type[StrictModel]) -> dict:
         try:
             response = provider_call(f"draft.{schema.__name__.lstrip('_').lower()}",
@@ -1108,7 +1122,7 @@ class OpenAIDraftEngine:
         for attempt in range(2):
             result = self._call(_PLAN_INSTRUCTIONS, context, _PlanSelection)
             try:
-                units = materialize_detailed_units(
+                units = materialize_planner_units(
                     result.get("coverage_units", []), request, index, aliases,
                 )
                 content_coverage = [item for item in

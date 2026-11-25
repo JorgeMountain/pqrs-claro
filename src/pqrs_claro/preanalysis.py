@@ -12,7 +12,7 @@ from .extraction import OpenAIOCR, PDFExtractor
 from .management import ManagementAction
 from .models import Page, StrictModel, validate_pages
 from .performance_metrics import track_case
-from .preanalysis_engine import CheckKey, OpenAIPreanalysisEngine, materialize
+from .preanalysis_engine import CHECK_VERSION, CheckKey, OpenAIPreanalysisEngine, materialize
 from .storage import Conflict, now
 
 KEYS = ("requester", "respect", "integrity")
@@ -110,33 +110,55 @@ class PreanalysisService:
                 raise Conflict("Este expediente ya inició su identificación. Abre su seguimiento.")
             record = self.saved(case_id)
             self.original_matches(case_id, case["sha256"])
-            if case_id in self.active or (record["status"] == "ready" and not retry):
+            current = record.get("check_version") == CHECK_VERSION
+            # Older failures discarded all three findings. Reassess them on the next
+            # authorized visit, while keeping ordinary retries explicit afterwards.
+            legacy_failure = bool(record.get("error") and "retained_checks" not in record)
+            if case_id in self.active or (
+                record["status"] == "ready" and not retry
+                and (record.get("approval") or (current and not legacy_failure))
+            ):
                 return self.view(case_id)
             if case_id in self.identification.active:
                 raise Conflict("Espera a que termine el procesamiento del expediente.")
             record = self.save(
-                case_id, record, status="running", error=None, approval=None, draft=None
+                case_id, record, status="running", error=None, approval=None,
+                retained_checks=bool(
+                    current and record.get("pages") and (
+                        record.get("retained_checks")
+                        or (record["status"] == "ready" and not record.get("error"))
+                    )
+                ),
             )
             self.active.add(case_id)
-            self.pool.submit(self.run, case_id)
+            try:
+                self.pool.submit(self.run, case_id)
+            except Exception:
+                self.active.discard(case_id)
+                raise
             return {k: v for k, v in record.items() if k != "pages"}
 
     @track_case("preanalysis", "case_id")
     def run(self, case_id):
         pages = []
+        owned_ocr = None
         owned_engine = None
         try:
             record = self.saved(case_id)
             self.original_matches(case_id, record["sha256"])
-            if record["pages"]:
+            if record["pages"] and record.get("check_version") == CHECK_VERSION:
                 pages = [Page.model_validate(p) for p in record["pages"]]
                 validate_pages(pages)
             else:
-                extractor = self.identification.extractor or PDFExtractor(
-                    OpenAIOCR(self.settings.api_key, self.settings.model)
-                    if self.settings.api_key
-                    else None
-                )
+                if self.identification.extractor is not None:
+                    extractor = self.identification.extractor
+                else:
+                    owned_ocr = (
+                        OpenAIOCR(self.settings.api_key, self.settings.model)
+                        if self.settings.api_key
+                        else None
+                    )
+                    extractor = PDFExtractor(owned_ocr)
                 pages = extractor.extract(str(self.store.original(case_id)))
             if self.engine is None and not self.settings.api_key:
                 raise ValueError(
@@ -149,11 +171,22 @@ class PreanalysisService:
             checks = materialize(engine.assess(pages), pages)
             self.original_matches(case_id, record["sha256"])
             with self.lock:
+                previous = self.saved(case_id)
+                draft = previous.get("draft")
+                if draft:
+                    # Keep written notes, but only reuse an acknowledgement of the same finding.
+                    draft = {**draft, "acknowledged": [
+                        key for key in draft["acknowledged"]
+                        if previous["checks"].get(key) == checks[key]
+                    ]}
                 self.save(
                     case_id,
-                    self.saved(case_id),
+                    previous,
                     status="ready",
+                    check_version=CHECK_VERSION,
                     checks=checks,
+                    retained_checks=False,
+                    draft=draft,
                     pages=[p.model_dump(mode="json") for p in pages],
                     page_count=len(pages),
                     error=None,
@@ -174,20 +207,40 @@ class PreanalysisService:
                 for key in KEYS
             }
             with self.lock:
+                previous = self.saved(case_id)
+                if pages and previous.get("retained_checks"):
+                    try:
+                        self.original_matches(case_id, previous["sha256"])
+                    except (OSError, ValueError, KeyError):
+                        pass
+                    else:
+                        # The review still describes this exact reading. A failed repeat
+                        # does not erase its findings or the administrator's notes.
+                        self.save(case_id, previous, status="ready", error=error)
+                        return
                 self.save(
                     case_id,
-                    self.saved(case_id),
+                    previous,
                     status="ready" if pages else "error",
+                    check_version=CHECK_VERSION,
                     checks=checks,
+                    retained_checks=False,
+                    draft=(
+                        {**previous["draft"], "acknowledged": []} if previous.get("draft") else None
+                    ),
                     pages=[p.model_dump(mode="json") for p in pages],
                     page_count=len(pages),
                     error=error,
                 )
         finally:
-            if owned_engine:
-                owned_engine.close()
-            with self.lock:
-                self.active.discard(case_id)
+            try:
+                if owned_ocr:
+                    owned_ocr.close()
+                if owned_engine:
+                    owned_engine.close()
+            finally:
+                with self.lock:
+                    self.active.discard(case_id)
 
     def require_approved(self, case_id):
         record = self.saved(case_id)
@@ -247,6 +300,8 @@ class PreanalysisService:
                 raise Conflict("El expediente cambió. Vuelve a abrir el preanálisis y revísalo.")
             if record["status"] != "ready" or not record["pages"]:
                 raise Conflict("Primero completa la lectura y las verificaciones del documento.")
+            if record.get("check_version") != CHECK_VERSION and not record.get("approval"):
+                raise Conflict("Actualiza el preanálisis y revisa las verificaciones vigentes.")
             if not body.confirmed:
                 raise ValueError("Confirma que revisaste el documento antes de iniciar.")
             for key in KEYS:
@@ -306,17 +361,18 @@ class PreanalysisService:
                         }
                         for r in page.search_for(text)
                     )
-            for ref in record["checks"].get("respect", {}).get("refs", []):
+            for index, ref in enumerate(record["checks"].get("respect", {}).get("refs", [])):
                 if ref["page"] == number:
                     marks.extend(
                         {
                             "key": "respect",
+                            "ref_index": index,
                             "x": r.x0,
                             "y": r.y0,
                             "width": r.width,
                             "height": r.height,
                         }
-                        for r in page.search_for(ref["quote"])
+                        for r in page.search_for(" ".join(ref["quote"].split()))
                     )
             return dict(
                 page=number,
@@ -330,11 +386,21 @@ class PreanalysisService:
         with self.store.connect() as db:
             rows = list(db.execute("SELECT case_id,body FROM case_preanalysis"))
             for case_id, raw in rows:
-                record = json.loads(raw)
-                if record["status"] == "running":
+                try:
+                    record = json.loads(raw)
+                except ValueError:
+                    continue
+                if record.get("status") == "running":
+                    retained = bool(record.get("retained_checks"))
+                    if retained:
+                        try:
+                            self.original_matches(case_id, record["sha256"])
+                        except (OSError, ValueError, KeyError):
+                            retained = False
                     record.update(
-                        status="error",
-                        revision=record["revision"] + 1,
+                        status="ready" if retained else "error",
+                        retained_checks=retained,
+                        revision=record.get("revision", 0) + 1,
                         error="Se interrumpió el preanálisis. Reintenta las verificaciones.",
                     )
                     db.execute(
@@ -343,7 +409,7 @@ class PreanalysisService:
                     )
 
     def close(self):
-        self.pool.shutdown(wait=True)
+        self.pool.shutdown(wait=True, cancel_futures=True)
 
 
 def preanalysis_router(service):

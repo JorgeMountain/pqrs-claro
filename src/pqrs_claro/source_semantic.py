@@ -323,6 +323,8 @@ class SemanticIndex:
                 with closing(sqlite3.connect(
                     self.cache_dir / "embeddings.sqlite", timeout=60
                 )) as connection, connection:
+                    connection.execute("PRAGMA busy_timeout=15000")
+                    connection.execute("PRAGMA journal_mode=WAL")
                     connection.execute(
                         "CREATE TABLE IF NOT EXISTS embeddings ("
                         "model_key TEXT NOT NULL, text_key TEXT NOT NULL, "
@@ -404,6 +406,21 @@ class SemanticIndex:
     def rank(
         self, query: str, eligible: list[dict[str, Any]], limit: int = 60
     ) -> list[dict[str, Any]]:
+        return self._rank(query, eligible, limit, cache_matrix=True)
+
+    def rank_passages(
+        self, query: str, eligible: list[dict[str, Any]], limit: int = 60
+    ) -> list[dict[str, Any]]:
+        """Rank prepared document passages without evicting the library matrix.
+
+        The caller supplies the current authorized scope. Missing vectors stay
+        missing here: this secondary channel never triggers document encoding.
+        """
+        return self._rank(query, eligible, limit, cache_matrix=False)
+
+    def _rank(
+        self, query: str, eligible: list[dict[str, Any]], limit: int, *, cache_matrix: bool
+    ) -> list[dict[str, Any]]:
         with self._lock:
             if self._failed or self._cancelled() or not query.strip() or not eligible or limit <= 0:
                 return []
@@ -411,7 +428,8 @@ class SemanticIndex:
                 import numpy as np
 
                 keys = tuple(_text_key(_document_text(chunk)) for chunk in eligible)
-                if not self._preparation_deferred and any(key not in self._vectors for key in keys):
+                if (cache_matrix and not self._preparation_deferred
+                        and any(key not in self._vectors for key in keys)):
                     self.prepare(eligible)
                 if self._failed or self._cancelled():
                     return []
@@ -424,14 +442,14 @@ class SemanticIndex:
                     return []
                 eligible = [chunk for chunk, _ in prepared]
                 keys = tuple(key for _, key in prepared)
-                matrix = self._matrices.get(keys)
+                matrix = self._matrices.get(keys) if cache_matrix else None
                 if matrix is None:
                     # Budget the full matrix before allocating it. Evict first,
                     # including when this scope is too large to retain, so an old
                     # scope does not coexist unnecessarily with the new matrix.
                     size = (len(keys) * self._vectors[keys[0]].nbytes
                             + sum(len(key) + 64 for key in keys) + 128)
-                    while self._matrices and (
+                    while cache_matrix and self._matrices and (
                         self.diagnostics["matrix_cache_bytes"] + size > self._matrix_budget
                         or len(self._matrices) >= 4
                     ):
@@ -441,8 +459,9 @@ class SemanticIndex:
                         )
                         del old_matrix, old_keys
                     matrix = np.stack([self._vectors[key] for key in keys])
-                    self.diagnostics["matrix_builds"] += 1
-                    if size <= self._matrix_budget:
+                    counter = "matrix_builds" if cache_matrix else "passage_matrix_builds"
+                    self.diagnostics[counter] = self.diagnostics.get(counter, 0) + 1
+                    if cache_matrix and size <= self._matrix_budget:
                         self._matrices[keys] = matrix
                         self.diagnostics["matrix_cache_bytes"] += size
                 else:
@@ -466,7 +485,13 @@ class SemanticIndex:
                     for index in positions
                 ]
             except Exception as error:
-                self._fail(error)
+                if cache_matrix:
+                    self._fail(error)
+                else:
+                    # A failure while ranking one document must not disable
+                    # the prepared library for every following question.
+                    self.diagnostics["passage_rank_errors"] = (
+                        self.diagnostics.get("passage_rank_errors", 0) + 1)
                 return []
 
 
