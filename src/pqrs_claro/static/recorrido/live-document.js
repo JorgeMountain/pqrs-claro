@@ -10,16 +10,24 @@ import {draftProgress} from './stage-progress.js?v=approval-progress1';
 import {actor as managementActor} from './management-ui.js?v=phase2';
 
 const clone=v=>structuredClone(v);
+const cssId=v=>typeof CSS?.escape==='function'?CSS.escape(String(v??'')):String(v??'').replace(/["\\]/g,'\\$&');
 const signature=s=>JSON.stringify([s.metadata,s.attachment_source_ids,s.requests.map(r=>[r.request_id,r.paragraphs])]);
-async function api(url,body,method='POST'){
+async function api(url,body,method='POST',signal){
   let res;
-  try{res=await fetch(url,{signal:AbortSignal.timeout(60000),...(body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});}
-  catch(error){if(['TimeoutError','AbortError'].includes(error.name))throw new Error('La operación está tardando más de lo esperado. Tu texto local se conserva; comprueba el estado guardado antes de volver a intentarlo.');throw error;}
-  const data=await res.json();
-  if(!res.ok)throw new Error(typeof data.detail==='string'?data.detail:'Revisa los datos del oficio. No se pudo completar la operación.');
+  const timeout=typeof AbortSignal?.timeout==='function'?AbortSignal.timeout(60000):null;
+  const combined=timeout&&signal?AbortSignal.any([timeout,signal]):signal||timeout;
+  try{res=await fetch(url,{...(combined?{signal:combined}:{}),...(body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})});}
+  catch(error){
+    if(signal?.aborted){const aborted=new Error('Consulta cancelada.');aborted.name='AbortError';throw aborted;}
+    if(['TimeoutError','AbortError'].includes(error.name))throw new Error('La operación está tardando más de lo esperado. Tu texto local se conserva; comprueba el estado guardado antes de volver a intentarlo.');
+    throw error;
+  }
+  let data=null;
+  try{data=await res.json();}catch{data=null;}
+  if(!res.ok||!data)throw new Error(typeof data?.detail==='string'?data.detail:'Revisa los datos del oficio. No se pudo completar la operación.');
   return data;
 }
-export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateChange,getProgress,onFinalized}){
+export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateChange,getProgress,onFinalized,onFiagaHandoff=null}){
   const readOnly=s=>s?.closed||getCase()?.management?.state==='closed';
   const states=new Map();
   const scopeEdits=new Map();
@@ -28,7 +36,7 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     if(!states.has(id))states.set(id,{id,node:document.createElement('section'),work:null,saved:null,info:null,busy:false,message:'',error:'',timer:null,selectedId:null,confirmation:null,generatedSignature:null});
     return states.get(id);
   };
-  const path=(s,suffix='')=>`/api/cases/${s.id}/office${suffix}`;
+  const path=(s,suffix='')=>`/api/cases/${encodeURIComponent(s.id)}/office${suffix}`;
   const dirty=s=>Boolean(s.work&&signature(s.work)!==signature(s.saved));
   const active=s=>getCase()?.id===s.id&&isVisible();
   const progressFor=s=>active(s)?getProgress?.():null;
@@ -122,6 +130,11 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     </div>
     <footer class="document-toolbar stage-actions" aria-label="Acciones de Borrador"><div class="document-buttons stage-actions-secondary"><button type="button" data-command="save">${icon('check')}Guardar cambios</button><button type="button" class="text-button" data-command="cancel">Descartar cambios</button><span class="document-save-state" data-save-state role="status"></span></div><div class="draft-generation stage-actions-primary"><button type="button" class="primary" data-command="generate">Aprobar y generar ${icon('arrow-right')}</button><button type="button" class="primary" data-command="finalize" hidden>${icon('check')}Finalizar expediente</button><small data-generate-hint></small></div></footer>
     <p data-operation role="status"></p><p data-error role="alert"></p><div data-downloads class="document-downloads"></div>`;
+    if(onFiagaHandoff){
+      const submit=s.node.querySelector('[data-command="generate"]');
+      submit.dataset.action='fiaga-handoff';
+      s.node.querySelector('.draft-review-heading h2').textContent='Revisión del borrador';
+    }
     s.node.querySelector('.draft-editor-heading').after(s.node.querySelector('.document-tool-status'));
     const local=scopeEdits.get(s.id);
     if(local){
@@ -135,11 +148,11 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
       details.append(summary,text,dismiss);s.node.prepend(details);
     }
     s.fragment=createDraftFragment(s.node);
-    s.node.querySelector('[data-clear-fragment]').onclick=()=>{s.fragment.clear();s.node.querySelector(`[data-select-adjustment="${s.selectedId}"]`)?.focus();};
+    s.node.querySelector('[data-clear-fragment]').onclick=()=>{s.fragment.clear();s.node.querySelector(`[data-select-adjustment="${cssId(s.selectedId)}"]`)?.focus();};
     const form=s.node.querySelector('form');bindActor(form);
     form.onsubmit=e=>{e.preventDefault();void act(s,()=>save(s));};
     s.node.querySelector('#office-actor').addEventListener('change',()=>{s.confirmation=null;status(s);});
-    s.node.querySelector('[data-confirm-office]').onchange=e=>{const checked=e.target.checked;try{if(checked)actor(s);s.confirmation=checked?confirmationKey(s):null;s.error='';}catch(error){s.error=error.message;s.confirmation=null;}status(s);};
+    s.node.querySelector('[data-confirm-office]').onchange=e=>{const checked=e.target.checked;try{if(checked&&!onFiagaHandoff)actor(s);s.confirmation=checked?confirmationKey(s):null;s.error='';}catch(error){s.error=error.message;s.confirmation=null;}status(s);};
     s.node.querySelectorAll('[data-attachment]').forEach(input=>input.onchange=()=>{s.tools.record();w.attachment_source_ids=[...s.node.querySelectorAll('[data-attachment]:checked')].map(e=>e.dataset.attachment);stamp(s);});
     s.node.querySelectorAll('[data-meta]').forEach(input=>input.oninput=()=>{
       s.tools.record('meta-'+input.dataset.meta);w.metadata[input.dataset.meta]=input.value;
@@ -157,19 +170,20 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
       if(button.dataset.command==='cancel')void act(s,async()=>{await load(true);notice('Se descartaron los cambios sin guardar.');});
       else if(button.dataset.command==='save')void act(s,()=>save(s));
       else if(button.dataset.command==='finalize')void act(s,()=>finalize(s));
+      else if(onFiagaHandoff)void act(s,()=>handoff(s));
       else void act(s,()=>generate(s));
     });
     s.panelMarkup=null;status(s);
   }
-  function renderAdjustments(s,model){
+  function renderAdjustments(s,model,options){
     if(!model.items.some(item=>item.id===s.selectedId)){s.selectedId=model.items[0]?.id||null;s.fragment?.clear();}
     const box=s.node.querySelector('[data-adjustments]');
-    const markup=draftReviewMarkup(model,{selectedId:s.selectedId,dirty:dirty(s),busy:s.busy});
+    const markup=draftReviewMarkup(model,{...options,selectedId:s.selectedId,busy:s.busy});
     if(markup===s.panelMarkup)return;
     const focus=document.activeElement?.closest('[data-select-adjustment]')?.dataset.selectAdjustment;
     s.panelMarkup=markup;box.innerHTML=markup;
-    const reveal=id=>{const list=box.querySelector('.draft-adjustment-list'),card=box.querySelector(`[data-select-adjustment="${id}"]`)?.closest('li');if(list&&card&&list.scrollHeight>list.clientHeight)list.scrollTop+=card.getBoundingClientRect().top-list.getBoundingClientRect().top-4;};
-    const select=id=>{s.fragment?.clear();s.selectedId=id;s.panelMarkup=null;status(s);box.querySelector(`[data-select-adjustment="${id}"]`)?.focus({preventScroll:true});reveal(id);};
+    const reveal=id=>{const list=box.querySelector('.draft-adjustment-list'),card=box.querySelector(`[data-select-adjustment="${cssId(id)}"]`)?.closest('li');if(list&&card&&list.scrollHeight>list.clientHeight)list.scrollTop+=card.getBoundingClientRect().top-list.getBoundingClientRect().top-4;};
+    const select=id=>{s.fragment?.clear();s.selectedId=id;s.panelMarkup=null;status(s);box.querySelector(`[data-select-adjustment="${cssId(id)}"]`)?.focus({preventScroll:true});reveal(id);};
     box.querySelectorAll('[data-select-adjustment]').forEach(button=>button.onclick=()=>select(button.dataset.selectAdjustment));
     box.querySelectorAll('[data-view-fragment]').forEach(button=>button.onclick=()=>{
       const item=model.items.find(item=>item.id===button.dataset.viewFragment);
@@ -180,34 +194,44 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     box.querySelectorAll('[data-review-adjustment]').forEach(button=>button.onclick=()=>back(model.items.find(item=>item.id===button.dataset.reviewAdjustment)?.requestId));
     box.querySelector('[data-adjustment-prev]')?.addEventListener('click',()=>{const i=model.items.findIndex(item=>item.id===s.selectedId);if(i>0)select(model.items[i-1].id);});
     box.querySelector('[data-adjustment-next]')?.addEventListener('click',()=>{const i=model.items.findIndex(item=>item.id===s.selectedId);if(i<model.items.length-1)select(model.items[i+1].id);});
-    if(focus)box.querySelector(`[data-select-adjustment="${focus}"]`)?.focus({preventScroll:true});
+    if(focus)box.querySelector(`[data-select-adjustment="${cssId(focus)}"]`)?.focus({preventScroll:true});
   }
   function status(s){
     if(!s.work)return;
-    const model=deriveDraftReview(s.work),unsaved=dirty(s),externalChanges=hasChanges(s.id);
-    const generated=s.generatedSignature===signature(s.work)&&!unsaved&&!externalChanges&&model.canGenerate;
-    const canGenerate=model.canGenerate&&!unsaved&&!externalChanges&&!readOnly(s);
+    const activeCase=getCase(),current=activeCase?.id===s.id?activeCase:null;
+    const model=deriveDraftReview(s.work,current?.identification?.requests);
+    const unsaved=dirty(s),externalChanges=hasChanges(s.id);
+    const total=Math.max(model.total,current?.request_count||0);
+    const generated=s.generatedSignature===signature(s.work)&&!unsaved&&!externalChanges&&model.canGenerate&&model.ready===total;
+    const canGenerate=(onFiagaHandoff ? s.reading?.confirmed&&!model.checking : model.canGenerate)&&!unsaved&&!externalChanges&&!readOnly(s);
     const confirmed=s.confirmation===confirmationKey(s);
     const checkbox=s.node.querySelector('[data-confirm-office]');checkbox.checked=confirmed&&canGenerate;checkbox.disabled=s.busy||!canGenerate||generated;checkbox.hidden=generated||readOnly(s);
     s.node.querySelector('[data-confirm-label]').textContent=generated?'Revisión del oficio registrada':readOnly(s)?'Consulta del oficio guardado':'He revisado el oficio completo';
     if(!canGenerate)s.confirmation=null;
-    renderAdjustments(s,model);
-    const readyNotice=s.node.querySelector('.draft-review-empty.is-ready');if(readyNotice&&generated)readyNotice.textContent='El oficio revisado y sus archivos están guardados.';
+    renderAdjustments(s,model,{dirty:unsaved||externalChanges,total,generated});
+    if(onFiagaHandoff)s.node.querySelector('[data-confirm-label]').textContent='He revisado el borrador y sus faltantes';
     const count=model.items.length,checking=model.checking;
-    const redactionComplete=s.work.requests.length>0&&s.work.requests.length===getCase()?.request_count&&s.work.requests.every(r=>r.paragraphs.length&&!r.stale);
+    const redactionComplete=onFiagaHandoff?Boolean(s.reading?.confirmed):s.work.requests.length>0&&s.work.requests.length===getCase()?.request_count&&s.work.requests.every(r=>r.paragraphs.length&&!r.stale);
     const completed=[...(progressFor(s)?.completed||[])];completed[2]=redactionComplete;
-    const progress=draftProgress(s.work,model,{total:getCase()?.request_count,dirty:unsaved,externalChanges,busy:s.busy,message:s.message,error:s.error,generated,confirmed:confirmed&&canGenerate,completed,approval:s.approvalProgress});
+    const progress=draftProgress(s.work,model,{total:getCase()?.request_count,dirty:unsaved,externalChanges,busy:s.busy,message:s.message,error:s.error,generated,confirmed:confirmed&&canGenerate,completed,approval:s.approvalProgress,handoff:Boolean(onFiagaHandoff)});
     const progressNode=s.node.querySelector('[data-draft-progress]');
     if(progressNode.innerHTML!==progress)progressNode.innerHTML=progress;
-    const label=readOnly(s)?'Expediente finalizado':generated?'Oficio generado':checking?'Comprobando':count?`${count} ${count===1?'ajuste pendiente':'ajustes pendientes'}`:unsaved?'Sin guardar':model.canGenerate?'Listo para revisar':'Por preparar';
+    const awaitingCheck=model.awaitingCheck>0&&model.written===total;
+    const label=readOnly(s)?'Expediente finalizado':generated?'Oficio generado':checking?'Comprobando':count?`${count} ${count===1?'ajuste pendiente':'ajustes pendientes'}`:unsaved?'Sin guardar':model.canGenerate?'Listo para revisar':awaitingCheck?'Sin ajustes pendientes':'Por preparar';
     const badge=s.node.querySelector('[data-review-status]');badge.textContent=label;badge.classList.toggle('complete',model.canGenerate&&!unsaved);
-    const hint=readOnly(s)?'La gestión está finalizada. El contenido se conserva para consulta.':generated?'La revisión y generación de esta versión ya están registradas.':unsaved?'Guarda los cambios para comprobar la nueva redacción.':externalChanges?'Hay cambios sin guardar en Redacción.':checking?'Espera a que terminen las comprobaciones.':count?`Resuelve ${count} ${count===1?'ajuste':'ajustes'} antes de aprobar.`:!model.canGenerate?'Prepara las respuestas para continuar.':confirmed?'Al generar apruebas el contenido guardado del oficio.':'Confirma la revisión del oficio completo.';
+    const hint=readOnly(s)?'La gestión está finalizada. El contenido se conserva para consulta.':generated?'La revisión y generación de esta versión ya están registradas.':unsaved?'Guarda los cambios para comprobar la nueva redacción.':externalChanges?'Hay cambios sin guardar en Redacción.':checking?'Espera a que terminen las comprobaciones.':count?`Resuelve ${count} ${count===1?'ajuste':'ajustes'} antes de aprobar.`:awaitingCheck?'Guarda el borrador para comprobar las respuestas redactadas.':!model.canGenerate?'Prepara las respuestas para continuar.':confirmed?'Al generar apruebas el contenido guardado del oficio.':'Confirma la revisión del oficio completo.';
     s.node.querySelector('[data-confirm-hint]').textContent=hint;
     const own=getCase()?.id===s.id&&getCase().management?.owner_id===managementActor();
     s.node.querySelector('[data-generate-hint]').textContent=readOnly(s)?'Conservado en Finalizadas para consulta.':generated?own?'Pasará a Finalizadas. Podrás consultar las respuestas y descargar el oficio.':'Selecciona al gestor responsable para finalizar el expediente.':confirmed&&canGenerate?'Se generarán Word y PDF.':hint;
     const approving=s.busy&&s.approvalProgress;
     s.node.querySelector('[data-command="generate"]').innerHTML=generated?'Oficio generado':approving?approving.phase==='generating'?'Generando Word y PDF…':`Aprobadas ${approving.count}/${approving.total}…`:`Aprobar y generar ${icon('arrow-right')}`;
     if(approving)s.node.querySelector('[data-generate-hint]').textContent=s.message;
+    if(onFiagaHandoff){
+      const message=unsaved?'Guarda los cambios antes de continuar.':externalChanges?'Guarda primero tus cambios de Redacción.':checking?'Espera a que termine la comprobación.':!s.reading?.confirmed?'Vuelve a Redacción y confirma la lectura de las respuestas actuales.':count?'Los faltantes se conservarán para organizar los trámites.':'El borrador está listo para la decisión del administrador.';
+      s.node.querySelector('[data-confirm-hint]').textContent=message;
+      s.node.querySelector('[data-generate-hint]').textContent='';
+      s.node.querySelector('[data-command="generate"]').textContent='Continuar a revisión y trámites';
+    }
     s.node.querySelector('[data-command="generate"]').hidden=generated||readOnly(s);
     const finish=s.node.querySelector('[data-command="finalize"]');finish.hidden=!generated||readOnly(s);
     finish.innerHTML=s.closing?'Finalizando expediente…':`${icon('check')}Finalizar expediente`;
@@ -224,7 +248,7 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
       s.node.querySelectorAll('[data-tool="save"],[data-tool="add"],[data-tool="remove"],[data-tool="undo"],[data-tool="redo"],[data-tool="replace"],[data-tool="all"]').forEach(e=>e.disabled=true);
       s.node.querySelector('[data-operation]').textContent='Expediente finalizado · consulta del oficio y descargas disponibles.';
     }
-    const summary={id:s.id,redactionComplete,draftComplete:generated};
+    const summary={id:s.id,redactionComplete,draftComplete:generated,running:!s.error&&(s.busy||checking>0),checking:checking>0};
     const key=JSON.stringify(summary);if(key!==s.summaryKey){s.summaryKey=key;if(active(s))onStateChange?.(summary);}
   }
   async function act(s,work){
@@ -261,14 +285,30 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
   async function poll(s){
     clearTimeout(s.timer);
     const latest=await api(`/api/cases/${s.id}/review`);
+    if(onFiagaHandoff)s.reading=latest.reading_confirmation;
     for(const row of latest.requests){
       const local=s.work.requests.find(r=>r.request_id===row.request_id),saved=s.saved.requests.find(r=>r.request_id===row.request_id);
       if(!local||!saved)continue;
       if(JSON.stringify(row.paragraphs)!==JSON.stringify(saved.paragraphs)){s.error='Una respuesta cambió en otra ventana. Tu texto local se conserva; usa «Descartar cambios» para cargar la versión actual.';s.confirmation=null;s.fragment?.clear();continue;}
-      for(const key of ['status','revision','assessment','approval','stale','error']){local[key]=clone(row[key]);saved[key]=clone(row[key]);}
+      for(const key of ['status','revision','assessment','approval','stale','error','pending']){local[key]=clone(row[key]);saved[key]=clone(row[key]);}
     }
     status(s);
     if(latest.requests.some(r=>r.status==='checking')&&active(s))s.timer=setTimeout(()=>poll(s).catch(e=>{s.error=e.message;status(s);}),1800);
+  }
+  async function handoff(s){
+    if(!s.reading?.confirmed||s.confirmation!==confirmationKey(s)||dirty(s)||hasChanges(s.id))
+      throw new Error('Guarda los cambios y confirma la revisión del borrador actual.');
+    await onFiagaHandoff(s.id,s.work,s.reading.content_hash);
+  }
+  async function waitGenerated(s,initialRun){
+    let run=initialRun;
+    for(let attempt=0;run.status==='generating'&&attempt<120;attempt++){
+      if(!active(s)||states.get(s.id)!==s)return null;
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      if(!active(s)||states.get(s.id)!==s)return null;
+      run=await api(path(s,`/runs/${encodeURIComponent(run.id)}`));
+    }
+    return run;
   }
   async function generate(s){
     const name=actor(s);
@@ -286,7 +326,7 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     for(const row of fresh.requests){
       if(row.status!=='ready')continue;
       s.message=`Aprobando la respuesta ${fresh.requests.indexOf(row)+1} de ${fresh.requests.length}…`;status(s);
-      await api(`/api/cases/${s.id}/review/requests/${encodeURIComponent(row.request_id)}/approve`,{revision:row.revision,assessment_hash:row.assessment.input_hash,approved_by:name,note:'Aprobación explícita del oficio completo mediante Generar.',confirmed:true});
+      await api(`/api/cases/${encodeURIComponent(s.id)}/review/requests/${encodeURIComponent(row.request_id)}/approve`,{revision:row.revision,assessment_hash:row.assessment.input_hash,approved_by:name,note:'Aprobación explícita del oficio completo mediante Generar.',confirmed:true});
       s.approvalProgress.count++;status(s);
     }
     s.approvalProgress.phase='preparing';s.message='Aprobaciones guardadas. Preparando el oficio final…';status(s);
@@ -294,11 +334,9 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
     const body={approval_snapshot_hash:info.approval_snapshot_hash,metadata:s.work.metadata,prepared_by:name,attachment_source_ids:s.work.attachment_source_ids};
     const preview=await api(path(s,'/preview'),body);
     s.approvalProgress.phase='generating';s.message='Creando Word y PDF con el membrete institucional…';status(s);
-    let run=await api(path(s,'/generate'),{...body,preview_hash:preview.preview_hash});
-    while(run.status==='generating'){
-      await new Promise(resolve=>setTimeout(resolve,1500));
-      run=await api(path(s,`/runs/${run.id}`));
-    }
+    const started=await api(path(s,'/generate'),{...body,preview_hash:preview.preview_hash});
+    const run=await waitGenerated(s,started);
+    if(!run)return;
     if(run.status!=='ready'||run.stale)throw new Error(run.error||'La versión cambió durante la generación. Actualiza el oficio.');
     await poll(s);
     showDownloads(s,run);
@@ -341,20 +379,37 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
   }
   async function load(discard=false){
     const s=state();if(!s)return;
+    const seq=(s.loadSeq=(s.loadSeq||0)+1);
+    s.loadAbort?.abort();
+    const controller=typeof AbortController==='function'?new AbortController():null;
+    s.loadAbort=controller;
+    const stillCurrent=()=>seq===s.loadSeq&&states.get(s.id)===s&&getCase()?.id===s.id;
     s.closed=getCase()?.management?.state==='closed';
     if(!s.busy)s.approvalProgress=null;
     try{
-      const work=await api(path(s,'/workspace'));
+      const work=await api(path(s,'/workspace'),undefined,'POST',controller?.signal);
+      if(!stillCurrent())return;
+      if(onFiagaHandoff){
+        const review=await api(`/api/cases/${encodeURIComponent(s.id)}/review`,undefined,'POST',controller?.signal);
+        if(!stillCurrent())return;
+        s.reading=review.reading_confirmation;
+      }
       if(!s.work||discard||!dirty(s)){s.work=clone(work);s.saved=clone(work);s.editHistory=null;s.error='';s.confirmation=null;s.generatedSignature=null;paint(s);
       }else status(s);
       // The editor can be read before looking up previous exports. Unapproved
       // replies cannot have a current final version; avoid a second costly review.
-      const info=work.requests.length&&work.requests.every(row=>row.status==='approved'&&!row.stale)?await api(path(s)):{latest:null};
+      if(onFiagaHandoff){
+        if(work.requests.some(r=>r.status==='checking'))void poll(s).catch(e=>{s.error=e.message;status(s);});
+        return;
+      }
+      const info=work.requests.length&&work.requests.every(row=>row.status==='approved'&&!row.stale)?await api(path(s),undefined,'POST',controller?.signal):{latest:null};
+      if(!stillCurrent())return;
       s.info=info;
       await restoreDownloads(s,info.latest,info);
-      if(info.latest?.status==='generating'&&!s.busy)void act(s,async()=>{s.message='Generación en curso…';status(s);let run=info.latest;while(run.status==='generating'){await new Promise(resolve=>setTimeout(resolve,1500));run=await api(path(s,`/runs/${run.id}`));}if(run.status!=='ready'||run.stale)throw new Error(run.error||'La versión generada requiere actualizarse.');await restoreDownloads(s,run,await api(path(s)));});
+      if(!stillCurrent())return;
+      if(info.latest?.status==='generating'&&!s.busy)void act(s,async()=>{s.message='Generación en curso…';status(s);const run=await waitGenerated(s,info.latest);if(!run)return;if(run.status!=='ready'||run.stale)throw new Error(run.error||'La versión generada requiere actualizarse.');await restoreDownloads(s,run,await api(path(s)));});
       if(work.requests.some(r=>r.status==='checking'))void poll(s).catch(e=>{s.error=e.message;status(s);});
-    }catch(e){s.error=e.message;s.work?status(s):paint(s);if(discard)throw e;}
+    }catch(e){if(e?.name==='AbortError'||!stillCurrent())return;s.error=e.message;s.work?status(s):paint(s);if(discard)throw e;}
   }
   function discardScope(caseId){
     const s=states.get(caseId);
@@ -375,5 +430,8 @@ export function createFinal({getCase,hasChanges,notice,isVisible,back,onStateCha
   }
   window.addEventListener('beforeunload',event=>{if(scopeEdits.size||[...states.values()].some(dirty)){event.preventDefault();event.returnValue='';}});
   window.addEventListener('pqrs-manager-change',()=>{const s=states.get(getCase()?.id);if(s?.work&&active(s))status(s);});
-  return {view(){const s=state();if(!s.node.childNodes.length)paint(s);return s.node;},load,discardScope,hide(){state()?.fragment?.clear();},setCase(){for(const s of states.values()){s.fragment?.clear();clearTimeout(s.timer);s.confirmation=null;}},hasChanges:id=>states.has(id)&&dirty(states.get(id))};
+  return {view(){const s=state();if(!s.node.childNodes.length)paint(s);return s.node;},load,discardScope,isBusy:()=>Boolean(states.get(getCase()?.id)?.busy),
+    hide(){const s=states.get(getCase()?.id);if(s){s.loadAbort?.abort();s.fragment?.clear();s.draftPositioned=false;}},
+    setCase(){const activeId=getCase()?.id;for(const [id,s] of states){s.loadAbort?.abort();s.fragment?.clear();clearTimeout(s.timer);s.confirmation=null;s.draftPositioned=false;if(id!==activeId&&!s.busy&&!dirty(s)){s.tools?.destroy();s.node.replaceChildren();states.delete(id);}}},
+    hasChanges:id=>states.has(id)&&dirty(states.get(id))};
 }

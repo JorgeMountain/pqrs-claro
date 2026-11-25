@@ -3,11 +3,57 @@ import assert from 'node:assert/strict';
 import {initialConfirmation,initialRequestContent,readInitialDecision,identificationDetails,updateInitialConfirmation} from '../src/pqrs_claro/static/recorrido/initial-review.js';
 import {identificationState,identificationWorkspace,expedienteStages,expedienteSteps,expedienteHeading} from '../src/pqrs_claro/static/recorrido/expediente-workspace.js';
 import {confirmationPayload} from '../src/pqrs_claro/static/recorrido/initial-confirmation.js';
+import {caseView} from '../src/pqrs_claro/static/recorrido/fiaga-case.js';
 
 const check=key=>({key,state:'no_observation',summary:'Ejemplo',reason:'Ejemplo',original_refs:[],sources:[],pending:[]});
 const petitions=Array.from({length:3},(_,i)=>({id:`P${i+1}`,label:String(i+1),title:`Petición ${i+1}`,description:'Contenido de prueba',source_refs:[{page:1}],original_marks:[]}));
 const current={id:'demo',filename:'ejemplo.pdf',status:'needs_review',management:{owner_name:'José',reference:'PQRS-DEMO'},identification:{requests:petitions},requests:petitions,original_pages:[],original_url:'/original'};
 const initial={revision:2,status:'needs_review',can_prepare:false,report:{document:{checks:[check('requirements'),check('respect')],proposed_route:'continue'},requests:petitions.map(r=>({request_id:r.id,petition_type:'information',proposed_route:'continue',checks:[{...check('repetition'),state:'unavailable'},check('classification')]})),special_treatment:{detected:false},warnings:[]}};
+
+test('FIAGA distingue la fase del expediente de la pestaña de análisis consultada', () => {
+  const detail = {case_id:'ejemplo', stage:'preparing', requests:[], progress:{
+    stage:'preanalysis', status:'running', steps:{reading:'done',checks:'done',identification:'done',library:'done'},
+    requests:[{sources:'running',drafting:'pending'}],
+  }};
+  const expected = ['Preanálisis', 'Identificación', 'Redacción', 'Borrador'];
+  for (const [snapshot, phase, states] of [
+    [detail, 'analysis', ['completed','completed','working','pending']],
+    [{...detail,stage:'final_review'}, 'final', ['completed','completed','review','pending']],
+    [{...detail,stage:'approved',review_imported:true}, 'final', Array(4).fill('completed')],
+  ]) {
+    const html = caseView(snapshot, 'admin', [], '#peticiones');
+    const [sidebar, main] = html.split('</aside>');
+    assert.ok(sidebar.includes('class="fiaga-side-route"'));
+    assert.ok(main.includes('class="fiaga-phase-route"'));
+    for (const section of [sidebar, main]) {
+      const phases = section.match(/<li\b[^>]*\bdata-phase="[^"]+"[^>]*>/g);
+      assert.equal(phases.length, 5);
+      assert.match(phases.find(tag => tag.includes('is-current')), new RegExp(`data-phase="${phase}"`));
+      const controls = section.match(/<(?:button|a)\b[^>]*\bdata-route-substep="\d"[^>]*>/g);
+      assert.equal(controls.length, 4);
+      controls.forEach((tag, index) => {
+        assert.ok(tag.includes(`data-state="${states[index]}"`));
+        assert.ok(tag.includes(`aria-label="${expected[index]}`));
+        assert.equal(tag.includes('aria-current="step"'), index === 1);
+      });
+    }
+  }
+  const otherPhase = caseView({...detail,stage:'final_review'}, 'admin', [], '#decision');
+  assert.doesNotMatch(otherPhase, /data-route-substep/);
+});
+
+test('el visor de identificación ofrece desplazamiento y limita las flechas a las páginas disponibles',()=>{
+  for(const [count,page,atStart,atEnd] of [[1,1,true,true],[3,1,true,false],[3,2,false,false],[3,3,false,true]]){
+    const pages=Array.from({length:count},(_,i)=>({number:i+1,width:612,height:792,image:`/pagina-${i+1}.png`}));
+    const html=identificationWorkspace({...current,original_pages:pages},{originalPage:page},{initial});
+    const previous=html.match(/<button\b[^>]*data-page-step="-1"[^>]*>/)[0];
+    const next=html.match(/<button\b[^>]*data-page-step="1"[^>]*>/)[0];
+    assert.equal(previous.includes(' disabled'),atStart);
+    assert.equal(next.includes(' disabled'),atEnd);
+    assert.match(html,/aria-label="Subir en la página"/);
+    assert.match(html,/aria-label="Bajar en la página"/);
+  }
+});
 
 test('identificación integra tipo y contenido, y conserva todas las peticiones con una sola confirmación',()=>{
   const confirmation=initialConfirmation(current,initial,null,{workspace:true,suggestedReviewer:'José'});
@@ -235,6 +281,20 @@ test('consultar una etapa anterior conserva las etapas completadas y cuatro cont
   assert.match(html,/<strong>Redacción<\/strong><small>Completado/);
   assert.match(html,/<strong>Borrador<\/strong><small>Guardado/);
   assert.equal((html.match(/aria-current="step"/g)||[]).length,1);
+});
+
+test('el anillo sigue la tarea aunque se consulte otra etapa y desaparece al terminar',()=>{
+  const navigation={available:[true,true,true,false],completed:[true,true,true,false],running:[false,false,true,false]};
+  for(const stage of [0,2]){
+    const html=expedienteSteps(stage,{navigation});
+    assert.equal(html.match(/data-stage-running/g)?.length,1);
+    assert.match(html,/data-stage-running>3<\/span><span><strong>Redacción<\/strong><small>En preparación</);
+    assert.match(html,new RegExp(`current stage-${stage}" aria-current="step"`));
+  }
+  navigation.running[2]=false;
+  const saved=expedienteSteps(0,{navigation});
+  assert.doesNotMatch(saved,/data-stage-running/);
+  assert.match(saved,/<strong>Redacción<\/strong><small>Completado</);
 });
 
 test('la etapa actual sigue seleccionada al consultar una etapa completada',()=>{

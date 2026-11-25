@@ -1,9 +1,11 @@
+import {apiJson} from './http.js';
 import {esc} from './views.js';
 export const states={received:'Recibida · sin asignar',assigned:'Asignada · por iniciar',in_progress:'En gestión',pending:'Pendiente',ready_review:'Lista para revisión',closed:'Finalizada'};
-export const actor=()=>localStorage.getItem('pqrs-pilot-manager')||'';
-export async function request(url,body){
-  const response=await fetch(url,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await response.json();if(!response.ok)throw new Error(typeof data.detail==='string'?data.detail:'Revisa los campos e intenta nuevamente.');return data;
+let fiagaAdministrator = false;
+export const useFiagaAdministrator = () => { fiagaAdministrator = true; };
+export const actor=()=>fiagaAdministrator ? 'admin' : localStorage.getItem('pqrs-pilot-manager')||'';
+export function request(url,body){
+  return apiJson(url,{body,fallbackError:'Revisa los campos e intenta nuevamente.'});
 }
 export function managerOptions(managers,selected='',empty='Todos los gestores'){
   return `<option value="">${empty}</option>`+managers.map(m=>`<option value="${esc(m.id)}" ${m.id===selected?'selected':''}>${esc(m.name)}</option>`).join('');

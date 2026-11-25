@@ -1,7 +1,9 @@
 import {receiveDocument} from './receipt-flow.js';
 import {bindWorkActivity} from './work-activity.js';
 import {renderManagementTimes} from './management-times.js';
-import {actor,request as managementRequest} from './management-ui.js?v=phase2';
+import {actor,request as managementRequest,useFiagaAdministrator} from './management-ui.js?v=phase2';
+import {adminReviewUrl, enableAdminReview, fiagaProfile, mountAnalysisFrame} from './fiaga-admin-review.js';
+import {useAdminReviewerName} from './session-actor.js';
 import {createGmail} from './gmail-inbox.js?v=receipt-choice';
 import {createEvidenceUpload} from './evidence-upload.js';
 import {createLibrary} from './library.js?v=20260911-source-spinner';
@@ -14,6 +16,8 @@ import {setWorkspaceSection,selectWorkspaceInbox,syncWorkspaceQueue,workspaceHel
 import {bindOriginal,focusOriginal} from './original-viewer.js?v=20260911-scroll';
 import {esc, understanding, responses, office, sourcesView, blocked, paragraphs} from './views.js';
 const view=document.querySelector('#view'), drawer=document.querySelector('#drawer'), body=document.querySelector('#drawer-body');
+const entryView=new URLSearchParams(location.search).get('view');
+const adminReview = entryView==='revision-fiaga';
 if(!new URLSearchParams(location.search).get('case'))document.querySelector('.prototype').textContent='Petición de demostración · para trabajar con un documento real, usa «Cargar petición» o «Mis expedientes».';
 let homeVisible=false;
 let data, state={step:1,scenario:'ready',edits:{},confirm:false,approved:false}, busy=false, opener, timer;
@@ -23,14 +27,29 @@ function openGeneral(title,html){open(title,html);workActivity.setGeneralDrawer(
 const library=createLibrary({open:openGeneral,close:()=>drawer.close(),notice});
 const evidence=createEvidenceUpload({open,close:()=>drawer.close(),render:()=>render(),notice,getData:()=>data,changed:dirty=>{state.evidenceDirty=dirty;if(dirty)invalidate();}});
 let releaseSplitPane=()=>{};
-const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases,onPreanalysis:showSavedPreanalysis,onWorkCase:workActivity.setCase});
-const preanalysis=createPreanalysis({container:view,notice,onWorkCase:workActivity.setCase,onBack:showCases,onStarted:async id=>{preanalysis.leave();showWorkspace();homeVisible=false;history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id));await live.select(id);}});
+const live=createLive({open,close:()=>drawer.close(),notice,releaseDemo:()=>releaseSplitPane(),showMail:id=>gmail.showCase(id),onBrowse:showCases,onPreanalysis:showSavedPreanalysis,onPreanalysisNavigation:(markup,nav)=>preanalysis.updateNavigation(markup,nav),onWorkCase:workActivity.setCase,onFiagaHandoff:adminReview ? handoffReviewedDraft : null});
+const preanalysis=createPreanalysis({container:view,notice,onWorkCase:workActivity.setCase,onBack:showCases,onStarted:async id=>{preanalysis.leave();showWorkspace();homeVisible=false;history.replaceState(null,'',adminReview ? adminReviewUrl(id,1) : location.pathname+'?case='+encodeURIComponent(id));await live.select(id);}});
+async function handoffReviewedDraft(id, work, contentHash) {
+  const path='/api/cases/'+encodeURIComponent(id)+'/pool';
+  const state=await managementRequest(path);
+  if(state.stage==='admin_review'){
+    const workspace=await managementRequest('/api/cases/'+encodeURIComponent(id)+'/office/workspace');
+    if(workspace.revision!==work.revision)throw new Error('El borrador cambió en otra ventana. Vuelve a cargarlo para revisar la versión guardada.');
+    await managementRequest(path+'/import-review',{actor_id:'admin',revision:state.revision,workspace_revision:work.revision,content_hash:contentHash});
+  }
+  location.replace('/?expediente='+encodeURIComponent(id)+'#faltantes');
+}
 async function uploadToPool(file,metadata){
   const body=new FormData();body.set('file',file);for(const [key,value] of Object.entries(metadata))if(value)body.set(key,value);
-  const response=await fetch('/api/cases',{method:'POST',body});const result=await response.json();
-  if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Revisa los datos del expediente.');return result;
+  const response=await fetch('/api/cases',{method:'POST',body});let result=null;try{result=await response.json();}catch{result=null;}
+  if(!response.ok||!result)throw new Error(typeof result?.detail==='string'?result.detail:'Revisa los datos del expediente.');return result;
 }
-const gmail=createGmail({getManager:actor,open,close:()=>drawer.close(),notice,onOpenCase:async id=>{await showCases();await caseBrowser.received(id,'analyze');},onReceive:async(id,context)=>{
+async function openReceivedCase(id){
+  const current=await managementRequest('/api/cases/'+encodeURIComponent(id));
+  const parameter=current.receipt?.workflow==='fiaga'?'expediente':'case';
+  location.assign('/?'+new URLSearchParams({[parameter]:id}));
+}
+const gmail=createGmail({getManager:actor,open,close:()=>drawer.close(),notice,onOpenCase:openReceivedCase,onReceive:async(id,context)=>{
   if(context.mode==='analyze'&&!context.duplicate&&!context.linked)await receiveDocument({caseId:id},{mode:'analyze',manager:context.manager,request:managementRequest});
   if(!caseBrowser.visible())await showCases();
   await caseBrowser.received(id,context.mode==='analyze'&&!context.duplicate&&!context.linked?'analyze':'save');
@@ -45,22 +64,26 @@ async function showSavedPreanalysis(current,navigation,progress){
   document.body.classList.remove('expediente-page');document.body.classList.add('inbox-page');
   document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
   setWorkspaceSection('live-open');
-  history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(current.id)+'&view=preanalysis');
+  history.replaceState(null,'',adminReview ? adminReviewUrl(current.id,0) : location.pathname+'?case='+encodeURIComponent(current.id)+'&view=preanalysis');
   await preanalysis.show(current,{readOnly:true,navigation,progress,onStage:step=>{
     preanalysis.leave();homeVisible=false;showWorkspace();return live.resume(step);
   }});
 }
 
-async function openCase(id,options={}){
+async function openCase(id,options={},caseRecord){
   if(preanalysis.busy())return;
-  const current=await managementRequest('/api/cases/'+encodeURIComponent(id));
+  const current=caseRecord||await managementRequest('/api/cases/'+encodeURIComponent(id));
+  if(current.receipt?.workflow==='fiaga'&&!adminReview){
+    location.replace('/?'+new URLSearchParams({expediente:id}));return;
+  }
   if(!current.identification&&['uploaded','error'].includes(current.status)&&current.management?.owner_id){
-    if(live.leave()===false)return;homeVisible=true;releaseSplitPane();
+    if(live.active()&&live.leave()===false)return;homeVisible=true;releaseSplitPane();
     document.body.classList.add('inbox-page');document.querySelector('.steps').hidden=true;document.querySelector('.prototype').hidden=true;
-    setWorkspaceSection('live-open');history.replaceState(null,'',location.pathname+'?case='+encodeURIComponent(id)+'&view=preanalysis');
+    setWorkspaceSection('live-open');history.replaceState(null,'',adminReview ? adminReviewUrl(id,0) : location.pathname+'?case='+encodeURIComponent(id)+'&view=preanalysis');
     await preanalysis.show(current);return;
   }
-  const viewPreanalysis=new URLSearchParams(location.search).get('view')==='preanalysis';
+  const params=new URLSearchParams(location.search);
+  const viewPreanalysis=params.get('view')==='preanalysis'||adminReview&&params.get('step')==='0';
   preanalysis.leave();showWorkspace();homeVisible=false;await live.select(id,{...options,viewPreanalysis,caseRecord:current});
 }
 
@@ -75,6 +98,7 @@ document.querySelectorAll('[data-workspace-section]').forEach(button=>button.onc
 document.querySelector('#workspace-inbox').onclick=()=>showInboxSection('mine');
 function showWorkspace(){document.body.classList.remove('inbox-page');document.querySelector('.steps').hidden=false;document.querySelector('.prototype').hidden=false;}
 function showCases(options={}){
+  if(adminReview){location.assign('/#expedientes');return;}
   if(preanalysis.busy()){notice('Espera a que se confirme el inicio del análisis.');return;}
   if(caseBrowser.busy()){notice('Espera a que termine la recepción del documento.');return;}
   if(live.leave()===false)return;preanalysis.leave();document.body.classList.add('inbox-page');setWorkspaceSection('live-open');releaseSplitPane();homeVisible=true;if(drawer.open)drawer.close();
@@ -107,7 +131,10 @@ document.querySelector('#workspace-times').onclick=showManagementTimes;
 
 document.querySelector('#live-new').onclick=showHome;
 document.querySelector('#workspace-help').onclick=()=>{openGeneral('Ayuda del espacio de trabajo',workspaceHelp);drawer.querySelector('.eyebrow').textContent='GUÍA DE NAVEGACIÓN';};
-document.querySelector('#home-logo').onclick=event=>{if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;event.preventDefault();showCases();};
+document.querySelector('#home-logo').onclick=event=>{
+  if(entryView==='library' || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)return;
+  event.preventDefault();showCases();
+};
 function render(focus=false){
   if(live.active()||homeVisible)return;
   releaseSplitPane();
@@ -125,7 +152,7 @@ function render(focus=false){
 }
 function invalidate(){state.confirm=false;state.approved=false;}
 function go(step){if(busy)return;setWorkspaceSection('case');homeVisible=false;showWorkspace();state.step=step;render(true);}
-function open(title,html,{eyebrow}={}){delete drawer.dataset.initialHistory;drawer.classList.remove('petition-upload-window','cases-delete-window');opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=eyebrow||(html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA');document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;drawer.showModal();}
+function open(title,html,{eyebrow}={}){const wasOpen=drawer.open;delete drawer.dataset.initialHistory;drawer.classList.remove('petition-upload-window','cases-delete-window');if(!wasOpen)opener=document.activeElement;drawer.querySelector('.eyebrow').textContent=eyebrow||(html.includes('id="gmail-panel"')?'PETICIONES POR CORREO':'CONTEXTO DE LA RESPUESTA');document.querySelector('#drawer-title').textContent=title;body.innerHTML=html;if(!wasOpen)drawer.showModal();else document.querySelector('#drawer-title')?.focus?.();}
 drawer.addEventListener('close',()=>{if(opener?.isConnected&&opener.getClientRects().length)opener.focus();else if(opener?.closest('#workspace-menu'))document.querySelector('#workspace-toggle').focus();else document.querySelector('#main').focus();});
 drawer.addEventListener('close',()=>{if(!drawer.open)workActivity.setGeneralDrawer(false);});
 document.querySelector('#close').addEventListener('click',()=>drawer.close());
@@ -192,4 +219,50 @@ view.addEventListener('click',e=>{
     case 'missing':if(evidence.isConnected()){evidence.uploadForm(data.requests[1].request_id);break;}open('Aportar el documento solicitado',`<p><strong>Programa de Mecánica de Máquinas · 2019-2</strong></p><p>En el sistema integrado, aquí se adjuntaría el archivo o se registraría a quién solicitarlo. El pendiente seguiría abierto hasta que el documento se lea y se compruebe su relación con esta solicitud.</p><p class="muted">La maqueta no carga archivos ni da este pendiente por resuelto. Puedes volver a «Demo validada» en el selector para continuar probando.</p>`);break;
   }
 });
-try{const response=await fetch('./data.json');if(!response.ok)throw new Error('Snapshot unavailable');data=await response.json();const restoreUrl=location.href,selectedCase=new URLSearchParams(location.search).get('case'),section=new URLSearchParams(location.search).get('section'),times=new URLSearchParams(location.search).get('view')==='times';await live.init(false);if(selectedCase){await caseBrowser.initializeIdentity();history.replaceState(null,'',restoreUrl);await openCase(selectedCase);}else if(times){await caseBrowser.initializeIdentity();await showManagementTimes();}else{await showCases({section});await evidence.connect();}}catch{view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo cargar la demostración</h1><p>Recarga la página para volver a intentar abrir los datos de la maqueta.</p><button id="reload">Reintentar</button></div>';document.querySelector('#reload').addEventListener('click',()=>location.reload());document.querySelectorAll('header button,.sidebar button,.steps button').forEach(b=>b.disabled=true);}
+try{
+  const params=new URLSearchParams(location.search);
+  const selectedCase=params.get('case');
+  if(adminReview&&selectedCase){
+    const state=await managementRequest('/api/cases/'+encodeURIComponent(selectedCase)+'/pool');
+    if(state.stage!=='admin_review'||fiagaProfile()!=='admin'){
+      location.replace('/?expediente='+encodeURIComponent(selectedCase));
+    }else{
+      enableAdminReview(selectedCase);
+      useFiagaAdministrator();
+      useAdminReviewerName();
+      const record=await managementRequest('/api/cases/'+encodeURIComponent(selectedCase));
+      mountAnalysisFrame(record,state,notice);
+      document.title='Revisión del expediente · FIAGA';
+      await openCase(selectedCase,{},record);
+    }
+  }else if(entryView==='library'){
+    document.querySelector('.steps').hidden=true;
+    document.querySelector('.prototype').hidden=true;
+    document.querySelector('.workspace-rail').hidden=true;
+    view.innerHTML='<p><a href="/">Volver al inicio de FIAGA</a></p>';
+    const back=document.createElement('a');
+    back.href='/';back.textContent='Volver a FIAGA';
+    document.querySelector('.inbox-identity').replaceChildren(back);
+    await library.show();
+  }else{
+    const response=await fetch('./data.json');
+    if(!response.ok)throw new Error('Snapshot unavailable');
+    data=await response.json();
+    const restoreUrl=location.href;
+    await live.init(false);
+    if(selectedCase){
+      await caseBrowser.initializeIdentity();
+      history.replaceState(null,'',restoreUrl);
+      await openCase(selectedCase);
+    }else if(entryView==='times'){
+      await caseBrowser.initializeIdentity();
+      await showManagementTimes();
+    }else{
+      await showCases({section:params.get('section')});
+      await evidence.connect();
+    }
+  }
+}catch{
+  view.innerHTML='<div class="error-page" role="alert"><h1>No se pudo abrir la vista</h1><button id="reload">Reintentar</button> <a href="/">Volver a FIAGA</a></div>';
+  document.querySelector('#reload').addEventListener('click',()=>location.reload());
+}

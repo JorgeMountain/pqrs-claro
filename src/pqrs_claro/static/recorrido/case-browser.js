@@ -9,7 +9,8 @@ import {createManagerPicker} from './manager-picker.js?v=managers1';
 
 async function api(path,body,method='POST'){
   const response=await fetch('/api/cases'+path,body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const data=await response.json();if(!response.ok)throw new Error(data.detail||'No se pudo completar la operación.');return data;
+  let data=null;try{data=await response.json();}catch{data=null;}
+  if(!response.ok||!data)throw new Error(typeof data?.detail==='string'?data.detail:'No se pudo completar la operación.');return data;
 }
 const normalize=value=>String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
 export function createCaseBrowser({container,open,close,notice,onSelect,upload,gmail,onQueueChange=()=>{},onViewChange=()=>{}}){
@@ -125,7 +126,7 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
     if(finalizedId){tab='closed';page=1;scrollPosition=0;selectedId=finalizedId;panelMode='progress';filters={'cases-search':'','cases-status':'closed','cases-origin':'','cases-sort':'recent','cases-manager-filter':''};}
     container.innerHTML=inboxShell();root=container.querySelector('.case-browser');receipt=null;
     bindIdentity();
-    root.addEventListener('keydown',event=>{if(event.key==='Tab'&&!node('.inbox-panel').hidden&&globalThis.matchMedia?.('(max-width:760px)').matches){const focusable=[...node('.inbox-panel').querySelectorAll('button:not(:disabled),input:not(:disabled),a[href],summary')].filter(n=>n.getClientRects().length);const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}return;}if(event.key==='Escape'&&!busyReceipt()){closePanel();return;}const b=event.target.closest('[role=tab]');if(!b||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();tab=event.key==='Home'?'mine':event.key==='End'?'active':b.dataset.casesTab==='mine'?'active':'mine';page=1;paint();node('#inbox-tab-'+tab).focus();});
+    root.addEventListener('keydown',event=>{if(event.key==='Tab'&&!node('.inbox-panel').hidden&&globalThis.matchMedia?.('(max-width:760px)').matches){const focusable=[...node('.inbox-panel').querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],summary,[tabindex]:not([tabindex="-1"])')].filter(n=>n.getClientRects().length);if(!focusable.length)return;const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}return;}if(event.key==='Escape'&&!busyReceipt()){closePanel();return;}const b=event.target.closest('[role=tab]');if(!b||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();tab=event.key==='Home'?'mine':event.key==='End'?'active':b.dataset.casesTab==='mine'?'active':'mine';page=1;paint();node('#inbox-tab-'+tab).focus();});
     if(filters){node('#cases-manager-filter').innerHTML=managerOptions(managers,filters['cases-manager-filter']);for(const id of filterIds)node('#'+id).value=filters[id];}
     if(finalizedId){node('#inbox-filters').hidden=false;node('[data-cases-filters]').setAttribute('aria-expanded','true');}
     root.addEventListener('input',event=>{if(event.target.id==='cases-search'){page=1;paint();}});
@@ -138,12 +139,12 @@ export function createCaseBrowser({container,open,close,notice,onSelect,upload,g
       if(b.dataset.inboxDetail){selectedId=b.dataset.inboxDetail;return showPanel('progress');}
       if(b.hasAttribute('data-cases-filters')){const filters=node('#inbox-filters');filters.hidden=!filters.hidden;b.setAttribute('aria-expanded',String(!filters.hidden));return;}
       if(b.dataset.poolFilter){poolFilter=b.dataset.poolFilter;page=1;paint();return;}
-      if(b.dataset.managementEdit){const c=active.find(c=>c.id===b.dataset.managementEdit);return managementDialog(c,managers,{open,close,reload:load,notice});}
+      if(b.dataset.managementEdit){const c=active.find(c=>c.id===b.dataset.managementEdit);if(!c)return;return managementDialog(c,managers,{open,close,reload:load,notice});}
       if(b.dataset.managementAction){
-        const c=active.find(c=>c.id===b.dataset.id);b.disabled=true;
+        const c=active.find(c=>c.id===b.dataset.id);if(!c)return;b.disabled=true;
         try{if(!actor())throw new Error('Selecciona tu gestor antes de tomar o iniciar un expediente.');
           if(['continue','preanalysis'].includes(b.dataset.managementAction)){if(c.management.owner_id!==actor())throw new Error('Selecciona al gestor responsable o reasigna el expediente desde Detalles y gestión.');await onSelect(c.id,{step:caseStep(c,tab)});}
-          else{await managementRequest(`/api/cases/${c.id}/management`,{revision:c.management.revision,actor_id:actor(),action:b.dataset.managementAction});if(b.dataset.managementAction==='start'){selectedId=c.id;await load();showPanel('progress');}else {notice('Expediente asignado. Lo encontrarás en Mi trabajo.');await load();}}
+          else{await managementRequest(`/api/cases/${encodeURIComponent(c.id)}/management`,{revision:c.management.revision,actor_id:actor(),action:b.dataset.managementAction});if(b.dataset.managementAction==='start'){selectedId=c.id;await load();showPanel('progress');}else {notice('Expediente asignado. Lo encontrarás en Mi trabajo.');await load();}}
         }catch(e){if(visible())node('.cases-error').textContent=e.message;else notice(e.message);}finally{b.disabled=false;}return;
       }
       if(b.hasAttribute('data-cases-new'))return showPanel('receipt');

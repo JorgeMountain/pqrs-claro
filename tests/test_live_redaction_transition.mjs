@@ -70,7 +70,10 @@ globalThis.__deps={captureRedactionView:()=>null,restoreRedactionView(){},...sco
   readInitialDecision:()=>structuredClone(decision),initialConfirmation:(_c,_i,_d,{busy})=>busy?'Guardando revisión…':'Confirmar',updateInitialConfirmation(){},pilotReviewControls:()=>''};
 const source=(await fs.readFile(new URL('../src/pqrs_claro/static/recorrido/live.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 const {createLive}=await import('data:text/javascript;base64,'+Buffer.from('const {'+Object.keys(__deps).join(',')+'}=globalThis.__deps;\n'+source).toString('base64'));
-const live=createLive({open(){},close(){},notice(){},releaseDemo(){},onBrowse(){},onPreanalysis:async(current,navigation)=>savedPreanalysis={current,navigation}});
+const savedRailUpdates=[];
+const live=createLive({open(){},close(){},notice(){},releaseDemo(){},onBrowse(){},
+  onPreanalysis:async(current,navigation,progress)=>{savedPreanalysis={current,navigation,progress:structuredClone(progress)};},
+  onPreanalysisNavigation:(markup,progress)=>savedRailUpdates.push({markup,running:[...progress.running]})});
 const click=(action,index)=>listeners.click({target:{closest:()=>({dataset:{action,index}})}});
 const delayReads=()=>reads={initial:deferred(),sources:deferred(),drafts:deferred(),review:deferred()};
 const finishReads=()=>{reads.initial.resolve(intake);reads.sources.resolve({status:'running',results:[]});reads.drafts.resolve({status:'idle',results:[]});reads.review.resolve({status:'idle',requests:[]});};
@@ -278,3 +281,44 @@ assert.doesNotMatch(view.innerHTML,/Cita versión 1|Pendiente versión 1/);
 assert.equal(new URL(location.href).searchParams.get('request'),'P2');
 live.leave();
 console.log('PASS: corrections hide late and mixed results; a terminal change recovers from a transient read error without losing the selection.');
+
+// The saved preanalysis can observe another stage without opening its projections.
+record.id='observe-preparation';
+record.preparation={status:'running',stage:'sources'};
+delete record.office_progress;
+await live.select(record.id,{viewPreanalysis:true});
+assert.deepEqual(savedPreanalysis.progress.running,[false,false,true,false]);
+const railTimer=delay=>[...scheduled.values()].find(item=>item.delay===delay);
+const originalFetch=globalThis.fetch;
+const railReads=[];
+let railResponse;
+globalThis.fetch=async(url,options)=>{
+  if(url!=='/api/cases/'+record.id || options.method)throw Error('Unexpected navigation request: '+url);
+  railReads.push(url);
+  const value=await railResponse();
+  return {ok:true,json:async()=>value};
+};
+railResponse=async()=>{throw Error('Offline');};
+await railTimer(2000).callback();
+assert.deepEqual(savedRailUpdates.at(-1).running,[false,false,false,false]);
+railResponse=async()=>record;
+await railTimer(15000).callback();
+assert.deepEqual(savedRailUpdates.at(-1).running,[false,false,true,false]);
+record.preparation={status:'waiting_review',stage:'review'};
+await railTimer(2000).callback();
+assert.deepEqual(savedRailUpdates.at(-1).running,[false,false,false,false]);
+assert.equal(railTimer(2000),undefined,'Stop polling when the human review begins');
+assert.equal(railReads.length,3);
+live.leave();
+globalThis.fetch=originalFetch;
+record.preparation={status:'running',stage:'points'};
+await live.select(record.id,{viewPreanalysis:true});
+const pendingRail=deferred(),updatesBefore=savedRailUpdates.length;
+globalThis.fetch=async()=>({ok:true,json:()=>pendingRail.promise});
+const obsolete=railTimer(2000).callback();
+live.leave();
+pendingRail.resolve({...record,preparation:{status:'ready'}});
+await obsolete;
+assert.equal(savedRailUpdates.length,updatesBefore,'A late response must not repaint a closed consultation');
+globalThis.fetch=originalFetch;
+console.log('PASS: the saved stage polls only active work, stops for human review, and ignores late responses.');

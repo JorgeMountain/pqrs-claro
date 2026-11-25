@@ -1,6 +1,13 @@
 import {confirmationPanel} from './quick-confirmation.js';
 import {originalViewer} from './original-viewer.js';
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+export function safeUrl(value){
+  const url = String(value ?? '').trim();
+  if(!url) return '';
+  if(/^(\/(?!\/)|\.\/|files\/)/i.test(url)) return url;
+  try{const parsed = new URL(url); return parsed.protocol==='https:'||parsed.protocol==='http:'?url:'';}
+  catch{return '';}
+}
 export const stateLabel = (s, i) => s.edits[i] ? 'Confirmación pendiente' : i === 1 ? ({pending:'Confirmación pendiente',missing:'Documento faltante',error:'Error de análisis'}[s.scenario] || 'Respaldo encontrado') : 'Respaldo encontrado';
 export const blocked = s => s.evidenceDirty || s.scenario !== 'ready' || Object.keys(s.edits).length > 0;
 export const paragraphs = (r,s,i) => s.edits[i] ? s.edits[i].split(/\n\s*\n/) : r.paragraphs.map(p=>p.text);
@@ -38,5 +45,5 @@ export function office(data,s){
   <div class="quiet-panel"><h2>Archivos de la demo ya validada</h2><p>Estos archivos se generaron en la validación anterior. No incorporan cambios realizados en esta maqueta; la composición de arriba ilustra el nuevo recorrido.</p><div class="downloads"><a href="files/Oficio_demo_academica.docx" download>Descargar Word validado</a><a href="files/Oficio_demo_academica.pdf" target="_blank" rel="noopener">Abrir PDF validado ↗</a></div></div>`;
 }
 export function sourcesView(rows){
-  return rows.map(r=>`<section class="source"><h3>${esc(r.title)}</h3><small>Versión ${esc(r.version)} · ${r.location_kind==='section'?'Sección':'Página'} ${esc(r.page)}</small><blockquote>${esc(r.quote)}</blockquote>${r.reason?`<p class="reason">${esc(r.reason)}</p>`:''}${r.url?`<a href="${esc(r.url)}" target="_blank" rel="noopener">Abrir documento original ↗</a>`:''}</section>`).join('');
+  return rows.map(r=>{const href=safeUrl(r.url);return `<section class="source"><h3>${esc(r.title)}</h3><small>Versión ${esc(r.version)} · ${r.location_kind==='section'?'Sección':'Página'} ${esc(r.page)}</small><blockquote>${esc(r.quote)}</blockquote>${r.reason?`<p class="reason">${esc(r.reason)}</p>`:''}${href?`<a href="${esc(href)}" target="_blank" rel="noopener">Abrir documento original ↗</a>`:''}</section>`;}).join('');
 }

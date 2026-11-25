@@ -1,5 +1,16 @@
 import {esc} from './views.js';
 
+export function secondaryChecksNote(checks) {
+  if (!checks?.length) return '';
+  const items = checks.map(check => {
+    const state = check.resolution?.status === 'resolved' ? 'Resuelto' : 'Abierto';
+    return `<li><strong>${state}</strong> · ${esc(check.description)}</li>`;
+  }).join('');
+  return `<details class="pending-disclosure"><summary>Cotejo de fuentes complementarias</summary>
+    <p>La respuesta cuenta con respaldo independiente. Estos cotejos corresponden a otros documentos consultados.</p>
+    <ul>${items}</ul></details>`;
+}
+
 const reasons={
   invalid_passage_range:'La ubicación elegida queda fuera del fragmento o tiene las líneas invertidas.',
   unknown_candidate:'La IA seleccionó un fragmento que no estaba entre las fuentes disponibles.',
@@ -20,15 +31,43 @@ const codes={
   incomplete_response:'La evaluación de la IA quedó incompleta.',
 };
 
-export function failedRequests(mapping){
-  return (mapping.results||[]).filter(r=>r.status==='error');
+export function failedRequests(mapping,requestIds=null){
+  return (mapping?.results||[]).filter(r=>r.status==='error'&&(!requestIds||requestIds.has(r.request_id)));
 }
 
-export function retryFailedAction(mapping,running){
-  const count=failedRequests(mapping).length;
-  if(!count||running||mapping.status==='running'||mapping.stale)return '';
-  const label=count===1?'Reintentar la solicitud con error':`Reintentar las ${count} solicitudes con error`;
-  return `<section class="pre-draft-notice source-retry" role="status"><div class="source-retry-copy"><strong>${count===1?'1 solicitud no pudo analizarse':`${count} solicitudes no pudieron analizarse`}</strong><p>Se conservan los análisis terminados. Estos errores se corrigen en el análisis; no requieren una confirmación tuya.</p></div><button class="primary" data-action="live-retry-failed">${label}</button><button data-action="live-collections">Fuentes de consulta</button></section>`;
+export function failedDrafts(drafts,requestIds=null){
+  return (drafts?.results||[]).filter(r=>(r.status==='error'||Boolean(r.error))&&(!requestIds||requestIds.has(r.request_id)));
+}
+
+export function hasCompleteMapping(mapping,requestIds=null){
+  const results=mapping?.results||[];
+  if(!requestIds)return results.length>0;
+  if(results.length!==requestIds.size)return false;
+  const seen=new Set(results.map(r=>r.request_id));
+  return seen.size===requestIds.size&&[...requestIds].every(id=>seen.has(id));
+}
+
+export function retryFailedAction(mapping,running,{drafts=null,fiaga=false,requestIds=null}={}){
+  if(running||mapping?.status==='running'||mapping?.stale)return '';
+  const sourceCount=failedRequests(mapping,requestIds).length;
+  const collections=fiaga?'':'<button data-action="live-collections">Fuentes de consulta</button>';
+  if(sourceCount){
+    const complete=hasCompleteMapping(mapping,requestIds);
+    const action=complete?'live-retry-failed':'live-resume';
+    const label=complete?(sourceCount===1?'Reintentar la solicitud con error':`Reintentar las ${sourceCount} solicitudes con error`):'Continuar análisis y reintentar';
+    return `<section class="pre-draft-notice source-retry" role="status"><div class="source-retry-copy"><strong>${sourceCount===1?'1 solicitud no pudo analizarse':`${sourceCount} solicitudes no pudieron analizarse`}</strong><p>Se conservan los análisis terminados. Estos errores se corrigen en el análisis; no requieren una confirmación tuya.</p></div><button type="button" class="primary" data-action="${action}">${label}</button>${collections}</section>`;
+  }
+  if(drafts&&drafts.status!=='running'&&!drafts.stale){
+    const draftCount=failedDrafts(drafts,requestIds).length;
+    if(draftCount){
+      const label=draftCount===1?'Reintentar la solicitud con error':`Reintentar las ${draftCount} solicitudes con error`;
+      return `<section class="pre-draft-notice source-retry" role="status"><div class="source-retry-copy"><strong>${draftCount===1?'1 solicitud no pudo prepararse':`${draftCount} solicitudes no pudieron prepararse`}</strong><p>Se conservan los análisis y borradores terminados; reintentar no repite las solicitudes ya preparadas.</p></div><button type="button" class="primary" data-action="live-resume">${label}</button></section>`;
+    }
+    if(drafts.status==='failed'){
+      return '<section class="pre-draft-notice source-retry" role="status"><div class="source-retry-copy"><strong>No se pudo completar la preparación</strong><p>Se conserva el avance guardado; reintentar no repite las solicitudes ya preparadas.</p></div><button type="button" class="primary" data-action="live-resume">Reintentar preparación</button></section>';
+    }
+  }
+  return '';
 }
 
 export function analysisErrorDetail(finding){

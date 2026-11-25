@@ -10,13 +10,15 @@ export function createPendingActions({open,close,notice,getCase,onSaved,onRefres
   const drafts=new Map();
   const draftKey=(id,requestId,pendingId,action)=>[id,requestId,pendingId,action].join(':');
   async function api(url,body,method='POST') {
-    let response,value;
-    try{response=await fetch(url,{...(body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)});value=await response.json();}
+    let response;
+    try{response=await fetch(url,{...(body===undefined?{}:{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)});}
     catch(error){error.uncertain=body!==undefined&&method==='PUT';throw error;}
-    if(!response.ok){const error=new Error(response.status===409?'El expediente cambió. Tu información sigue en el panel; vuelve a consultar el punto antes de guardar.':typeof value.detail==='string'?value.detail:'Revisa los campos. No se pudo guardar.');error.uncertain=response.status===409;throw error;}
+    let value=null;
+    try{value=await response.json();}catch{value=null;}
+    if(!response.ok||!value){const error=new Error(response.status===409?'El expediente cambió. Tu información sigue en el panel; vuelve a consultar el punto antes de guardar.':typeof value?.detail==='string'?value.detail:'Revisa los campos. No se pudo guardar.');error.uncertain=response.status===409||(response.ok&&!value);throw error;}
     return value;
   }
-  const prefix=id=>`/api/cases/${id}/review`;
+  const prefix=id=>`/api/cases/${encodeURIComponent(id)}/review`;
   async function rowFor(id,requestId) {
     const result=await api(prefix(id));
     const row=result.requests.find(r=>r.request_id===requestId);
@@ -69,7 +71,7 @@ export function createPendingActions({open,close,notice,getCase,onSaved,onRefres
       if(action==='detail'){
         const r=p.resolution;
         if(!r)throw new Error('La decisión fue reabierta. Actualiza la respuesta.');
-        body.innerHTML=`<p data-pending-detail><strong>${esc(p.description)}</strong></p><p>${esc(r.note)}</p><p>${esc(r.by)} · ${esc(when(r.at))}</p>${(r.cited_chunk_ids||[]).map(chunk=>{const s=row.available_supports.find(s=>s.chunk_id===chunk);return s?`<section class="source"><strong>${esc(s.title)} · versión ${esc(s.version)}</strong><blockquote>${esc(s.quote)}</blockquote><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${id}">Abrir documento original ↗</a></section>`:'<p>El pasaje anterior ya no está disponible en las fuentes vigentes. Consulta el historial.</p>';}).join('')}${(r.cited_fact_ids||[]).map(fid=>{const f=row.facts.find(f=>f.id===fid);return f?`<blockquote>${esc(f.text)}</blockquote><p>Aporte de ${esc(f.author)} · ${esc(f.observed_at)}</p>`:'<p>El aporte anterior se conserva en el historial.</p>';}).join('')}`;
+        body.innerHTML=`<p data-pending-detail><strong>${esc(p.description)}</strong></p><p>${esc(r.note)}</p><p>${esc(r.by)} · ${esc(when(r.at))}</p>${(r.cited_chunk_ids||[]).map(chunk=>{const s=row.available_supports.find(s=>s.chunk_id===chunk);return s?`<section class="source"><strong>${esc(s.title)} · versión ${esc(s.version)}</strong><blockquote>${esc(s.quote)}</blockquote><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(s.source_id)}/original?case_id=${encodeURIComponent(id)}">Abrir documento original ↗</a></section>`:'<p>El pasaje anterior ya no está disponible en las fuentes vigentes. Consulta el historial.</p>';}).join('')}${(r.cited_fact_ids||[]).map(fid=>{const f=row.facts.find(f=>f.id===fid);return f?`<blockquote>${esc(f.text)}</blockquote><p>Aporte de ${esc(f.author)} · ${esc(f.observed_at)}</p>`:'<p>El aporte anterior se conserva en el historial.</p>';}).join('')}`;
         return;
       }
       if(row.stale&&action!=='open'){
@@ -79,7 +81,7 @@ export function createPendingActions({open,close,notice,getCase,onSaved,onRefres
       if(!isOpen(p)&&!['detail','open'].includes(action)){await savedDecision(row,p.resolution.action,marker);return;}
       if(action==='document_choice'){
         const source=documentTarget(row,p);if(!source)throw new Error('Consulta las fuentes para identificar la versión correcta.');
-        body.innerHTML=`<section class="pending-task-context"><h3>${esc(p.description)}</h3><p>Abre el archivo y elige la opción que pudiste comprobar.</p><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(source.source_id)}/original?case_id=${id}">Abrir ${esc(source.title)} ↗</a><div class="scope-actions dialog-actions"><button id="pending-back">Volver sin decidir</button>${source.document_status!=='draft'&&!/\bXXX+/i.test(source.title)?'<button id="pending-issued">Es la versión expedida</button>':''}<button id="pending-draft">Es un documento de trabajo</button></div></section>`;
+        body.innerHTML=`<section class="pending-task-context"><h3>${esc(p.description)}</h3><p>Abre el archivo y elige la opción que pudiste comprobar.</p><a target="_blank" rel="noopener" href="/api/sources/${encodeURIComponent(source.source_id)}/original?case_id=${encodeURIComponent(id)}">Abrir ${esc(source.title)} ↗</a><div class="scope-actions dialog-actions"><button id="pending-back">Volver sin decidir</button>${source.document_status!=='draft'&&!/\bXXX+/i.test(source.title)?'<button id="pending-issued">Es la versión expedida</button>':''}<button id="pending-draft">Es un documento de trabajo</button></div></section>`;
         body.querySelector('#pending-issued')?.addEventListener('click',()=>decide(requestId,pendingId,'issued'));body.querySelector('#pending-draft').onclick=()=>decide(requestId,pendingId,'draft');body.querySelector('#pending-back').onclick=close;return;
       }
       if(quick){

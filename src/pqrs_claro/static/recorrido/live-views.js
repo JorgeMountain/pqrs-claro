@@ -5,9 +5,9 @@ import {redactionWorkspace} from './redaction-workspace.js?v=reading-confirmatio
 export function identification(data,state,{summary='',initial={},requestContent={},confirmation=''}={}){
   const closed=data.management?.state==='closed';
   let html=understanding(data,state,{reviewable:!closed&&data.status==='needs_review'&&initial.status!=='running',processing:data.initial_review_enabled,beforeRequests:summary,requestContent});
-  html=html.replace('PETICIÓN DE DEMOSTRACIÓN','PETICIÓN · '+esc(data.subject));
-  html=html.replace('Solicitante de demostración · 10 de septiembre de 2026',esc([data.requester,data.document_date].filter(Boolean).join(' · ')||data.filename));
-  html=html.replace('3 solicitudes identificadas',data.requests.length===1?'1 solicitud identificada':`${data.requests.length} solicitudes identificadas`);
+  html=html.replace('PETICIÓN DE DEMOSTRACIÓN',()=>'PETICIÓN · '+esc(data.subject));
+  html=html.replace('Solicitante de demostración · 10 de septiembre de 2026',()=>esc([data.requester,data.document_date].filter(Boolean).join(' · ')||data.filename));
+  html=html.replace('3 solicitudes identificadas',()=>data.requests.length===1?'1 solicitud identificada':`${data.requests.length} solicitudes identificadas`);
   const confirmed=data.status==='confirmed';
   const action=data.initial_review_enabled&&(data.automatic_initial_review!==false||confirmed)
     ?'<button data-action="live-initial">Ver resumen del trámite ↑</button>'
@@ -15,8 +15,8 @@ export function identification(data,state,{summary='',initial={},requestContent=
   const message=closed?'Expediente finalizado. Puedes consultar el análisis guardado.':data.initial_review_enabled
     ?data.automatic_initial_review===false&&!confirmed?'Confirma las solicitudes para analizar su trámite en esta instancia.':initial.status==='running'?'Estamos analizando el documento y sus peticiones.':initial.can_prepare?'Decisión guardada. Puedes continuar con las respuestas.':'Revisa el resumen y los tipos sugeridos; confirma todo al terminar.'
     :confirmed?'Identificación confirmada.':'Al confirmar, se buscarán las fuentes. Revisa los puntos necesarios; las solicitudes listas se redactan automáticamente.';
-  if(confirmation)html=html.replace('<div class="actionbar"><p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button></div>',confirmation);
-  else html=html.replace('<p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button>',`<p>${message}</p>${action}`);
+  if(confirmation)html=html.replace('<div class="actionbar"><p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button></div>',()=>confirmation);
+  else html=html.replace('<p>Esta maqueta parte de la identificación ya confirmada.</p><button class="primary" data-action="prepare">Preparar las respuestas →</button>',()=>`<p>${message}</p>${action}`);
   if(!closed&&!confirmed&&initial.status!=='running')html+=`<div class="actionbar"><button data-action="live-correct">Corregir una solicitud</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
   return html;
 }
@@ -29,7 +29,7 @@ export function responses(current,job,mapping,drafts,review,options={}){
   if(running)html+=preparationProgress(job,mapping,current.request_count,drafts);
   if(job.status==='waiting_review')html+=`<section class="pre-draft-notice"><strong>Revisa los puntos antes de redactar</strong><p>Abre los puntos de cada solicitud, confirma su respaldo o explica por qué no aplican. Las solicitudes listas se redactan automáticamente; las demás conservan su avance.</p></section>`;
   if(job.error)html+=`<div class="alert" role="alert">${esc(job.error)}</div>`;
-  const retryAction=retryFailedAction(mapping,running);
+  const retryAction=retryFailedAction(mapping,running,{drafts,requestIds:new Set((current.identification?.requests||[]).map(r=>r.id))});
   html+=retryAction;
   if(!running&&!retryAction&&(job.status!=='ready'||job.stale||mapping.stale))html+=`<div class="actionbar"><p>Se conserva el avance guardado.</p><button class="primary" data-action="live-resume">${job.status==='idle'?'Continuar con las respuestas':job.status==='waiting_review'?'Reintentar o actualizar fuentes':'Continuar o actualizar preparación'}</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
   html+=current.identification.requests.map((r,i)=>{

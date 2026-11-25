@@ -145,6 +145,8 @@ test('solo la acción confirmada aprueba antes de generar y editar vuelve a inva
   const writes=h.calls.filter(call=>call.method!=='GET');
   assert.deepEqual(writes.map(call=>call.url.split('/').at(-1)),['approve','preview','generate']);
   assert.equal(writes[0].body.confirmed,true);assert.equal(writes[0].body.approved_by,'José');
+  assert.ok(h.summaries.some(value=>value.running),'El indicador acompaña la generación del oficio');
+  assert.equal(h.summaries.at(-1).running,false);
   assert.match(h.field('[data-downloads]').innerHTML,/Descargar Word/);assert.match(h.field('[data-downloads]').innerHTML,/Descargar PDF/);
   assert.equal(h.summaries.at(-1).draftComplete,true);
   assert.match(h.field('[data-draft-progress]').innerHTML,/Versión final generada/);

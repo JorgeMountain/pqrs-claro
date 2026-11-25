@@ -10,3 +10,17 @@ section.preanalysis{--pre-purple:var(--color-purple);--pre-green:var(--color-gre
 .inbox-statesection.preanalysis{background:var(--color-purple-soft);color:var(--color-purple-ink)}
 
 @media(min-width:1400px){.inbox-page:has(.preanalysis) .shell.workspace-expanded{grid-template-columns:279px minmax(0,1fr)}}
+.pre-language-evidence { margin: 8px 0; padding: 0; list-style: none; }
+.pre-language-evidence li + li { margin-top: 8px; }
+.pre-language-evidence q { display: block; padding-left: 10px; border-left: 2px solid var(--color-purple-line); overflow-wrap: anywhere; }
+.pre-steps [data-pre-working-label][hidden] { display: none; }
+
+.pre-viewer-tools { flex-wrap: wrap; gap: 4px 10px; }
+.pre-viewer-tools .document-page-nav label { gap: 6px; }
+.pre-viewer-tools .pre-zoom { margin: 0; padding: 0 8px; gap: 4px; }
+.pre-viewer-tools .pre-zoom button {
+  display: inline-grid; place-items: center; min-width: 32px; min-height: 34px; padding: 4px;
+  border: 0; border-radius: 4px; box-shadow: none; color: var(--color-secondary); background: transparent;
+}
+.pre-viewer-tools .pre-zoom button:hover:enabled { background: var(--color-neutral); }
+.pre-viewer-tools .pre-zoom button:disabled { opacity: .4; cursor: default; }

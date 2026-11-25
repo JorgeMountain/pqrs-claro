@@ -86,6 +86,7 @@ export function identificationDetails(current,value,form){
 }
 export function initialRequestContent(current,value,draft,{workspace=false}={}){
   const report=value.report,content={};
+  const reviewerRole=current.receipt?.workflow==='fiaga'?'administrador':'gestor';
   if(value.status==='running'){
     for(const r of current.identification.requests)content[r.id]={header:`<span class="intake-type" role="status">${value.analysis_work?.reused.includes(r.id)?'Resultado conservado':'Clasificando petición…'}</span>`,details:''};
     return content;
@@ -93,22 +94,22 @@ export function initialRequestContent(current,value,draft,{workspace=false}={}){
   if(!report?.document||value.legacy_report)return content;
   const form=currentDraft(current,value,draft),valid=initialReady(value)&&!current.analysis_running&&!current.error;
   for(const [i,row] of report.requests.entries()){
-    const request=current.identification.requests.find(r=>r.id===row.request_id),decision=(form?.requests||value.decisions||[]).find(r=>r.request_id===row.request_id),repetition=row.checks.find(c=>c.key==='repetition');
-    const canReiterate=!['unavailable','unverified'].includes(repetition.state)&&repetition.sources.some(s=>s.category==='historical_response');
+    const request=current.identification.requests.find(r=>r.id===row.request_id),decision=(form?.requests||value.decisions||[]).find(r=>r.request_id===row.request_id),repetition=row.checks.find(c=>c.key==='repetition'),repState=repetition?.state||'unavailable';
+    const canReiterate=!['unavailable','unverified'].includes(repState)&&Boolean(repetition?.sources?.some(s=>s.category==='historical_response'));
     if(workspace){
       const note=isAutomaticDecisionNote(decision?.note)?'':decision?.note||'';
       const routeOptions=canReiterate?['continue','reiterate','specialist']:['continue','specialist'];
       content[row.request_id]={
         header:`<label class="expediente-field-row"><span>Tipo propuesto</span><select form="initial-decision-form" data-initial-type="${i}" name="type-${i}" aria-label="Tipo de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(Object.keys(typeNames),decision?.petition_type||row.petition_type).replace('>Información</option>','>Petición de información</option>')}</select></label>`,
         route:`<label class="expediente-field-row"><span>Ruta sugerida</span><select form="initial-decision-form" name="route-${i}" aria-label="Ruta de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(routeOptions,decision?.route||row.proposed_route).replaceAll('Continuar a preparar respuestas','Continuar a redacción')}</select></label>`,
-        notes:`<details class="expediente-note-options" data-initial-disclosure="observation-${esc(row.request_id)}" ${note?'open':''}><summary>${note?'Observación del gestor':'Añadir observación'}</summary><label class="expediente-observation">Observaciones del gestor<textarea form="initial-decision-form" name="note-${i}" maxlength="5000" rows="2" placeholder="Añade una aclaración si es necesaria" ${valid?'':'disabled'}>${esc(note)}</textarea></label></details>`,
+        notes:`<details class="expediente-note-options" data-initial-disclosure="observation-${esc(row.request_id)}" ${note?'open':''}><summary>${note?'Observación del '+reviewerRole:'Añadir observación'}</summary><label class="expediente-observation">Observaciones del ${reviewerRole}<textarea form="initial-decision-form" name="note-${i}" maxlength="5000" rows="2" placeholder="Añade una aclaración si es necesaria" ${valid?'':'disabled'}>${esc(note)}</textarea></label></details>`,
         details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>${value.analysis_scope==='petition_types_v1'?'Ver clasificación':'Ver fundamentos y antecedentes'}</summary>${classificationDetails(row)}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}${communication(row,decision,i)}</details>`,
       };
       continue;
     }
     content[row.request_id]={
       header:`<label class="intake-type">${value.decisions?'Tipo de petición':classifierIdentity(row.classification_model)?.jev?'Tipo sugerido · JEV':'Tipo sugerido'}<select form="initial-decision-form" data-initial-type="${i}" name="type-${i}" aria-label="Tipo de petición: ${esc(request?.title||row.request_id)}" ${valid?'':'disabled'}>${choices(Object.keys(typeNames),decision?.petition_type||row.petition_type)}</select></label>${value.stale?'<p class="muted">Clasificación anterior · actualiza el análisis.</p>':''}`,
-      details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>Ver clasificación${repetition.state==='unavailable'?'':' y antecedentes'} y decisión</summary>${classificationDetails(row)}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}<fieldset class="intake-request-fields" ${valid?'':'disabled'}><legend class="sr-only">Decisión de la petición ${esc(request?.label||row.request_id)}</legend>${communication(row,decision,i)}${decisionFields(row,decision,i,canReiterate?['continue','reiterate','specialist']:['continue','specialist'],'Ruta de esta petición')}</fieldset></details>`,
+      details:`<details class="intake-petition-details" data-initial-disclosure="request-${esc(row.request_id)}"><summary>Ver clasificación${repState==='unavailable'?'':' y antecedentes'} y decisión</summary>${classificationDetails(row)}${checksView(row.checks.filter(c=>c.key!=='repetition'||c.state!=='unavailable'),current.id,row.request_id)}<fieldset class="intake-request-fields" ${valid?'':'disabled'}><legend class="sr-only">Decisión de la petición ${esc(request?.label||row.request_id)}</legend>${communication(row,decision,i)}${decisionFields(row,decision,i,canReiterate?['continue','reiterate','specialist']:['continue','specialist'],'Ruta de esta petición')}</fieldset></details>`,
     };
   }
   return content;

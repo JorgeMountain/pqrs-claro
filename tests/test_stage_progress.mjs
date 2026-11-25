@@ -43,6 +43,18 @@ test('un error o una consulta del preanálisis no muestran las comprobaciones an
   assert.doesNotMatch(preanalysisProgress({status:'loading',checks:saved}),/0 de 3|aria-valuenow/);
 });
 
+test('el fallo de actualización distingue los resultados conservados de una revisión sin resultados',()=>{
+  const checks={requester:{state:'unverified'},respect:{state:'attention'},integrity:{state:'pass'}};
+  const record={status:'ready',error:'Reintento fallido',checks};
+  const retained=preanalysisProgress({...record,retained_checks:true});
+  assert.match(retained,/resultados guardados/);
+  assert.match(retained,/aria-valuenow="2"/);
+  const unavailable=preanalysisProgress({...record,checks:{}});
+  assert.match(unavailable,/Verificación automática pendiente/);
+  assert.match(unavailable,/aria-valuenow="0"/);
+  assert.doesNotMatch(unavailable,/resultados guardados|source-spinner/);
+});
+
 test('identificación no supone el total de peticiones antes de terminar la extracción',()=>{
   const html=identificationProgress({status:'identifying'},{});
   assert.match(html,/Identificando las peticiones/);
@@ -103,6 +115,18 @@ test('el borrador no está generado por estar comprobado, confirmado o tener cam
   const dirty=draftProgress(work,model,{generated:true,dirty:true});
   assert.match(dirty,/Cambios pendientes de comprobar/);
   assert.doesNotMatch(dirty,/Versión final generada|aria-valuenow/);
+});
+
+test('el avance distingue una respuesta pendiente de comprobación de un ajuste que resolver',()=>{
+  const work={requests:[{request_id:'P1',status:'editing',paragraphs:[{text:'Respuesta guardada.'}]}]};
+  const waiting=draftProgress(work,deriveDraftReview(work),{total:1});
+  assert.match(waiting,/0 de 1 respuesta comprobada/);
+  assert.match(waiting,/Pendiente de comprobación/);
+  assert.doesNotMatch(waiting,/ajuste pendiente|Falta preparar las respuestas|Versión final generada/);
+  work.requests.push({request_id:'P2',status:'editing',paragraphs:[]});
+  const incomplete=draftProgress(work,deriveDraftReview(work),{total:2});
+  assert.match(incomplete,/1 ajuste pendiente/);
+  assert.doesNotMatch(incomplete,/2 ajustes pendientes/);
 });
 
 test('una respuesta ausente no desaparece del total y el borrador vacío no anuncia finalización',()=>{

@@ -22,6 +22,16 @@ export function selectionPoint(root){
   return {block:Number(el.dataset.block),start:offset+fragmentText(start.cloneContents()).length,end:offset+fragmentText(end.cloneContents()).length};
 }
 
+// Only move the preview; the adjoining review panel keeps its reading position.
+export function revealPage(canvas,element){
+  const frame=element.closest('.oficio-page-frame');
+  const box=frame.getBoundingClientRect();
+  const inset=canvas.classList.contains('fit-page')
+    ? (canvas.clientHeight-box.height)/2
+    : parseFloat(getComputedStyle(canvas).paddingTop);
+  canvas.scrollTop+=box.top-canvas.getBoundingClientRect().top-canvas.clientTop-inset;
+}
+
 export function focusPoint(root,point){
   if(!point)return;
   const fragments=[...root.querySelectorAll(`[data-block="${point.block}"]`)];
@@ -37,7 +47,9 @@ export function focusPoint(root,point){
   first.focus({preventScroll:true});
   const range=document.createRange();range.setStart(...locate(first,point.start));range.setEnd(...locate(last,point.end));
   const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
-  const canvas=root.querySelector('.document-canvas'),rect=range.getBoundingClientRect(),viewport=canvas.getBoundingClientRect();
+  const canvas=root.querySelector('.document-canvas');
+  if(canvas.classList.contains('fit-page')){revealPage(canvas,first);return;}
+  const rect=range.getBoundingClientRect(),viewport=canvas.getBoundingClientRect();
   if(rect.bottom>viewport.bottom-20)canvas.scrollTop+=rect.bottom-viewport.bottom+28;
   else if(rect.top<viewport.top+12)canvas.scrollTop+=rect.top-viewport.top-20;
 }
@@ -51,7 +63,8 @@ export function paginate(root,blocks,makeBlock,letterhead){
     body=document.createElement('div');body.className='oficio-page-body';
     if(hasUdeaLayout(letterhead))addUdeaLetterhead(sheet);
     else body.innerHTML='<div class="oficio-letterhead"><img src="/logo.png" alt="Universidad de Antioquia · Facultad de Ingeniería" width="260" height="78"></div>';
-    sheet.append(body);pages.append(sheet);
+    const frame=document.createElement('div');frame.className='oficio-page-frame';
+    sheet.append(body);frame.append(sheet);pages.append(frame);
     const number=document.createElement('span');number.className='oficio-page-number';number.setAttribute('aria-hidden','true');sheet.append(number);
   }
   const fits=()=>body.scrollHeight<=body.clientHeight+1;
@@ -86,6 +99,5 @@ export function paginate(root,blocks,makeBlock,letterhead){
     }while(rest.length);
   }
   const total=pages.children.length;
-  [...pages.children].forEach((sheet,i)=>sheet.querySelector('.oficio-page-number').textContent=`${i+1} / ${total}`);
-  root.querySelector('[data-page-count]').textContent=`${total} ${total===1?'página':'páginas'}`;
+  [...pages.children].forEach((frame,i)=>frame.querySelector('.oficio-page-number').textContent=`${i+1} / ${total}`);
 }

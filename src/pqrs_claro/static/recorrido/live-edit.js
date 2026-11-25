@@ -1,3 +1,4 @@
+import {safeJson} from './http.js';
 import {bindActor} from './session-actor.js';
 import {esc} from './views.js';
 
@@ -5,7 +6,7 @@ import {esc} from './views.js';
 export function createResponseEditor({open,close,notice,getCase,onSaved}) {
   const drafts=new Map();
   const changedText=new Map(), scopes=new Map();
-  let lastActor='';
+  let lastActor='', editSeq=0, editController=null;
   const dirty=draft=>JSON.stringify(draft.paragraphs)!==draft.original;
   const pending=draft=>dirty(draft)||Boolean(draft.uncertain);
   const canonical=paragraphs=>JSON.stringify(paragraphs.map(p=>({
@@ -28,9 +29,10 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
     // A lost PUT response can leave the server ahead of this local revision.
     // Only adopt that revision when the previously submitted content and author match.
     if(draft.uncertain){
-      const response=await fetch(`/api/cases/${caseId}/review`,{signal:AbortSignal.timeout(60000)});
-      if(!response.ok)throw new Error('No se pudo comprobar el guardado anterior. El texto local se conserva; vuelve a intentar.');
-      const review=await response.json(),attempt=draft.uncertain;
+      const response=await fetch(`/api/cases/${encodeURIComponent(caseId)}/review`,{signal:AbortSignal.timeout(60000)});
+      const review=await safeJson(response);
+      if(!response.ok||!review)throw new Error('No se pudo comprobar el guardado anterior. El texto local se conserva; vuelve a intentar.');
+      const attempt=draft.uncertain;
       checkScope(caseId,scope);
       const saved=review.requests.find(row=>row.request_id===requestId);
       if(saved&&!saved.scope_reduced&&saved.revision>attempt.revision&&saved.edited_by===attempt.edited_by&&canonical(saved.paragraphs)===canonical(attempt.paragraphs)){
@@ -40,18 +42,18 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
     }
     const body={revision:draft.revision,edited_by:draft.actor.trim(),paragraphs:structuredClone(draft.paragraphs),pending_resolutions:[],
       ...(draft.replaceWithdrawn?{replace_withdrawn_paragraphs:true}:{})};
-    let result,value;
+    let result;
     try{
-      result=await fetch(`/api/cases/${caseId}/review/requests/${encodeURIComponent(requestId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
-      value=await result.json();
+      result=await fetch(`/api/cases/${encodeURIComponent(caseId)}/review/requests/${encodeURIComponent(requestId)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
     }catch{
       draft.uncertain=body;
       throw new Error('No se pudo confirmar el guardado. El texto local se conserva; vuelve a intentar.');
     }
+    const value=await safeJson(result);
     checkScope(caseId,scope);
-    if(!result.ok){
-      draft.uncertain=result.status>=500?body:null;
-      const error=new Error(result.status===409?'La respuesta cambió en otra sesión. Tu texto local se conserva; abre Editar respuesta para revisar la versión guardada.':typeof value.detail==='string'?value.detail:'No se pudo guardar. El texto local se conserva.');
+    if(!result.ok||!value){
+      draft.uncertain=result.status>=500||!value?body:null;
+      const error=new Error(result.status===409?'La respuesta cambió en otra sesión. Tu texto local se conserva; abre Editar respuesta para revisar la versión guardada.':typeof value?.detail==='string'?value.detail:'No se pudo guardar. El texto local se conserva.');
       error.conflict=result.status===409;throw error;
     }
     draft.revision=value.revision;draft.original=JSON.stringify(body.paragraphs);draft.uncertain=null;
@@ -82,16 +84,23 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
   async function edit(requestId) {
     const caseId=getCase()?.id;
     if(!caseId)return;
+    const seq=++editSeq;
+    editController?.abort();
+    const controller=new AbortController();
+    editController=controller;
     const key=caseId+':'+requestId;
     const scope=scopes.get(caseId);
     open('Editar respuesta','<p id="live-response-loading" role="status">Cargando la respuesta guardada…</p>');
     const drawer=document.querySelector('#drawer-body');
+    const marker=drawer.querySelector('#live-response-loading');
+    const stillActive=()=>seq===editSeq&&marker?.isConnected&&getCase()?.id===caseId&&scope===scopes.get(caseId)&&document.querySelector('#drawer')?.open;
     try {
       if(drafts.get(key)?.saving)await drafts.get(key).saving;
-      const response=await fetch(`/api/cases/${caseId}/review`);
-      if(!response.ok)throw new Error('No se pudo cargar la respuesta. Vuelve a intentarlo.');
-      const review=await response.json();
-      if(getCase()?.id!==caseId||scope!==scopes.get(caseId)||!document.querySelector('#drawer').open)return;
+      if(!stillActive())return;
+      const response=await fetch(`/api/cases/${encodeURIComponent(caseId)}/review`,{signal:controller.signal});
+      const review=await safeJson(response);
+      if(!stillActive())return;
+      if(!response.ok||!review)throw new Error(typeof review?.detail==='string'?review.detail:'No se pudo cargar la respuesta. Vuelve a intentarlo.');
       const row=review.requests.find(r=>r.request_id===requestId);
       if(!row)throw new Error('La respuesta todavía no está guardada para edición.');
       let draft=drafts.get(key);
@@ -145,7 +154,7 @@ export function createResponseEditor({open,close,notice,getCase,onSaved}) {
         } finally {saving=false;}
       };
       form.querySelector('textarea,input')?.focus();
-    } catch(error) {if(scope===scopes.get(caseId))drawer.innerHTML=`<p role="alert">${esc(error.message)}</p>`;}
+    } catch(error) {if(error?.name!=='AbortError'&&stillActive())drawer.innerHTML=`<p role="alert">${esc(error.message)}</p>`;}
   }
   function discardScope(caseId){
     scopes.set(caseId,(scopes.get(caseId)||0)+1);

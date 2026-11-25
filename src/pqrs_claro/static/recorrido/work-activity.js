@@ -39,35 +39,21 @@ export function bindWorkActivity({view, actor, notice}) {
   const externalButton = bar.querySelector('[data-external-work]');
   bar.querySelector('[role="status"]').textContent = labels.away;
   let record = null, target = null, generalDrawer = false, focused = document.hasFocus();
-  let mode = '', status = '', openFormId = '';
+  let openFormId = '';
   const clock = createWorkClock({
     post: (id, body) => post(id, 'work-session', body, body.event === 'stop'),
     status: paint,
   });
 
   function paint(value) {
-    status = value;
     bar.querySelector('[role="status"]').textContent = labels[value];
     confirmButton.hidden = value !== 'unconfirmed';
     externalButton.disabled = value === 'unavailable';
-    if (value !== 'unconfirmed' && mode === 'reading' && dialog.open) dialog.close();
-    if (value === 'unconfirmed' && !dialog.open && focused && !document.hidden) askReading();
-  }
-
-  function askReading() {
-    mode = 'reading';
-    dialog.innerHTML = `<h2 id="work-activity-title">¿Sigues trabajando en el expediente?</h2>
-      <p>Han pasado dos minutos sin señales de actividad. El tiempo queda sin confirmar hasta que retomes el registro.</p>
-      <div class="dialog-actions"><button type="button" class="primary" data-resume>Sí, continúo</button><button type="button" data-dismiss>Cerrar aviso</button></div>`;
-    dialog.querySelector('[data-resume]').onclick = () => { void clock.confirm(); };
-    dialog.querySelector('[data-dismiss]').onclick = () => dialog.close();
-    if (!dialog.open) dialog.showModal();
   }
 
   function declareWork() {
     if (!target) return;
     const {caseId, actorId} = target;
-    mode = 'external';
     const entryId = openFormId = workId();
     dialog.innerHTML = `<h2 id="work-activity-title">Registrar trabajo externo</h2>
       <p>Registra una actividad realizada fuera del expediente, como una llamada. Se mostrará por separado del tiempo estimado en pantalla.</p>
@@ -123,11 +109,7 @@ export function bindWorkActivity({view, actor, notice}) {
   }
 
   dialog.addEventListener('close', () => {
-    if (dialog.open) return;
-    const wasExternal = mode === 'external';
-    openFormId = '';
-    mode = '';
-    if (wasExternal && status === 'unconfirmed' && target && focused && !document.hidden) askReading();
+    if (!dialog.open) openFormId = '';
   });
   externalButton.onclick = declareWork;
   confirmButton.onclick = () => { void clock.confirm(); };
