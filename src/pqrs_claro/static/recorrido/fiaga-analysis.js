@@ -42,6 +42,16 @@ export function identificationPanel(detail, number = 1) {
   }, notes);
 }
 
+function sourceItem(source, caseId) {
+  const title = source.title || source.filename || 'Documento fuente';
+  const url = source.source_id ? `/api/sources/${encodeURIComponent(source.source_id)}/original?case_id=${encodeURIComponent(caseId)}`
+    : String(source.url || '').startsWith('/api/') ? source.url : '';
+  return `<li>${url ? `<a target="_blank" rel="noopener" href="${esc(url)}">${esc(title)} ↗</a>` : esc(title)}
+    ${source.department ? ' · ' + esc(source.department) : ''}${source.page ? ' · pág. ' + esc(source.page) : ''}
+    ${source.line_start ? ' · línea ' + esc(source.line_start) + (source.line_end > source.line_start ? '–' + esc(source.line_end) : '') : ''}
+    ${source.quote ? `<blockquote>${esc(source.quote)}</blockquote>` : ''}</li>`;
+}
+
 function sourceList(request, caseId, state) {
   const sources = [...(request.sources || []), ...(request.contribution_sources || [])];
   if (!sources.length) {
@@ -50,15 +60,15 @@ function sourceList(request, caseId, state) {
     return `<p class="exp-muted">${message}</p>`;
   }
   return `<details class="sources"><summary>Consultar fuentes y aportes (${sources.length})</summary><ul>
-    ${sources.map(source => {
-      const title = source.title || source.filename || 'Documento fuente';
-      const url = source.source_id ? `/api/sources/${encodeURIComponent(source.source_id)}/original?case_id=${encodeURIComponent(caseId)}`
-        : String(source.url || '').startsWith('/api/') ? source.url : '';
-      return `<li>${url ? `<a target="_blank" rel="noopener" href="${esc(url)}">${esc(title)} ↗</a>` : esc(title)}
-        ${source.department ? ' · ' + esc(source.department) : ''}${source.page ? ' · pág. ' + esc(source.page) : ''}
-        ${source.line_start ? ' · línea ' + esc(source.line_start) + (source.line_end > source.line_start ? '–' + esc(source.line_end) : '') : ''}
-        ${source.quote ? `<blockquote>${esc(source.quote)}</blockquote>` : ''}</li>`;
-    }).join('')}</ul></details>`;
+    ${sources.map(source => sourceItem(source, caseId)).join('')}</ul></details>`;
+}
+
+function gapResolutionHistory(request, caseId, openGaps) {
+  if (!request.gap_resolutions?.length) return '';
+  return `<details class="sources"><summary>Historial de cierres con respaldo</summary><ul>
+    ${request.gap_resolutions.map(({gap, citations}) => `<li><strong>${esc(gap)}</strong>${openGaps.includes(gap) ? ' · Reabierto' : ''}
+      <ul>${citations.map(citation => sourceItem(citation, caseId)).join('')}</ul></li>`).join('')}
+    </ul></details>`;
 }
 
 function petitionCorrection(request, gaps) {
@@ -100,6 +110,7 @@ export function writingPanel(detail, isAdmin, number = 1) {
       ${secondaryChecksNote(request.secondary_source_checks)}
       <h4>Respuesta del borrador</h4><p class="petition-answer">${esc(request.answer || answerEmpty)}</p>
       ${gaps.length ? `<div class="gap"><strong>Falta por resolver</strong><ul>${gaps.map(gap => `<li>${esc(gap)}</li>`).join('')}</ul></div>` : ''}
+      ${gapResolutionHistory(request, detail.case_id, gaps)}
       ${request.human_review ? `<p class="help">Corrección del administrador · ${esc(request.human_review.reason)}</p>` : ''}
       ${isAdmin && ['initial_review', 'final_review'].includes(detail.stage) ? petitionCorrection(request, gaps) : ''}`;
   });

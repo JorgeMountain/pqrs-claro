@@ -316,8 +316,8 @@ class PoolDrafts:
                 with progress_step("integration", row["id"]):
                     self._require_scope(case_id, collections)
                     inputs = by_request[row["id"]]
-                    key = digest(["v1", self.settings.model, type(engine).__qualname__,
-                                  collections, row, inputs])
+                    key = digest(["per-gap-citations-v2", self.settings.model,
+                                  type(engine).__qualname__, collections, row, inputs])
                     revised = _cached_result(saver, f"{case_id}:pool:integration:{key}",
                                              partial(integrate_row, row, inputs))
                     row.clear()

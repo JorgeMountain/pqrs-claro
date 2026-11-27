@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from io import BytesIO
+from types import SimpleNamespace
 
 import pymupdf
 import pytest
@@ -27,8 +28,9 @@ class Integration:
     def integrate(self, request, inputs):
         self.calls.append((deepcopy(request), deepcopy(inputs)))
         item = next(i for i in inputs if i["kind"] == "attachment")
+        quote = {"input_id": item["id"], "quote": item["text"]}
         return {"answer": "Según el acta, " + item["text"], "gaps": [],
-                "citations": [{"input_id": item["id"], "quote": item["text"]}]}
+                "citations": [dict(quote, gap_id=g["id"]) for g in request["open_gaps"]] or [quote]}
 
 
 @pytest.fixture()
@@ -94,12 +96,17 @@ def test_integration_preserves_other_answers_and_verifies_literal_file_contents(
     assert not row["gaps"] and row["answer"] in integrated["text"]
     assert row["contribution_sources"][0]["id"] == "attachment-1"
     assert row["contribution_sources"][0]["quote"] == task["contributions"][0]["files"][0]["text"]
+    assert row["gap_resolutions"] == [
+        {"gap": gap, "citations": row["contribution_sources"]}
+        for gap in initial["requests"][1]["gaps"]
+    ]
     assert [r["id"] for r, _ in engine.integration_engine.calls] == ["P2"]
     task["contributions"][0]["files"][0].update(id="attachment-2", text="el acta fue corregida.")
     correction = engine.integrate(case["id"], integrated, [task])
     assert "el acta fue corregida" in correction["text"]
     assert [s["id"] for s in correction["requests"][1]["contribution_sources"]] == [
         "attachment-1", "attachment-2"]
+    assert correction["requests"][1]["gap_resolutions"] == row["gap_resolutions"]
     assert "Prácticas y acta del comité" in correction["text"]
     assert "PQRS-FICTICIA" in correction["text"]
     docx = approved_document({"stage": "approved", "case_id": case["id"],
@@ -127,6 +134,68 @@ def test_unreadable_attachment_remains_pending():
     apply_contributions(None, row, [{"id": "id", "kind": "attachment",
                                     "title": "escaneo.pdf", "text": ""}])
     assert row["gaps"][0] == "Aportar la firma" and "escaneo.pdf" in row["gap"]
+
+
+@pytest.mark.parametrize("legacy_fields", [{}, {"gaps": []}])
+def test_only_the_gap_with_a_targeted_quote_closes_even_if_reader_omits_both(legacy_fields):
+    date = "Confirmar la fecha."
+    signature = "Aportar la firma."
+    row = {"answer": "", "gap": date + "\n" + signature, **legacy_fields}
+    file = {"id": "file-calendar", "kind": "attachment", "title": "Calendario.txt",
+            "text": "La entrega está prevista para el 8 de marzo."}
+
+    def integrate(request, inputs):
+        assert request["open_gaps"] == [
+            {"id": "F1", "description": date}, {"id": "F2", "description": signature},
+        ]
+        return {"answer": inputs[0]["text"], "gaps": [], "citations": [
+            {"input_id": inputs[0]["id"], "gap_id": "F1", "quote": "el 8 de marzo"},
+        ]}
+
+    apply_contributions(SimpleNamespace(integrate=integrate), row, [file])
+    assert row["gaps"] == [signature] and row["gap"] == signature
+    assert row["gap_resolutions"] == [{"gap": date, "citations": [{
+        "id": "file-calendar", "kind": "attachment", "title": "Calendario.txt",
+        "quote": "el 8 de marzo",
+    }]}]
+
+    # An administrator reopens the date. Neither the old closure nor a new
+    # general answer citation can close the date or the signature in this round.
+    row["gaps"].append(date)
+    history = deepcopy(row["gap_resolutions"])
+    general = {"answer": row["answer"], "gaps": [], "citations": [
+        {"input_id": "A1", "quote": "el 8 de marzo"},
+    ]}
+    apply_contributions(SimpleNamespace(integrate=lambda *_: general), row, [file])
+    assert row["gaps"] == [signature, date]
+    assert row["gap_resolutions"] == history
+
+
+@pytest.mark.parametrize("invalid", [
+    {"input_id": "A1", "gap_id": "F2", "quote": "8 de marzo"},
+    {"input_id": "A2", "gap_id": "F1", "quote": "8 de marzo"},
+    {"input_id": "A1", "gap_id": "F1", "quote": "1 de abril"},
+])
+def test_bad_gap_or_citation_leaves_the_whole_answer_unchanged(invalid):
+    row = {"answer": "Esperando el calendario.", "gaps": ["Confirmar la fecha."]}
+    before = deepcopy(row)
+    result = {"answer": "8 de marzo", "gaps": [], "citations": [
+        {"input_id": "A1", "gap_id": "F1", "quote": "8 de marzo"}, invalid,
+    ]}
+    file = {"id": "calendar", "kind": "attachment", "text": "La fecha es el 8 de marzo."}
+    with pytest.raises(DomainError, match="cita"):
+        apply_contributions(SimpleNamespace(integrate=lambda *_: result), row, [file])
+    assert row == before
+
+
+def test_a_gap_reported_as_outstanding_stays_open_despite_a_conflicting_citation():
+    row = {"answer": "", "gaps": ["Aportar la firma."]}
+    result = {"answer": "", "gaps": ["Aportar la firma."], "citations": [
+        {"input_id": "A1", "gap_id": "F1", "quote": "Se solicitó la firma."},
+    ]}
+    file = {"id": "memo", "kind": "attachment", "text": "Se solicitó la firma."}
+    apply_contributions(SimpleNamespace(integrate=lambda *_: result), row, [file])
+    assert row["gaps"] == ["Aportar la firma."] and row["gap_resolutions"] == []
 
 
 def test_long_attachment_selects_matching_passage_and_marks_partial_reading():
@@ -174,6 +243,7 @@ def test_multiline_crlf_note_and_wrapped_pdf_quotes_match_verbatim():
                     {"input_id": "A1", "quote": "Primera línea.\nSegunda línea."},
                     {
                         "input_id": "A2",
+                        "gap_id": "F1",
                         "quote": "El profesor respondió directamente el 5 de marzo.",
                     },
                 ],

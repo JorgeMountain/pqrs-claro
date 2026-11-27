@@ -15,6 +15,7 @@ from .source_retrieval import tokenize
 class ContributionCitation(StrictModel):
     input_id: str = Field(min_length=1)
     quote: str = Field(min_length=1, max_length=3000)
+    gap_id: str | None = Field(default=None, min_length=1)
 
 
 class IntegratedAnswer(StrictModel):
@@ -98,9 +99,13 @@ instrucción del trámite solo describe lo que se pidió. Recibir un archivo, su
 solicitud de firma no prueba su contenido, autenticidad, firma, envío ni entrega.
 partial_reading indica que se muestran pasajes seleccionados. En ese caso, no infieras
 que algo falta en el documento completo porque no aparezca en los pasajes.
-Un compromiso futuro no prueba ejecución. Deja visible en gaps cada necesidad anterior
-que el aporte no atiende, y las deficiencias concretas que continúen pendientes. Si la
-evidencia no permite mejorar la respuesta conserva answer y los pendientes pertinentes.
+Un compromiso futuro no prueba ejecución. En request.open_gaps recibes el id y la
+descripción de cada faltante abierto. Para cerrar uno, incluye en citations su gap_id,
+el input_id del aporte que lo resuelve y una cita literal que demuestre ese punto
+concreto. Si solo consta una fecha, una firma sigue pendiente. Usa gap_id nulo para
+citas generales de la respuesta. En gaps incluye las deficiencias nuevas y conserva
+el texto original de los faltantes que siguen abiertos. Si la evidencia no permite
+mejorar la respuesta conserva answer y los pendientes pertinentes.
 Si no hay respuesta respaldada puedes dejar answer vacío, siempre con un pendiente concreto.
 Escribe en answer solo el texto para la persona solicitante, sin identificadores internos.
 En citations copia un pasaje literal del campo text de cada aporte nuevo que utilices
@@ -136,31 +141,37 @@ class OpenAIPoolIntegration:
 
 
 def apply_contributions(engine, row, inputs):
+    previous = row.get("gaps") or (row.get("gap") or "").splitlines()
+    open_gaps = list(dict.fromkeys(g.strip() for g in previous if g.strip()))
     unreadable = [f"Revisar el contenido del archivo «{item['title']}»; su texto no se pudo leer."
                   for item in inputs if item["kind"] == "attachment" and not item["text"].strip()]
     readable = [item for item in inputs if item["text"].strip()]
     if not readable:
         if not unreadable:
             raise DomainError("El trámite no contiene un aporte para integrar.")
-        row["gaps"] = list(dict.fromkeys([*row["gaps"], *unreadable]))
+        row["gaps"] = list(dict.fromkeys([*open_gaps, *unreadable]))
         row["gap"] = "\n".join(row["gaps"])
         return
     # Use short, unambiguous identifiers within this model call. Persist durable
     # note/file references and literal quotations after validation.
     aliases = {f"A{n}": item for n, item in enumerate(readable, 1)}
-    context = _model_inputs(aliases, row)
+    gap_by_id = {f"F{n}": gap for n, gap in enumerate(open_gaps, 1)}
+    request = {**row, "gaps": open_gaps, "open_gaps": [
+        {"id": key, "description": gap} for key, gap in gap_by_id.items()
+    ]}
+    context = _model_inputs(aliases, request)
     try:
-        value = IntegratedAnswer.model_validate(engine.integrate(row, context))
+        value = IntegratedAnswer.model_validate(engine.integrate(request, context))
     except ValidationError:
         raise DomainError("La integración contiene campos incompletos. Reintenta.") from None
     answer = value.answer.strip()
-    gaps = list(dict.fromkeys([*(s.strip() for s in value.gaps if s.strip()), *unreadable]))
-    if not answer and not gaps:
-        raise DomainError("La redacción debe conservar una respuesta o indicar qué falta.")
-    if not value.citations and (answer != row["answer"] or set(row["gaps"]) - set(gaps)):
-        raise DomainError("La redacción cambió la respuesta o sus pendientes sin citar el aporte.")
+    if not value.citations and answer != row["answer"]:
+        raise DomainError("La redacción cambió la respuesta sin citar el aporte.")
     sources = list(row.get("contribution_sources", []))
+    closing = {}
     for citation in value.citations:
+        if citation.gap_id is not None and citation.gap_id not in gap_by_id:
+            raise DomainError("La cita indica un faltante ajeno a los abiertos en esta petición.")
         item = aliases.get(citation.input_id)
         matched = _literal_quote(item["text"], citation.quote) if item else None
         if not matched:
@@ -175,6 +186,22 @@ def apply_contributions(engine, row, inputs):
         source["quote"] = matched
         if source not in sources:
             sources.append(source)
+        if citation.gap_id is not None:
+            evidence = closing.setdefault(gap_by_id[citation.gap_id], [])
+            if source not in evidence:
+                evidence.append(source)
+
+    reported = [s.strip() for s in value.gaps if s.strip()] + unreadable
+    # Keep an existing gap unless this round supplies a literal citation for it.
+    # An explicitly reported outstanding need wins over a contradictory closure.
+    gaps = list(dict.fromkeys([g for g in open_gaps if g not in closing or g in reported]
+                              + reported))
+    if not answer and not gaps:
+        raise DomainError("La redacción debe conservar una respuesta o indicar qué falta.")
+    resolutions = list(row.get("gap_resolutions", []))
+    resolutions.extend({"gap": gap, "citations": closing[gap]} for gap in open_gaps
+                       if gap not in gaps)
+    row["gap_resolutions"] = resolutions
     row.update(answer=answer, gap="\n".join(gaps), gaps=gaps, contribution_sources=sources)
     # Paragraph-level links belong to the initial version; the integration
     # links its changed answer to the preserved documents and cited contributions.

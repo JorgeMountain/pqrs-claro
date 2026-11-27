@@ -1,6 +1,7 @@
 """Confirmación y preparación automática, persistente y sin aprobar respuestas."""
 
 import json
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -10,6 +11,8 @@ from pydantic import BaseModel, Field, StrictBool
 from .redaction_notice import install_publication_notices
 from .service import user_error
 from .storage import Conflict, now
+
+logger = logging.getLogger(__name__)
 
 
 class PreparationVersion(BaseModel):
@@ -131,7 +134,15 @@ class PreparationService:
             )
             self.save(job)
             self.active.add(case_id)
-            self.pool.submit(self.run, job)
+            try:
+                self.pool.submit(self.run, job)
+            except Exception:
+                self.active.discard(case_id)
+                logger.exception("No se pudo encolar la preparación")
+                return self.save(
+                    job, status="error", stage="queue",
+                    error="No se pudo iniciar la preparación de respuestas. Puedes reintentar.",
+                )
             return dict(job)
 
     def check(self, job):
@@ -165,6 +176,11 @@ class PreparationService:
 
     def run(self, job):
         case_id, version = job["case_id"], job["version"]
+        # ThreadPoolExecutor can queue the callback before failing to start a thread.
+        # Wait for submit's outcome so a rejected attempt cannot overwrite a later retry.
+        with self.lock:
+            if job["status"] != "running":
+                return
         try:
             self.check(job)
             mapping = self.sources.get(case_id, compact=True)

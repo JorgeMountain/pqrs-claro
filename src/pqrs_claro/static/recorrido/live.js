@@ -18,6 +18,7 @@ import {createEvidenceUpload} from '/library-evidence.js?v=pending-guide1';
 import {initialReviewSummary,initialRequestContent,initialReady,initialHistory,readInitialDecision,initialConfirmation,updateInitialConfirmation} from './initial-review.js?v=reading-space1';
 import {identificationWorkspace,bindIdentificationWorkspace,expedienteHeading,expedienteSteps} from './expediente-workspace.js?v=stage-progress1';
 import {confirmAndPrepare} from './initial-confirmation.js?v=redaction-recovery1';
+import {queueRetryPayload} from './source-analysis-feedback.js';
 import {pilotReviewControls} from './pilot-review.js?v=pilot1';
 import {watchSourceScope,announceScopeReduction} from '/shared/source-scope.js';
 
@@ -750,6 +751,14 @@ else if(step===2){view.innerHTML=workspace()?responses(current,job.status?job:{s
       case 'live-queue':await onBrowse();break;
       case 'live-mail-origin':await showMail?.(current.id);break;
       case 'live-confirm':{const result=await api(path('/confirm-and-prepare'),{version:current.version});current=result.case;job=result.preparation;adapt();step=initialEnabled?1:2;await refresh();if(initialEnabled)notice('Solicitudes confirmadas. Ya puedes analizar el trámite en el resumen.');break;}
+      case 'live-retry-start':{
+        const body=queueRetryPayload(job);
+        if(!body||body.version!==current.version)break;
+        const sequence=token;
+        const updated=await api(path('/preparation'),body);
+        if(sequence!==token)break;
+        job=updated;render();await refresh();break;
+      }
       case 'live-retry-failed':await api(path('/preparation'),{version:current.version,retry_failed_only:true});step=2;await refresh();break;
       case 'live-resume':await api(path('/preparation'),{version:current.version,retry_analysis:b.dataset.retryAnalysis==='true'});step=2;await refresh();break;
       case 'live-analyze':await api(path('/analyze'),{});await refresh();break;

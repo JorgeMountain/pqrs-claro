@@ -35,8 +35,9 @@ GUIDE_REQUIREMENT = "El comité define requisitos de prácticas y registra las d
 class Integrator:
     def integrate(self, request, inputs):
         item = inputs[-1]
+        quote = {"input_id": item["id"], "quote": item["text"]}
         return {"answer": item["text"], "gaps": [],
-                "citations": [{"input_id": item["id"], "quote": item["text"]}]}
+                "citations": [dict(quote, gap_id=g["id"]) for g in request["open_gaps"]] or [quote]}
 
 
 class CountingIdentifier(TwoRequestsIdentifier):
@@ -124,6 +125,43 @@ def check_case_navigation(page, phase, selected_tab=None):
         active = tabs.locator("[aria-current=step]")
         expect(active).to_be_visible()
         assert route.bounding_box()["y"] < tabs.bounding_box()["y"]
+
+
+def check_recent_editor_round_trip(page, case_id):
+    page.get_by_role("navigation", name="Navegación principal").get_by_role(
+        "link", name="Recepción", exact=True,
+    ).click()
+    recent = page.get_by_role("region", name="Solicitudes recientes")
+    entry = recent.get_by_role("link", name=re.compile(r"practicas\.pdf", re.I))
+    expect(entry).to_have_attribute("href", f"/?case={case_id}&view=revision-fiaga")
+    entry.click()
+    tabs = page.get_by_role("navigation", name="Etapas del análisis")
+    expected_content = [
+        ("Preanálisis", "[data-pre-checks]", "Camila Restrepo"),
+        ("Identificación", "#identified-0", "Requisitos de prácticas revisados"),
+        ("Redacción", '[data-response-id="P1"]', "Borrador ficticio atribuido al soporte."),
+        ("Borrador", ".oficio-pages", "Borrador ficticio atribuido al soporte."),
+    ]
+    for index, (label, selector, expected_text) in enumerate(expected_content):
+        tab = tabs.get_by_role("button", name=re.compile(f"^{label} ·"))
+        expect(tab).to_be_visible()
+        if tab.get_attribute("aria-current") != "step":
+            tab.click()
+        check_case_navigation(page, "analysis", index)
+        content = page.locator(selector)
+        expect(content).to_be_visible()
+        expect(content).to_contain_text(expected_text)
+        assert parse_qs(urlparse(page.url).query)["case"] == [case_id]
+
+    route = page.get_by_role("navigation", name="Ruta del expediente", exact=True)
+    route.get_by_role("link", name=re.compile("^Recepción")).click()
+    expect(page.get_by_role("heading", name="Solicitud recibida")).to_be_visible()
+    expect(page.get_by_role("link", name="Abrir documento recibido")).to_have_attribute(
+        "href", f"/api/cases/{case_id}/original",
+    )
+    assert parse_qs(urlparse(page.url).query) == {"expediente": [case_id]}
+    assert urlparse(page.url).fragment == "recepcion"
+    expect(page.locator(".doc-meta")).to_contain_text("practicas.pdf")
 
 
 def check_redaction_sources(page, api, tmp_path):
@@ -542,6 +580,18 @@ def test_fiaga_through_the_user_interface(tmp_path, pdf_bytes, monkeypatch):  # 
         transfer = page.locator('[data-action="fiaga-handoff"]')
         expect(transfer).to_be_visible(timeout=20000)
         expect(transfer).to_be_disabled()
+        preanalysis = app.state.preanalysis.engine
+        previous_calls = (
+            preanalysis.calls, identifier.calls, assessor.calls.copy(), writer.calls.copy(),
+        )
+        check_recent_editor_round_trip(page, cid)
+        assert (preanalysis.calls, identifier.calls, assessor.calls, writer.calls) == previous_calls
+        confirmation = api.get(path + "/review").json()["reading_confirmation"]
+        assert confirmation == reviewed["reading_confirmation"]
+        route = page.get_by_role("navigation", name="Ruta del expediente", exact=True)
+        route.get_by_role("link", name=re.compile("^Análisis y borrador")).click()
+        page.locator('nav.fiaga-analysis-tabs [data-route-substep="3"]').click()
+        expect(transfer).to_be_visible(timeout=20000)
         check_draft_page_fit(page)
         page.locator("[data-confirm-office]").check()
         expect(transfer).to_be_enabled()
@@ -606,6 +656,14 @@ def test_fiaga_through_the_user_interface(tmp_path, pdf_bytes, monkeypatch):  # 
         page.locator("#contribute button").click()
         expect(page.locator(".stage-final_review")).to_be_visible(timeout=20000)
         page.locator("#actor").select_option("admin")
+        page.get_by_role("link", name="Revisar peticiones y fuentes").click()
+        petition = page.locator('.petition-record[data-request="P1"]')
+        history = petition.locator("details").filter(has=page.get_by_text(
+            "Historial de cierres con respaldo", exact=True))
+        history.locator("summary").click()
+        expect(history.get_by_text(gap, exact=True)).to_be_visible()
+        expect(history.locator("blockquote")).to_have_text("La inscripción vence el 18 de junio.")
+        page.locator("nav.fiaga-phase-route [data-phase=final] a").click()
         page.locator(".return-panel > summary").click()
         row = plan.locator("fieldset").first
         row.locator("[name=request_id]").select_option("P2")
@@ -632,6 +690,13 @@ def test_fiaga_through_the_user_interface(tmp_path, pdf_bytes, monkeypatch):  # 
         assert "18 de junio" in saved and "versión 2 del acta" in saved
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        reception.click()
+        approved_case = recent.get_by_role(
+            "link", name=re.compile(r"practicas\.pdf.*Aprobado", re.I),
+        )
+        expect(approved_case).to_have_attribute("href", f"/?expediente={cid}")
+        approved_case.click()
+        expect(page.get_by_role("link", name="Descargar Word")).to_be_visible()
         check_case_navigation(page, "final")
         for index, stage in enumerate(("preanalisis", "peticiones", "redaccion", "borrador")):
             open_stage(page, stage)
@@ -640,6 +705,9 @@ def test_fiaga_through_the_user_interface(tmp_path, pdf_bytes, monkeypatch):  # 
             for nav in ("nav.fiaga-phase-route", "nav.fiaga-side-nav"):
                 expect(page.locator(nav + " [data-phase=analysis].is-viewed")).to_have_count(1)
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), stage
+        page.locator("nav.fiaga-phase-route [data-phase=final] a").click()
+        expect(panel).to_contain_text("Se verificó la versión 2 del acta 003.")
+        assert parse_qs(urlparse(page.url).query) == {"expediente": [cid]}
         page.locator('.tabs [data-page="recepcion"]').click()
         page.get_by_role("link", name="Recibir desde Gmail").click()
         page.get_by_role("button", name="Consultar correos").click()

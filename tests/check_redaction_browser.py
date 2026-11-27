@@ -34,15 +34,21 @@ class LocalReader:
         )
 
 
-def seed(app, *, count=2):
+def seed(app, *, count=2, fiaga=False):
     case, source = prepared_case(app, count=count, with_map=False)
     case_id = case["id"]
-    app.state.management.change(case_id, ManagementAction(
-        revision=0, action="claim", actor_id="gestor-1",
-    ))
+    if fiaga:
+        case = app.state.store.update(case_id, receipt={"workflow": "fiaga"})
+        app.state.pool.enroll(case_id)
+    else:
+        app.state.management.change(case_id, ManagementAction(
+            revision=0, action="claim", actor_id="gestor-1",
+        ))
     pre = app.state.preanalysis
     pre.save(case_id, pre.saved(case_id), status="ready", approval={
-        "actor_id": "gestor-1", "management_revision": 1, "at": case["created_at"],
+        "actor_id": "admin" if fiaga else "gestor-1",
+        "management_revision": app.state.management.get(case_id)["revision"],
+        "at": case["created_at"],
     })
     intake = app.state.initial_review
     intake.save(
@@ -76,6 +82,51 @@ def local_server(app):
         finally:
             server.should_exit = True
             thread.join(timeout=10)
+
+
+def test_retry_queue_failure_after_reloading_redaction(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    settings = Settings(data_dir=tmp_path, management_enabled=True, initial_review_enabled=True)
+    app = create_unified_app(settings, source_assessor=LocalReader(),
+                             draft_engine=FakeDraftEngine(), review_engine=FakeReviewEngine())
+    case, _ = seed(app, fiaga=True)
+    case_id = case["id"]
+    path = f"/api/cases/{case_id}/preparation"
+
+    def reject(*args):
+        raise RuntimeError("Simulated executor shutdown")
+
+    with local_server(app) as url, httpx.Client(base_url=url, trust_env=False) as api:
+        with monkeypatch.context() as patch:
+            patch.setattr(app.state.preparation.pool, "submit", reject)
+            failed = api.post(path, headers={"X-Fiaga-Actor": "admin"},
+                              json={"version": case["version"], "retry_analysis": True})
+            failed.raise_for_status()
+            assert failed.json()["stage"] == "queue"
+        with sync_playwright() as pw, pw.chromium.launch(channel="chrome") as browser:
+            page = browser.new_page()
+            writes = []
+
+            def record_action(req):
+                if (req.method == "POST" and req.url.startswith(f"{url}/api/cases/{case_id}/")
+                        and not req.url.endswith("/work-session")):
+                    writes.append(req)
+
+            page.on("request", record_action)
+            page.goto(f"{url}/?case={case_id}&view=revision-fiaga&step=2")
+            retry = page.get_by_role("button", name="Reintentar preparación", exact=True)
+            expect(retry).to_be_visible()
+            page.reload()
+            expect(retry).to_be_visible()
+            expect(retry.locator("..")).to_contain_text("No se pudo iniciar la preparación")
+            assert not writes
+            retry.click()
+            expect(retry).to_have_count(0)
+            assert wait(app, api, case_id)["status"] in {"ready", "waiting_review"}
+            assert [req.url for req in writes] == [url + path]
+            assert writes[0].post_data_json == {
+                "version": case["version"], "retry_failed_only": False, "retry_analysis": True,
+            }
 
 
 def test_resume_and_correct_open_petition(tmp_path, monkeypatch):

@@ -42,6 +42,25 @@ test('FIAGA distingue la fase del expediente de la pestaña de análisis consult
   assert.doesNotMatch(otherPhase, /data-route-substep/);
 });
 
+test('la revisión distingue los faltantes abiertos de los cierres respaldados tras integrar un aporte', () => {
+  const citation = {title:'Calendario', url:'/api/cases/demo/pool/files/fecha', quote:'El examen será el 15 de mayo.'};
+  const request = {id:'P1', text:'Confirmar fecha y firma', answer:'El examen será el 15 de mayo.',
+    gap:'Falta la firma', gaps:['Falta la firma'], contribution_sources:[citation]};
+  const detail = {case_id:'demo', stage:'final_review', requests:[request]};
+  const view = () => caseView(detail, 'admin', [], '#redaccion');
+  assert.doesNotMatch(view(), /Historial de cierres con respaldo/);
+  request.gap_resolutions = [{gap:'Falta la fecha', citations:[citation]}];
+  const html = view();
+  assert.match(html, /Falta por resolver<\/strong><ul><li>Falta la firma<\/li><\/ul>/);
+  const history = html.split('Historial de cierres con respaldo</summary>')[1].split('</details>')[0];
+  assert.ok(history.includes('Falta la fecha') && history.includes('href="' + citation.url + '"'));
+  assert.ok(history.includes('<blockquote>' + citation.quote + '</blockquote>'));
+  assert.ok(!history.includes('Falta la firma'));
+  assert.match(caseView(detail, 'admin', [], '#decision'), /data-command="approve" disabled/);
+  request.gaps.push('Falta la fecha');
+  assert.match(view(), /Falta la fecha<\/strong> · Reabierto/);
+});
+
 test('el visor de identificación ofrece desplazamiento y limita las flechas a las páginas disponibles',()=>{
   for(const [count,page,atStart,atEnd] of [[1,1,true,true],[3,1,true,false],[3,2,false,false],[3,3,false,true]]){
     const pages=Array.from({length:count},(_,i)=>({number:i+1,width:612,height:792,image:`/pagina-${i+1}.png`}));
