@@ -60,6 +60,48 @@ def test_missing_sources_retains_confirmation_and_retry_works(source_app, pdf_by
     assert wait(app, client, case["id"])["status"] == "ready"
 
 
+def test_queue_failure_keeps_confirmation_and_accepts_one_retry(source_app, pdf_bytes, monkeypatch):
+    app, client, assessor, _ = source_app
+    app.state.drafts.engine = FakeDraftEngine()
+    case = make_case(client, pdf_bytes, confirm=False)
+    upload_source(client)
+    path = f"/api/cases/{case['id']}"
+    preparation = app.state.preparation
+    callbacks = []
+
+    def reject(run, job):
+        callbacks.append((run, job))
+        raise RuntimeError("thread unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(preparation.pool, "submit", reject)
+        response = client.post(path + "/confirm-and-prepare", json={"version": case["version"]})
+        assert response.status_code == 202, response.text
+        result = response.json()
+        version = result["case"]["version"]
+        assert result["case"]["status"] == "confirmed"
+        failed = result["preparation"]
+        assert failed["status"] == "error" and failed["stage"] == "queue"
+        assert "Puedes reintentar" in failed["error"]
+        assert client.get(path + "/preparation").json() == {**failed, "stale": False}
+        assert case["id"] not in preparation.active and not assessor.calls
+
+        # Keep the accepted retry queued while a worker picks up the rejected callback.
+        patch.setattr(preparation.pool, "submit", lambda run, job: callbacks.append((run, job)))
+        retry = client.post(path + "/preparation", json={"version": version})
+        assert retry.json()["status"] == "running"
+        run_rejected, old_job = callbacks[0]
+        run_rejected(old_job)
+        duplicate = client.post(path + "/preparation", json={"version": version})
+        assert duplicate.json()["status"] == "running"
+        assert len(callbacks) == 2 and not assessor.calls
+
+    run_retry, new_job = callbacks[1]
+    preparation.pool.submit(run_retry, new_job)
+    assert wait(app, client, case["id"])["status"] == "ready"
+    assert assessor.calls == {"P1": 1, "P2": 1}
+
+
 def test_legacy_confirm_does_not_start_jobs(source_app, pdf_bytes):
     app, client, assessor, _ = source_app
     case = make_case(client, pdf_bytes)

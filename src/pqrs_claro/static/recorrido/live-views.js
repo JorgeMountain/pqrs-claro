@@ -1,6 +1,6 @@
 import {pendingCards,isLater,isOpen} from './live-pending-view.js?v=pending-guide1';
 import {esc,understanding,sourcesView} from './views.js';
-import {retryFailedAction,analysisErrorDetail} from './source-analysis-feedback.js';
+import {retryFailedAction,analysisErrorDetail,preparationErrorNotice,queueRetryPayload} from './source-analysis-feedback.js';
 import {redactionWorkspace} from './redaction-workspace.js?v=reading-confirmation1';
 export function identification(data,state,{summary='',initial={},requestContent={},confirmation=''}={}){
   const closed=data.management?.state==='closed';
@@ -28,10 +28,11 @@ export function responses(current,job,mapping,drafts,review,options={}){
   if(job.status==='starting')return html+'<section class="preparation-progress"><span class="analysis-badge">Revisión guardada</span><h2>Iniciando la preparación de respuestas</h2><p role="status">Estamos recuperando el expediente y comprobando sus fuentes. No necesitas volver a confirmar las peticiones.</p></section>';
   if(running)html+=preparationProgress(job,mapping,current.request_count,drafts);
   if(job.status==='waiting_review')html+=`<section class="pre-draft-notice"><strong>Revisa los puntos antes de redactar</strong><p>Abre los puntos de cada solicitud, confirma su respaldo o explica por qué no aplican. Las solicitudes listas se redactan automáticamente; las demás conservan su avance.</p></section>`;
-  if(job.error)html+=`<div class="alert" role="alert">${esc(job.error)}</div>`;
-  const retryAction=retryFailedAction(mapping,running,{drafts,requestIds:new Set((current.identification?.requests||[]).map(r=>r.id))});
+  const queueRetry=queueRetryPayload(job);
+  html+=preparationErrorNotice(job,queueRetry);
+  const retryAction=queueRetry?'':retryFailedAction(mapping,running,{drafts,requestIds:new Set((current.identification?.requests||[]).map(r=>r.id))});
   html+=retryAction;
-  if(!running&&!retryAction&&(job.status!=='ready'||job.stale||mapping.stale))html+=`<div class="actionbar"><p>Se conserva el avance guardado.</p><button class="primary" data-action="live-resume">${job.status==='idle'?'Continuar con las respuestas':job.status==='waiting_review'?'Reintentar o actualizar fuentes':'Continuar o actualizar preparación'}</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
+  if(!running&&!queueRetry&&!retryAction&&(job.status!=='ready'||job.stale||mapping.stale))html+=`<div class="actionbar"><p>Se conserva el avance guardado.</p><button class="primary" data-action="live-resume">${job.status==='idle'?'Continuar con las respuestas':job.status==='waiting_review'?'Reintentar o actualizar fuentes':'Continuar o actualizar preparación'}</button><button data-action="live-collections">Fuentes de consulta</button></div>`;
   html+=current.identification.requests.map((r,i)=>{
     const finding=mapping.results?.find(x=>x.request_id===r.id),row=review.requests?.find(x=>x.request_id===r.id),draft=drafts.results?.find(x=>x.request_id===r.id);
     const states=(finding?.evidence_states||[]).filter(state=>{

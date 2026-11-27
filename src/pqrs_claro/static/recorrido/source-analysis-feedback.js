@@ -1,5 +1,22 @@
 import {esc} from './views.js';
 
+export function queueRetryPayload(job) {
+  if (job.status !== 'error' || job.stage !== 'queue' || job.stale || !job.error) return null;
+  return {
+    version: job.version,
+    retry_analysis: job.retry_analysis === true,
+    retry_failed_only: job.retry_failed_only === true,
+  };
+}
+
+export function preparationErrorNotice(job, queueRetry) {
+  if (!job.error) return '';
+  const button = queueRetry
+    ? '<button type="button" class="primary" data-action="live-retry-start">Reintentar preparación</button>'
+    : '';
+  return `<div class="alert" role="alert">${esc(job.error)} ${button}</div>`;
+}
+
 export function secondaryChecksNote(checks) {
   if (!checks?.length) return '';
   const items = checks.map(check => {
