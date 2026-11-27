@@ -10,5 +10,9 @@ try {
     & "$PSScriptRoot\dev-python.ps1" -m pytest -q
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     node --test tests/*.mjs
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    & "$PSScriptRoot\dev-python.ps1" -PythonArgs @(
+        '-m', 'pytest', '-q', '-ra', '-o', 'python_files=check_*_browser.py', 'tests'
+    )
     exit $LASTEXITCODE
 } finally { Pop-Location }

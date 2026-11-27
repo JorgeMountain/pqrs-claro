@@ -73,6 +73,10 @@ continúan desde su turno o decisión guardados.
 Los perfiles son identidades locales del prototipo. **Recursos → Expedientes anteriores** abre
 la gestión histórica, incluidos sus oficios, tiempos de gestión y registros de avance.
 
+**Solicitudes recientes** permite retomar un expediente desde Recepción. Dentro del editor,
+la fase **Recepción** en **Ruta del expediente** vuelve a la ficha de esa misma solicitud.
+La pestaña **Recepción** del menú superior abre la bandeja general.
+
 ## Estructura
 
 ```text
@@ -86,6 +90,12 @@ docs/                       Guías funcionales, arquitectura e informes fechados
 pyproject.toml + uv.lock     Dependencias y versiones resueltas
 .env.example                Plantilla sin claves
 ```
+
+En `static/recorrido/` conviven la recepción (`fiaga.html`) y el editor de cuatro
+etapas (`index.html`). «Expedientes anteriores» también carga `index.html`. El modo de
+arranque alternativo abre `static/workspace/`, que enlaza a `/anterior` para consultar
+el expediente en la interfaz previa. El laboratorio `static/laya-lab/` se abre con
+`scripts/start-laya-lab.ps1`.
 
 `data/`, `output/`, `tmp/`, `.runtime/`, `.venv/` y los archivos `.env` locales
 permanecen fuera de Git. La clonación entrega código y ejemplos ficticios; los
@@ -132,19 +142,20 @@ y pytest con el modelo semántico público e incluye las pruebas de JavaScript,
 aprobación del oficio y recorridos en Chrome. Los resultados aparecen en la pestaña
 `Checks` del PR.
 
-Para repetir el arranque y los recorridos de navegador con Chrome instalado:
+En Windows, `scripts/test.ps1` sin argumentos ejecuta Ruff, pytest, JavaScript y los
+recorridos en Google Chrome. `scripts/setup.ps1` instala las dependencias de Playwright.
+Chrome debe estar instalado en el equipo.
+
+```powershell
+.\scripts\test.ps1
+```
+
+Para repetir solo el arranque y los recorridos de navegador con el entorno de GitHub Actions:
 
 ```powershell
 uv sync --locked --python 3.12 --group browser
 uv run --no-sync python scripts/check-fiaga-startup.py
 uv run --no-sync python -m pytest -q -o 'python_files=check_*_browser.py' tests
-```
-
-```powershell
-.\scripts\test.ps1
-.\scripts\dev-python.ps1 -m ruff check src tests scripts
-$jsTests = @(Get-ChildItem tests -Filter 'test_*.mjs' -File | ForEach-Object FullName)
-node --test @jsTests
 ```
 
 Las pruebas automáticas utilizan datos temporales y dobles de IA/conversión.
