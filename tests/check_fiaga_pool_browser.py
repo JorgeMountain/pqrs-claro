@@ -35,8 +35,9 @@ GUIDE_REQUIREMENT = "El comité define requisitos de prácticas y registra las d
 class Integrator:
     def integrate(self, request, inputs):
         item = inputs[-1]
+        quote = {"input_id": item["id"], "quote": item["text"]}
         return {"answer": item["text"], "gaps": [],
-                "citations": [{"input_id": item["id"], "quote": item["text"]}]}
+                "citations": [dict(quote, gap_id=g["id"]) for g in request["open_gaps"]] or [quote]}
 
 
 class CountingIdentifier(TwoRequestsIdentifier):
@@ -606,6 +607,14 @@ def test_fiaga_through_the_user_interface(tmp_path, pdf_bytes, monkeypatch):  # 
         page.locator("#contribute button").click()
         expect(page.locator(".stage-final_review")).to_be_visible(timeout=20000)
         page.locator("#actor").select_option("admin")
+        page.get_by_role("link", name="Revisar peticiones y fuentes").click()
+        petition = page.locator('.petition-record[data-request="P1"]')
+        history = petition.locator("details").filter(has=page.get_by_text(
+            "Historial de cierres con respaldo", exact=True))
+        history.locator("summary").click()
+        expect(history.get_by_text(gap, exact=True)).to_be_visible()
+        expect(history.locator("blockquote")).to_have_text("La inscripción vence el 18 de junio.")
+        page.locator("nav.fiaga-phase-route [data-phase=final] a").click()
         page.locator(".return-panel > summary").click()
         row = plan.locator("fieldset").first
         row.locator("[name=request_id]").select_option("P2")
